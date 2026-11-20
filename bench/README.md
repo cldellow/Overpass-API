@@ -9,8 +9,13 @@ python3 bench/compare.py --a BASELINE/install/bin --b CANDIDATE/install/bin \
     --db /path/to/db --reps 7 bench/queries/*.ql
 ```
 
-- Runs alternate between the builds so background noise affects both alike, after one
-  untimed warm-up run per build.
+- **Baseline caching:** by default the baseline's results are cached
+  (`~/.cache/overpass-bench/baseline.json`), keyed by a hash of its `osm3s_query` binary, the
+  database path and the query text. Later comparisons against the same baseline only time the
+  candidate. Changing the binary, the database or a query invalidates that entry.
+- **Close comparisons:** with `--no-cache`, runs alternate between the two builds after one untimed
+  warm-up each, so background noise affects both alike. Use this when the difference is small.
+  Cached runs time the builds separately.
 - Output equality ignores lines that name the build (generator/version).
 - Exit status is 1 if any output differs.
 
