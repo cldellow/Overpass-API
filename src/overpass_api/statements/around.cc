@@ -697,6 +697,99 @@ Ranges< Uint32_Index > Around_Statement::calc_ranges(const Set& input, Resource_
 }
 
 
+//-----------------------------------------------------------------------------
+
+/* Why reach boxes are enough. Let reach(X) be the bounding box of X widened by
+   (length of X + radius), where a point has length 0. Every exact test only passes
+   when the two objects' reach boxes overlap:
+
+   - Point P near segment S (is_inside(lat, lon)): the test requires
+     great_circle_dist(P, first point of S) <= sqrt(len(S)^2 + radius^2)
+     <= len(S) + radius, so P lies in reach(S).
+   - Segment C near point Q (is_inside(segment), first loop): the same test with the
+     roles swapped puts Q in reach(C).
+   - Segments S and C intersect (intersect()): the crossing point lies on both arcs,
+     so within len(S) of S's first point and within len(C) of C's first point; it is
+     in both reach boxes.
+
+   The widening uses a slightly larger distance than needed and the latitude closest
+   to the pole for the longitude scale, so the boxes are conservative. Boxes too
+   close to a pole, crossing the antimeridian or spanning many cells are never pruned. */
+
+Reach_Grid::Box Reach_Grid::reach_box(double lat1, double lon1, double lat2, double lon2, double reach)
+{
+  Box box;
+  // great_circle_dist uses 10,000 km per quarter meridian, so 1 degree of latitude is
+  // 1e7/90 m. A point within distance d is within d/(1e7/90) degrees of latitude.
+  double margin_deg = (reach * 1.02 + 1.0) / (10.0*1000*1000/90.0);
+  box.south = std::min(lat1, lat2) - margin_deg;
+  box.north = std::max(lat1, lat2) + margin_deg;
+  double poleward = std::max(std::abs(box.south), std::abs(box.north));
+  double lon_margin_deg = poleward < 80.0 ? margin_deg / cos(poleward/90.0*acos(0)) : 360.0;
+  box.west = std::min(lon1, lon2) - lon_margin_deg;
+  box.east = std::max(lon1, lon2) + lon_margin_deg;
+  box.usable = poleward < 80.0 && margin_deg < 5.0 && std::abs(lon1 - lon2) < 180.0
+      && box.west >= -180.0 && box.east <= 180.0;
+  return box;
+}
+
+
+bool Reach_Grid::cell_range(const Box& box, int64& lat0, int64& lat1, int64& lon0, int64& lon1)
+{
+  if (!box.usable)
+    return false;
+  lat0 = (int64)floor(box.south / cell_size);
+  lat1 = (int64)floor(box.north / cell_size);
+  lon0 = (int64)floor(box.west / cell_size);
+  lon1 = (int64)floor(box.east / cell_size);
+  return (lat1 - lat0 + 1) * (lon1 - lon0 + 1) <= max_cells;
+}
+
+
+void Reach_Grid::clear()
+{
+  cells.clear();
+  always.clear();
+  total = 0;
+}
+
+
+void Reach_Grid::add(const Box& box, uint32 id)
+{
+  ++total;
+  int64 lat0, lat1, lon0, lon1;
+  if (!cell_range(box, lat0, lat1, lon0, lon1))
+  {
+    always.push_back(id);
+    return;
+  }
+  for (int64 i = lat0; i <= lat1; ++i)
+  {
+    for (int64 j = lon0; j <= lon1; ++j)
+      cells[key(i, j)].push_back(id);
+  }
+}
+
+
+void Around_Statement::build_grids()
+{
+  point_grid.clear();
+  for (uint32 i = 0; i < simple_lat_lons.size(); ++i)
+  {
+    const Prepared_Point& p = simple_lat_lons[i];
+    point_grid.add(Reach_Grid::reach_box(p.lat, p.lon, p.lat, p.lon, radius), i);
+  }
+  segment_grid.clear();
+  for (uint32 i = 0; i < simple_segments.size(); ++i)
+  {
+    const Prepared_Segment& s = simple_segments[i];
+    double length = great_circle_dist(s.first_lat, s.first_lon, s.second_lat, s.second_lon);
+    segment_grid.add(Reach_Grid::reach_box(
+        s.first_lat, s.first_lon, s.second_lat, s.second_lon, length + radius), i);
+  }
+}
+
+
 void add_coord(double lat, double lon, double radius,
                std::map< Uint32_Index, std::vector< Point_Double > >& radius_lat_lons,
 	       std::vector< Prepared_Point >& simple_lat_lons)
@@ -835,11 +928,13 @@ void Around_Statement::calc_lat_lons(const Set& input, Statement& query, Resourc
   if (points.size() == 1)
   {
     add_coord(points[0].lat, points[0].lon, radius, radius_lat_lons, simple_lat_lons);
+    build_grids();
     return;
   }
   else if (points.size() > 1)
   {
     add_way(points, radius, radius_lat_lons, simple_lat_lons, simple_segments);
+    build_grids();
     return;
   }
   Request_Context context(&query, rman);
@@ -869,6 +964,7 @@ void Around_Statement::calc_lat_lons(const Set& input, Statement& query, Resourc
         = relation_way_members(context, input.attic_relations, Ranges< Uint31_Index >::global());
     add_ways(way_members, Way_Geometry_Store(way_members, query, rman));
   }
+  build_grids();
 }
 
 
@@ -888,9 +984,9 @@ bool Around_Statement::is_inside(double lat, double lon) const
   }
 
   Vec3 coord_cartesian = cartesian(lat, lon);
-  for (std::vector< Prepared_Segment >::const_iterator
-      it = simple_segments.begin(); it != simple_segments.end(); ++it)
+  return segment_grid.any(Reach_Grid::reach_box(lat, lon, lat, lon, radius), [&](uint32 id)
   {
+    const Prepared_Segment* it = &simple_segments[id];
     if (great_circle_line_dist(*it, coord_cartesian) <= radius)
     {
       double gcdist = great_circle_dist
@@ -900,37 +996,34 @@ bool Around_Statement::is_inside(double lat, double lon) const
           great_circle_dist(lat, lon, it->second_lat, it->second_lon) <= limit)
 	return true;
     }
-  }
-
-  return false;
+    return false;
+  });
 }
 
 bool Around_Statement::is_inside
     (double first_lat, double first_lon, double second_lat, double second_lon) const
 {
   Prepared_Segment segment(first_lat, first_lon, second_lat, second_lon);
+  double length = great_circle_dist(first_lat, first_lon, second_lat, second_lon);
+  Reach_Grid::Box box = Reach_Grid::reach_box(first_lat, first_lon, second_lat, second_lon,
+      length + radius);
 
-  for (std::vector< Prepared_Point >::const_iterator cit = simple_lat_lons.begin();
-      cit != simple_lat_lons.end(); ++cit)
-  {
-    if (great_circle_line_dist(segment, cit->cartesian) <= radius)
-    {
-      double gcdist = great_circle_dist(first_lat, first_lon, second_lat, second_lon);
-      double limit = sqrt(gcdist*gcdist + radius*radius);
-      if (great_circle_dist(cit->lat, cit->lon, first_lat, first_lon) <= limit &&
-	  great_circle_dist(cit->lat, cit->lon, second_lat, second_lon) <= limit)
-        return true;
-    }
-  }
+  if (point_grid.any(box, [&](uint32 id)
+      {
+        const Prepared_Point* cit = &simple_lat_lons[id];
+        if (great_circle_line_dist(segment, cit->cartesian) <= radius)
+        {
+          double gcdist = great_circle_dist(first_lat, first_lon, second_lat, second_lon);
+          double limit = sqrt(gcdist*gcdist + radius*radius);
+          if (great_circle_dist(cit->lat, cit->lon, first_lat, first_lon) <= limit &&
+              great_circle_dist(cit->lat, cit->lon, second_lat, second_lon) <= limit)
+            return true;
+        }
+        return false;
+      }))
+    return true;
 
-  for (std::vector< Prepared_Segment >::const_iterator
-      cit = simple_segments.begin(); cit != simple_segments.end(); ++cit)
-  {
-    if (intersect(*cit, segment))
-      return true;
-  }
-
-  return false;
+  return segment_grid.any(box, [&](uint32 id) { return intersect(simple_segments[id], segment); });
 }
 
 
