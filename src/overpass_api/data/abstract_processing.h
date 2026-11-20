@@ -22,6 +22,9 @@
 #include "../core/datatypes.h"
 #include "../statements/statement.h"
 #include "filenames.h"
+#include <algorithm>
+#include <memory>
+#include <vector>
 
 #include <cstdint>
 
@@ -107,19 +110,61 @@ public:
 
 //-----------------------------------------------------------------------------
 
+/* A one-bit-per-hash-slot filter over a set of ids. It answers "definitely
+   not in the set" with a single bit test, and "maybe in the set" otherwise.
+   It uses about 16 bits per id (at most 16 MiB), so a false "maybe" happens
+   for roughly 6% of absent ids while the cap is not reached. */
+class Id_Bit_Filter
+{
+public:
+  template< typename Id_Type >
+  explicit Id_Bit_Filter(const std::vector< Id_Type >& ids)
+  {
+    unsigned log_bits = 6;
+    while (log_bits < 27 && (uint64(1) << log_bits) < uint64(ids.size())*16)
+      ++log_bits;
+    shift = 64 - log_bits;
+    bits.assign((uint64(1) << log_bits)/64, 0);
+    for (typename std::vector< Id_Type >::const_iterator it = ids.begin(); it != ids.end(); ++it)
+    {
+      uint64 h = slot(it->val());
+      bits[h>>6] |= uint64(1) << (h & 63);
+    }
+  }
+
+  bool maybe_contains(uint64 id) const
+  {
+    uint64 h = slot(id);
+    return (bits[h>>6] >> (h & 63)) & 1;
+  }
+
+private:
+  uint64 slot(uint64 id) const { return (id * 0x9E3779B97F4A7C15ull) >> shift; }
+
+  std::vector< uint64 > bits;
+  unsigned shift;
+};
+
+
 template < class Object >
 class Id_Predicate
 {
 public:
   Id_Predicate(const std::vector< typename Object::Id_Type >& ids_)
-    : ids(ids_) {}
-  bool match(const Object& obj) const { return std::binary_search(ids.begin(), ids.end(), obj.id); }
-  bool match(const Handle< Object >& h) const { return std::binary_search(ids.begin(), ids.end(), h.id()); }
-  bool match(const Handle< Attic< Object > >& h) const { return std::binary_search(ids.begin(), ids.end(), h.id()); }
+    : ids(ids_), filter(std::make_shared< const Id_Bit_Filter >(ids_)) {}
+  bool match(const Object& obj) const { return contains(obj.id); }
+  bool match(const Handle< Object >& h) const { return contains(h.id()); }
+  bool match(const Handle< Attic< Object > >& h) const { return contains(h.id()); }
   bool possible() const { return !ids.empty(); }
 
 private:
+  // Most candidates are not in ids, so the filter rejects them before the
+  // binary search; the binary search keeps the answer exact.
+  bool contains(const typename Object::Id_Type& id) const
+  { return filter->maybe_contains(id.val()) && std::binary_search(ids.begin(), ids.end(), id); }
+
   const std::vector< typename Object::Id_Type >& ids;
+  std::shared_ptr< const Id_Bit_Filter > filter;
 };
 
 //-----------------------------------------------------------------------------

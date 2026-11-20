@@ -176,7 +176,7 @@ public:
       const Ranges< Index >& ranges_,
       const Statement& query_, Resource_Manager& rman_)
       : ids(&ids_), invert_ids(invert_ids_), ranges(ranges_), query(&query_), rman(&rman_),
-      min_idx(ranges_.empty() ? Index() : ranges_.begin().lower_bound()) {}
+      min_idx(ranges_.empty() ? Index() : ranges_.begin().lower_bound()), id_pred(ids_) {}
   
   bool get_chunk(
       std::map< Index, std::vector< Object > >& elements,
@@ -189,6 +189,8 @@ private:
   const Statement* query;
   Resource_Manager* rman;
   Index min_idx;
+  // Built once and reused for every chunk.
+  Id_Predicate< Object > id_pred;
 };
 
 
@@ -221,11 +223,11 @@ bool Collect_Items< Index, Object >::get_chunk(
           elements, attic_elements, Trivial_Predicate< Object >(), ranges, min_idx, *query, *rman);
     else 
       return get_elements_by_id_from_db_generic(
-          elements, attic_elements, Not_Predicate< Object, Id_Predicate< Object > >(Id_Predicate< Object >(*ids)),
+          elements, attic_elements, Not_Predicate< Object, Id_Predicate< Object > >(id_pred),
           ranges, min_idx, *query, *rman);
   }
   return get_elements_by_id_from_db_generic(
-      elements, attic_elements, Id_Predicate< Object >(*ids), ranges, min_idx, *query, *rman);
+      elements, attic_elements, id_pred, ranges, min_idx, *query, *rman);
 }
 
 
