@@ -43,6 +43,9 @@ the Geofabrik Nova Scotia extract, imported with `--meta` (convert PBF to XML wi
   that outputs are deterministic.
 - **Pruning or skipping changes** also need long-limit re-runs of queries that time out on
   `master`, and a mutation test where practical.
+- **Memory:** for any new allocation, state its bound and report peak memory (RSS) against `master`.
+  Follow the existing accounting: only result sets count toward `[maxsize:]`, and auxiliary
+  structures are not counted. Counting new ones would change which queries fail.
 - **Degenerate queries:** use `fuzz.py --report` to find them, and open an issue per cause.
 - **Reporting:** state the dataset, cache state and machine for every number. Report skipped or
   unverified cases.
