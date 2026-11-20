@@ -45,3 +45,7 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
   status is 1.
 - **Lines naming the build** (generator/version) are ignored. Runs that hit the timeout or the memory
   limit are counted as skipped, not as differences.
+- **Finding slow or degenerate queries:** `--report FILE.csv` writes one row per query with its
+  status, the CPU time on each build, the output size and the CPU time per KB of output. Sort it to
+  find queries that time out, cost a lot for little output, or got slower on the build under test,
+  then reprint them with `--show`.

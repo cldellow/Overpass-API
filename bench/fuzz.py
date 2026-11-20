@@ -24,6 +24,7 @@ import json
 import os
 import random
 import re
+import resource
 import subprocess
 import sys
 
@@ -228,8 +229,19 @@ def generate(vocab, seed, index):
     return Generator(vocab, random.Random(f'{seed}-{index}')).query()
 
 
+def child_cpu():
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return usage.ru_utime + usage.ru_stime
+
+
 def run(bindir, db, query, timeout):
-    """Run one query; return (status, digest, raw_output)."""
+    """Run one query; return (status, digest, raw_output, cpu_seconds)."""
+    before = child_cpu()
+    result = run_once(bindir, db, query, timeout)
+    return result + (child_cpu() - before,)
+
+
+def run_once(bindir, db, query, timeout):
     try:
         proc = subprocess.run([os.path.join(bindir, 'osm3s_query'), '--db-dir=' + db.rstrip('/') + '/'],
                               input=query.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -249,8 +261,8 @@ def run(bindir, db, query, timeout):
 def check(args_tuple):
     a, b, db, vocab, seed, index, timeout = args_tuple
     query = generate(vocab, seed, index)
-    status_a, digest_a, out_a = run(a, db, query, timeout)
-    status_b, digest_b, out_b = run(b, db, query, timeout)
+    status_a, digest_a, out_a, cpu_a = run(a, db, query, timeout)
+    status_b, digest_b, out_b, cpu_b = run(b, db, query, timeout)
     if 'timeout' in (status_a, status_b) or 'resource-limit' in (status_a, status_b):
         verdict = 'skipped'
     elif digest_a == digest_b:
@@ -258,7 +270,7 @@ def check(args_tuple):
     else:
         verdict = 'DIFFERENT'
     empty = status_a == 'ok' and out_a.count(b'\n') <= 6
-    return index, verdict, status_a, status_b, empty, query, out_a, out_b
+    return index, verdict, status_a, status_b, empty, query, out_a, out_b, cpu_a, cpu_b
 
 
 def main():
@@ -274,6 +286,9 @@ def main():
     parser.add_argument('--jobs', type=int, default=os.cpu_count())
     parser.add_argument('--timeout', type=int, default=30, help='seconds per run before giving up')
     parser.add_argument('--out-dir', default='fuzz-failures')
+    parser.add_argument('--report', metavar='CSV',
+                        help='write one row per query: status, CPU time per build, output size '
+                             '(for finding slow or degenerate queries)')
     args = parser.parse_args()
 
     with open(args.vocab, 'rb') as f:
@@ -292,9 +307,18 @@ def main():
     empty = 0
     tasks = [(args.a, args.b, args.db, vocab, args.seed, i, args.timeout)
              for i in range(args.start, args.start + args.count)]
+    report = None
+    if args.report:
+        report = open(args.report, 'w')
+        report.write('seed,index,verdict,status_a,status_b,cpu_a_ms,cpu_b_ms,b_over_a,out_bytes,cpu_a_ms_per_kb\n')
     with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs) as pool:
         for done, result in enumerate(pool.map(check, tasks, chunksize=4), 1):
-            index, verdict, status_a, status_b, is_empty, query, out_a, out_b = result
+            index, verdict, status_a, status_b, is_empty, query, out_a, out_b, cpu_a, cpu_b = result
+            if report:
+                size = len(out_a)
+                ratio = cpu_b / cpu_a if cpu_a > 0 else 0
+                report.write(f'{args.seed},{index},{verdict},{status_a},{status_b},{cpu_a*1000:.1f},'
+                             f'{cpu_b*1000:.1f},{ratio:.3f},{size},{cpu_a*1000/max(size/1024, 1):.2f}\n')
             verdicts[verdict] += 1
             statuses[status_a] += 1
             empty += is_empty
@@ -307,6 +331,8 @@ def main():
                 print(f'DIFFERENT: seed {args.seed} query {index} ({status_a} vs {status_b}) -> {path}')
             if done % 500 == 0:
                 print(f'  {done}/{len(tasks)} done: {dict(verdicts)}', flush=True)
+    if report:
+        report.close()
     print(f'verdicts: {dict(verdicts)}')
     print(f'baseline outcomes: {dict(statuses)}; ok but empty: {empty}')
     return 1 if verdicts['DIFFERENT'] else 0
