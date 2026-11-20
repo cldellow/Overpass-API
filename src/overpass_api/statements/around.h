@@ -23,6 +23,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <array>
 #include <vector>
 #include "../data/collect_members.h"
 #include "../data/utils.h"
@@ -43,15 +44,20 @@ struct Prepared_BBox
 };
 
 
+// A point or direction on the unit sphere, in Cartesian coordinates. A fixed-size
+// array keeps the geometry tests free of heap allocations.
+typedef std::array< double, 3 > Vec3;
+
+
 struct Prepared_Segment
 {
   double first_lat;
   double first_lon;
   double second_lat;
   double second_lon;
-  std::vector< double > first_cartesian;
-  std::vector< double > second_cartesian;
-  std::vector< double > norm;
+  Vec3 first_cartesian;
+  Vec3 second_cartesian;
+  Vec3 norm;
 
   Prepared_Segment(double first_lat, double first_lon, double second_lat, double second_lon);
 };
@@ -61,7 +67,7 @@ struct Prepared_Point
 {
   double lat;
   double lon;
-  std::vector< double > cartesian;
+  Vec3 cartesian;
 
   Prepared_Point(double lat, double lon);
 };
