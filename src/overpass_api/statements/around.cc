@@ -260,8 +260,7 @@ class Around_Constraint : public Query_Constraint
   public:
     Around_Constraint(Around_Statement& around_) : around(&around_), ranges_used(false) {}
 
-    Query_Filter_Strategy delivers_data(Resource_Manager& rman)
-    { return (around->get_radius() < 2000) ? prefer_ranges : ids_useful; }
+    Query_Filter_Strategy delivers_data(Resource_Manager& rman);
 
     bool get_ranges(Resource_Manager& rman, Ranges< Uint32_Index >& ranges);
     bool get_ranges(Resource_Manager& rman, Ranges< Uint31_Index >& ranges);
@@ -274,6 +273,29 @@ class Around_Constraint : public Query_Constraint
     Around_Statement* around;
     bool ranges_used;
 };
+
+
+/* Reading every object in the ranges and checking tags afterwards (prefer_ranges) only pays
+   off while the ranges are small. A small radius around a large input set, such as long
+   relations, can still cover a large area, so look at the area as well as the radius. Like
+   Bbox_Constraint, let the tag index select candidates (ids_useful) once the area exceeds
+   about one square degree: 65536 node index tiles of about 0.00275 by 0.0055 degrees. */
+Query_Filter_Strategy Around_Constraint::delivers_data(Resource_Manager& rman)
+{
+  if (around->get_radius() >= 2000)
+    return ids_useful;
+
+  const Set* input = rman.get_set(around->get_source_name());
+  Ranges< Uint32_Index > ranges = around->calc_ranges(input ? *input : Set(), rman);
+  uint64 tiles = 0;
+  for (auto it = ranges.begin(); it != ranges.end(); ++it)
+  {
+    tiles += uint64(it.upper_bound().val()) - it.lower_bound().val();
+    if (tiles > 65536)
+      return ids_useful;
+  }
+  return prefer_ranges;
+}
 
 
 bool Around_Constraint::get_ranges
