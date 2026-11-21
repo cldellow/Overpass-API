@@ -19,10 +19,23 @@
 #ifndef DE__OSM3S___EXPAT__ESCAPE_JSON_H
 #define DE__OSM3S___EXPAT__ESCAPE_JSON_H
 
+#include <ostream>
 #include <string>
 
 
 std::string escape_cstr(const std::string& s);
+
+
+/* Writes escape_cstr(s) to a stream. Most strings need no escaping; those are written
+   directly, without building an escaped copy. Use as out<<Json_Escaped(s); the
+   referenced string must outlive the expression. */
+struct Json_Escaped
+{
+  explicit Json_Escaped(const std::string& s_) : s(s_) {}
+  const std::string& s;
+};
+
+std::ostream& operator<<(std::ostream& out, const Json_Escaped& e);
 
 
 #endif
