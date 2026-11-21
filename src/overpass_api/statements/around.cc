@@ -687,34 +687,64 @@ Ranges< Uint32_Index > Around_Statement::calc_ranges(const Set& input, Resource_
   }
   else
   {
+    Ranges< Uint32_Index > relation_node_ranges;
+    Ranges< Uint31_Index > relation_way_ranges;
+    member_ranges(input, rman, relation_node_ranges, relation_way_ranges);
+    return expand(
+        ranges(input.nodes).union_(ranges(input.attic_nodes)).union_(relation_node_ranges).union_(
+            calc_children(
+                ranges(input.ways).union_(ranges(input.attic_ways)).union_(relation_way_ranges))),
+        radius);
+  }
+}
+
+
+void Around_Statement::member_ranges(const Set& input, Resource_Manager& rman,
+    Ranges< Uint32_Index >& node_ranges, Ranges< Uint31_Index >& way_ranges) const
+{
+  std::vector< Relation_Skeleton::Id_Type > relations;
+  for (auto it = input.relations.begin(); it != input.relations.end(); ++it)
+    for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
+      relations.push_back(it2->id);
+  std::vector< std::pair< Relation_Skeleton::Id_Type, uint64 > > attic_relations;
+  for (auto it = input.attic_relations.begin(); it != input.attic_relations.end(); ++it)
+    for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
+      attic_relations.push_back(std::make_pair(it2->id, it2->timestamp));
+
+  if (!member_ranges_known || member_ranges_timestamp != rman.get_desired_timestamp()
+      || member_ranges_relations != relations || member_ranges_attic_relations != attic_relations)
+  {
     // The geometry of a relation is that of its direct node and way members (see
     // calc_lat_lons), so take the ranges from their indexes. A relation's own index
     // covers its whole extent, which for a long route or a boundary is a large area.
-    Ranges< Uint32_Index > member_node_ranges;
-    Ranges< Uint31_Index > member_way_ranges;
+    Ranges< Uint32_Index > new_node_ranges;
+    Ranges< Uint31_Index > new_way_ranges;
     if (!input.relations.empty())
     {
       Request_Context context(this, rman);
-      member_node_ranges = ranges(relation_node_members(
+      new_node_ranges = ranges(relation_node_members(
           context, input.relations, {}, Ranges< Uint32_Index >::global(), {}, true).current);
-      member_way_ranges = ranges(relation_way_members(
+      new_way_ranges = ranges(relation_way_members(
           context, input.relations, {}, Ranges< Uint31_Index >::global(), {}, true).current);
     }
     // The same for relations at a past date, with the members calc_lat_lons uses for them.
     if (!input.attic_relations.empty())
     {
       Request_Context context(this, rman);
-      member_node_ranges = member_node_ranges.union_(ranges(relation_node_members(
+      new_node_ranges = new_node_ranges.union_(ranges(relation_node_members(
           context, input.attic_relations, relation_node_member_indices({}, input.attic_relations))));
-      member_way_ranges = member_way_ranges.union_(ranges(relation_way_members(
+      new_way_ranges = new_way_ranges.union_(ranges(relation_way_members(
           context, input.attic_relations, Ranges< Uint31_Index >::global())));
     }
-    return expand(
-        ranges(input.nodes).union_(ranges(input.attic_nodes)).union_(member_node_ranges).union_(
-            calc_children(
-                ranges(input.ways).union_(ranges(input.attic_ways)).union_(member_way_ranges))),
-        radius);
+    member_node_ranges.swap(new_node_ranges);
+    member_way_ranges.swap(new_way_ranges);
+    member_ranges_relations.swap(relations);
+    member_ranges_attic_relations.swap(attic_relations);
+    member_ranges_timestamp = rman.get_desired_timestamp();
+    member_ranges_known = true;
   }
+  node_ranges = member_node_ranges;
+  way_ranges = member_way_ranges;
 }
 
 
