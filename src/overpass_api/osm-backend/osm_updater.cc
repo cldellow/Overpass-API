@@ -64,6 +64,11 @@ namespace
   const int DELETE = 1;
   // Set by visible="false" in history files (.osh): the element version is a deletion.
   bool element_deleted = false;
+  // The ids of the last element of each type. A flush is deferred until the id changes,
+  // so that all versions of an element in a history file are processed in the same batch.
+  Node::Id_Type last_node_id;
+  Way::Id_Type last_way_id;
+  Relation::Id_Type last_relation_id;
   uint flush_limit = 4*1024*1024;
   OSM_Element_Metadata* meta;
 
@@ -175,6 +180,13 @@ namespace
       if (!strcmp(attr[i], "visible"))
         element_deleted = !strcmp(attr[i+1], "false");
     }
+    if (osm_element_count >= flush_limit && !(id == last_node_id))
+    {
+      callback->node_elapsed(last_node_id);
+      node_updater->update(callback, cpu_stopwatch, true);
+      callback->parser_started();
+      osm_element_count = 0;
+    }
     if (lat >= -90. && lat <= 90. && lon >= -180. && lon <= 180.)
       current_node = Node(id, lat, lon);
     else
@@ -189,13 +201,7 @@ namespace
     else
       node_updater->set_node(current_node, meta);
     element_deleted = false;
-    if (osm_element_count >= flush_limit)
-    {
-      callback->node_elapsed(current_node.id);
-      node_updater->update(callback, cpu_stopwatch, true);
-      callback->parser_started();
-      osm_element_count = 0;
-    }
+    last_node_id = current_node.id;
     current_node.id = Node::Id_Type();
   }
 
@@ -242,6 +248,15 @@ namespace
       if (!strcmp(attr[i], "visible"))
         element_deleted = !strcmp(attr[i+1], "false");
     }
+    if (osm_element_count >= flush_limit && !(id == last_way_id))
+    {
+      callback->way_elapsed(last_way_id);
+      way_updater->update(callback, cpu_stopwatch, true,
+                          node_updater->get_new_skeletons(), node_updater->get_attic_skeletons(),
+                          node_updater->get_new_attic_skeletons());
+      callback->parser_started();
+      osm_element_count = 0;
+    }
     current_way = Way(id.val());
   }
 
@@ -253,15 +268,7 @@ namespace
     else
       way_updater->set_way(current_way, meta);
     element_deleted = false;
-    if (osm_element_count >= flush_limit)
-    {
-      callback->way_elapsed(current_way.id);
-      way_updater->update(callback, cpu_stopwatch, true,
-                          node_updater->get_new_skeletons(), node_updater->get_attic_skeletons(),
-                          node_updater->get_new_attic_skeletons());
-      callback->parser_started();
-      osm_element_count = 0;
-    }
+    last_way_id = current_way.id;
     current_way.id = 0u;
   }
 
@@ -273,17 +280,7 @@ namespace
     else
       relation_updater->set_relation(current_relation, meta);
     element_deleted = false;
-    if (osm_element_count >= flush_limit)
-    {
-      callback->relation_elapsed(current_relation.id);
-      relation_updater->update(callback, cpu_stopwatch,
-                          node_updater->get_new_skeletons(), node_updater->get_attic_skeletons(),
-                          node_updater->get_new_attic_skeletons(),
-                          way_updater->get_new_skeletons(), way_updater->get_attic_skeletons(),
-                          way_updater->get_new_attic_skeletons());
-      callback->parser_started();
-      osm_element_count = 0;
-    }
+    last_relation_id = current_relation.id;
     current_relation.id = 0u;
   }
 
@@ -342,6 +339,17 @@ namespace
 	meta->user_id = atoi(attr[i+1]);
       if (!strcmp(attr[i], "visible"))
         element_deleted = !strcmp(attr[i+1], "false");
+    }
+    if (osm_element_count >= flush_limit && !(id == last_relation_id))
+    {
+      callback->relation_elapsed(last_relation_id);
+      relation_updater->update(callback, cpu_stopwatch,
+                          node_updater->get_new_skeletons(), node_updater->get_attic_skeletons(),
+                          node_updater->get_new_attic_skeletons(),
+                          way_updater->get_new_skeletons(), way_updater->get_attic_skeletons(),
+                          way_updater->get_new_attic_skeletons());
+      callback->parser_started();
+      osm_element_count = 0;
     }
     current_relation = Relation(id.val());
   }

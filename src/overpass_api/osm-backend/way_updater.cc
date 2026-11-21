@@ -964,6 +964,7 @@ void Way_Updater::update(Osm_Backend_Callback* callback, Cpu_Stopwatch* cpu_stop
       }
       std::sort(node_ids.begin(), node_ids.end());
       node_ids.erase(std::unique(node_ids.begin(), node_ids.end()), node_ids.end());
+      remove_ids_with_attic_in_memory(node_ids, new_attic_node_skeletons);
 
       stored_and_new_attic_nodes = new_attic_node_skeletons;
       add_stored_attic_skeletons< Node::Index, Node_Skeleton >(node_ids, *transaction,
