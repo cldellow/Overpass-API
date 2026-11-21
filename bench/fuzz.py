@@ -295,12 +295,13 @@ class Generator:
             mode = self.r.random()
             if mode < 0.25:
                 header += f'[date:{self.when()}]'
-            elif mode < 0.4:
+            elif mode < 0.5 and '[out:' not in header:
+                # diff and adiff need XML output (the default).
                 a, b = self.time_pair()
-                header += f'[diff:{a},{b}]' if self.r.random() < 0.7 else f'[diff:{a}]'
-            elif mode < 0.5:
-                a, b = self.time_pair()
-                header += f'[adiff:{a},{b}]'
+                if mode < 0.4:
+                    header += f'[diff:{a},{b}]' if self.r.random() < 0.7 else f'[diff:{a}]'
+                else:
+                    header += f'[adiff:{a},{b}]'
         lines = [header + ';', self.anchored_query()]
         if 'history' in self.features and self.v.get('edit_times') and self.r.random() < 0.08:
             kind = self.r.choice(['node', 'way', 'relation'])
