@@ -84,6 +84,21 @@ class Generator:
         w = self.r.uniform(0.001, max_size * 1.4)
         return f'({lat - h / 2:.6f},{lon - w / 2:.6f},{lat + h / 2:.6f},{lon + w / 2:.6f})'
 
+    def poly(self):
+        """A poly: filter: a star-shaped polygon around a node, so its edges never cross.
+        Sizes range up to the city boundaries that osmnx sends; quotes vary as clients do."""
+        import math
+        lat, lon = self.pick(self.v['node_coords'])
+        n = self.r.choice([3, 4, 6, 10, 30, 100, 400])
+        radius = self.r.uniform(0.002, 0.05)
+        angles = sorted(self.r.uniform(0, 2 * math.pi) for _ in range(n))
+        points = []
+        for a in angles:
+            r = radius * self.r.uniform(0.3, 1.0)
+            points.append(f'{lat + r * math.sin(a):.6f} {lon + r * 1.4 * math.cos(a):.6f}')
+        quote = self.r.choice(['"', "'"])
+        return f'(poly:{quote}{" ".join(points)}{quote})'
+
     def around_point(self):
         lat, lon = self.pick(self.v['node_coords'])
         return f'(around:{self.r.choice([10, 50, 100, 250, 500, 1000])},{lat:.6f},{lon:.6f})'
@@ -170,8 +185,10 @@ class Generator:
             filters.append(self.tag_filter() if self.r.random() < 0.3 else
                            f'[{self.quote(key)}={self.quote(value)}]')
             filters.append(self.bbox(0.2))
-        elif anchor < 0.75:
+        elif anchor < 0.68:
             filters.append(self.bbox())
+        elif anchor < 0.75:
+            filters.append(self.poly())
         elif anchor < 0.85:
             filters.append(self.around_point())
         else:
@@ -181,8 +198,10 @@ class Generator:
             extra = self.r.random()
             if extra < 0.6:
                 filters.append(self.tag_filter())
-            elif extra < 0.75:
+            elif extra < 0.7:
                 filters.append(self.bbox(0.3))
+            elif extra < 0.75:
+                filters.append(self.poly())
             elif extra < 0.85 and kind in ('node', 'way', 'rel'):
                 filters.append(self.ids(kind))
             else:
