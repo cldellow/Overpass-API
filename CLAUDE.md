@@ -43,7 +43,8 @@ the Geofabrik Nova Scotia extract, imported with `--meta` (convert PBF to XML wi
 - **Correctness:** run `bench/fuzz.py` against `master`. Run a build against itself first to check
   that outputs are deterministic.
 - **Pruning or skipping changes** also need long-limit re-runs of queries that time out on
-  `master`, and a mutation test where practical.
+  `master`, and a mutation test where practical. Before trusting a clean mutation result,
+  confirm the mutant differs from the change on at least one query.
 - **Memory:** for any new allocation, state its bound and report peak memory (RSS) against `master`.
   Follow the existing accounting: only result sets count toward `[maxsize:]`, and auxiliary
   structures are not counted. Counting new ones would change which queries fail.
