@@ -1,5 +1,7 @@
 > [!TIP]
 > The `all-changes` branch has a rollup of all the patches so far, and its performance vs upstream is tracked in [PR #12](https://github.com/cldellow/Overpass-API/pull/12)
+>
+> In order to test history queries, some fixes were needed to let Geofabrik .osh.pbf files import. The `better-imports` branch has a rollup of those patches and [PR #58](https://github.com/cldellow/Overpass-API/pull/58) describes the work. I don't expect to upstream the import fixes, but they're useful for testing.
 
 This is a Claude-assisted [^0] fork of [fossgis/Overpass-API](https://github.com/fossgis/Overpass-API). This `README` and any issue comments that open with `Colin's thoughts` were written by a meat popsicle. Pretty much everything else was written by Claude.
 
