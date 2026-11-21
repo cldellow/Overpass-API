@@ -19,6 +19,7 @@
 #ifndef DE__OSM3S___OVERPASS_API__STATEMENTS__META_COLLECTOR_H
 #define DE__OSM3S___OVERPASS_API__STATEMENTS__META_COLLECTOR_H
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <vector>
@@ -67,9 +68,12 @@ private:
       ::Range_Iterator* range_it;
   Index* current_index;
   Index* last_index;
-  std::set< OSM_Element_Metadata_Skeleton< Id_Type > > current_objects;
+  // Sorted by (ref, timestamp), without duplicates: a flat replacement for a std::set,
+  // which is filled once per index and then only searched.
+  std::vector< OSM_Element_Metadata_Skeleton< Id_Type > > current_objects;
 
   void update_current_objects(const Index&);
+  void sort_current_objects();
 };
 
 
@@ -162,9 +166,10 @@ void Meta_Collector< Index, Id_Type >::reset()
       current_index = new Index(db_it->index());
     while (!(*db_it == meta_db->discrete_end()) && (*current_index == db_it->index()))
     {
-      current_objects.insert(db_it->object());
+      current_objects.push_back(db_it->object());
       ++(*db_it);
     }
+    sort_current_objects();
   }
   else
   {
@@ -175,9 +180,10 @@ void Meta_Collector< Index, Id_Type >::reset()
       current_index = new Index(range_it->index());
     while (!(*range_it == meta_db->range_end()) && (*current_index == range_it->index()))
     {
-      current_objects.insert(range_it->object());
+      current_objects.push_back(range_it->object());
       ++(*range_it);
     }
+    sort_current_objects();
   }
 }
 
@@ -197,9 +203,10 @@ void Meta_Collector< Index, Id_Type >::update_current_objects(const Index& index
       *current_index = db_it->index();
     while (!(*db_it == meta_db->discrete_end()) && (*current_index == db_it->index()))
     {
-      current_objects.insert(db_it->object());
+      current_objects.push_back(db_it->object());
       ++(*db_it);
     }
+    sort_current_objects();
   }
   else if (range_it)
   {
@@ -209,10 +216,23 @@ void Meta_Collector< Index, Id_Type >::update_current_objects(const Index& index
       *current_index = range_it->index();
     while (!(*range_it == meta_db->range_end()) && (*current_index == range_it->index()))
     {
-      current_objects.insert(range_it->object());
+      current_objects.push_back(range_it->object());
       ++(*range_it);
     }
+    sort_current_objects();
   }
+}
+
+
+template< typename Index, typename Id_Type >
+void Meta_Collector< Index, Id_Type >::sort_current_objects()
+{
+  // Keep the first of equal elements, as std::set::insert did.
+  if (!std::is_sorted(current_objects.begin(), current_objects.end()))
+    std::stable_sort(current_objects.begin(), current_objects.end());
+  current_objects.erase(std::unique(current_objects.begin(), current_objects.end(),
+      [](const OSM_Element_Metadata_Skeleton< Id_Type >& a, const OSM_Element_Metadata_Skeleton< Id_Type >& b)
+      { return !(a < b) && !(b < a); }), current_objects.end());
 }
 
 
@@ -228,8 +248,8 @@ const OSM_Element_Metadata_Skeleton< Id_Type >* Meta_Collector< Index, Id_Type >
   if (current_index && *current_index < index)
     update_current_objects(index);
 
-  typename std::set< OSM_Element_Metadata_Skeleton< Id_Type > >::iterator it
-      = current_objects.lower_bound(OSM_Element_Metadata_Skeleton< Id_Type >(ref));
+  auto it = std::lower_bound(current_objects.begin(), current_objects.end(),
+      OSM_Element_Metadata_Skeleton< Id_Type >(ref));
   if (it != current_objects.end() && it->ref == ref)
     return &*it;
   else
@@ -249,8 +269,8 @@ const OSM_Element_Metadata_Skeleton< Id_Type >* Meta_Collector< Index, Id_Type >
   if (current_index && *current_index < index)
     update_current_objects(index);
 
-  typename std::set< OSM_Element_Metadata_Skeleton< Id_Type > >::iterator it
-      = current_objects.lower_bound(OSM_Element_Metadata_Skeleton< Id_Type >(ref, timestamp));
+  auto it = std::lower_bound(current_objects.begin(), current_objects.end(),
+      OSM_Element_Metadata_Skeleton< Id_Type >(ref, timestamp));
   if (it == current_objects.begin())
     return 0;
   --it;
