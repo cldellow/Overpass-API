@@ -38,7 +38,8 @@ The tools are in `bench/` on the `bench-tools` branch; see `bench/README.md`. Th
 the Geofabrik Nova Scotia extract, imported with `--meta` (convert PBF to XML with `osmium`).
 
 - **Performance:** run `bench/compare.py`. Don't re-time `master`; the baseline is cached. Use
-  `--no-cache` only for close calls.
+  `--no-cache` (alternating runs) when the expected difference is under about 25%: separately
+  timed runs can drift by up to about 20%.
 - **Correctness:** run `bench/fuzz.py` against `master`. Run a build against itself first to check
   that outputs are deterministic.
 - **Pruning or skipping changes** also need long-limit re-runs of queries that time out on
