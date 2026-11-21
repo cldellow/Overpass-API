@@ -132,6 +132,14 @@ python3 bench/props/props.py --seeds 7 --show
   objects clearly outside must not; objects within 2 units of the boundary, or within 0.5 m plus
   0.1% of an `around` radius, aren't checked). With `--baseline`, every output must also be
   byte-identical to the baseline's, which covers the boundary cases the margins leave out.
+- **Output:** the queries above print only type and id. Separate checks print whole outputs:
+  `out meta` in XML and JSON (every node's coordinates, metadata and tags), `out meta geom` and
+  `out bb` of ways and `out geom` of relations (node lists, member geometry and bounds), each
+  against the generated data; `out center`, CSV with tag columns, JSON geometry and `out skel qt`
+  are compared with the baseline only. To exercise output formatting, each seed also has nodes
+  at extreme coordinates (0, one unit either side of 0, next to the poles and the antimeridian),
+  and tag values and user names that need escaping (`&`, `<`, quotes, newlines, tabs, non-ASCII
+  text, a 300-character value, an empty value).
 - **Failures on the baseline too** are counted separately and don't fail the run: they're
   upstream behaviour, not a regression. Expect some in the `poly ways` and `area ways` rows:
   upstream misses ways that cross a polygon edge when `uint32` latitudes wrap around in
@@ -142,7 +150,7 @@ python3 bench/props/props.py --seeds 7 --show
   status is 1 if any check fails on the candidate but not the baseline, or any output differs.
 - **Reproducible:** a seed's data and queries depend only on the seed and the script (its hash
   is printed).
-- **Speed:** 60 seeds (about 4,600 queries per build) take under a minute on 4 cores.
+- **Speed:** 60 seeds (about 5,200 queries per build) take about two and a half minutes on 4 cores.
 
 ## A database with history
 

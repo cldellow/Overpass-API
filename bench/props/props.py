@@ -24,6 +24,7 @@ resolution Overpass stores.
 import argparse
 import concurrent.futures
 import hashlib
+import json
 import math
 import os
 import random
@@ -32,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True   # don't leave __pycache__ in the checkout
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -206,14 +208,18 @@ class Data:
         return [self.nodes[n] for n in self.ways[wid]]
 
     def to_xml(self):
+        def esc(v):
+            return (str(v).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    .replace('"', '&quot;').replace('\n', '&#10;').replace('\t', '&#9;'))
+
         out = ['<?xml version="1.0" encoding="UTF-8"?>', '<osm version="0.6" generator="props.py">']
 
         def attrs(kind, i):
             v, ts, uid, user = self.meta[(kind, i)]
-            return f'id="{i}" version="{v}" timestamp="{ts}" changeset="{v}" uid="{uid}" user="{user}"'
+            return f'id="{i}" version="{v}" timestamp="{ts}" changeset="{v}" uid="{uid}" user="{esc(user)}"'
 
         def tags(t):
-            return ''.join(f'<tag k="{k}" v="{v}"/>' for k, v in sorted(t.items()))
+            return ''.join(f'<tag k="{esc(k)}" v="{esc(v)}"/>' for k, v in sorted(t.items()))
 
         for i, (lat, lon) in sorted(self.nodes.items()):
             out.append(f'<node {attrs("node", i)} lat="{deg(lat)}" lon="{deg(lon)}">'
@@ -223,7 +229,7 @@ class Data:
                        + tags(self.way_tags.get(i, {})) + '</way>')
         for i, mems in sorted(self.rels.items()):
             out.append(f'<relation {attrs("relation", i)}>'
-                       + ''.join(f'<member type="{t}" ref="{r}" role="{role}"/>' for t, r, role in mems)
+                       + ''.join(f'<member type="{t}" ref="{r}" role="{esc(role)}"/>' for t, r, role in mems)
                        + tags(self.rel_tags.get(i, {})) + '</relation>')
         out.append('</osm>')
         return '\n'.join(out) + '\n'
@@ -351,7 +357,38 @@ def generate(seed):
         for i in ids:
             uid, user = rnd.choice(USERS)
             data.meta[(kind, i)] = (rnd.randint(1, 3), rnd.choice(TIMESTAMPS), uid, user)
+    add_output_hazards(data, random.Random(seed * 31 + 7))
     return data
+
+
+# Tag values and user names that need escaping in XML, JSON or CSV output.
+SPECIAL_VALUES = ['A & W', '<b>bold</b>', 'say "hi"', "it's", 'line1\nline2', 'tab\there',
+                  'back\\slash', 'Caf\u00e9 Rendez-vous', '\u6771\u4eac', '\U0001f341 maple',
+                  ' leading and trailing ', 'semi;colon,comma', 'x' * 300, '\u00a0nbsp', '']
+SPECIAL_USERS = [(21, 'dave & co'), (22, '\u00d6laf \u00d8sterg\u00e5rd'), (23, '<script>')]
+# Coordinates (units) at the edges of the output formatting: zero, one unit either side of it,
+# and next to the poles and the antimeridian.
+SPECIAL_COORDS = [(0, 0), (-1, 1), (1, -1), (899999999, 1799999999), (-899999999, -1800000000),
+                  (-899999999, 1800000000), (100000000, -100000000), (123456789, -987654321)]
+
+
+def add_output_hazards(data, rnd):
+    """Add nodes at extreme coordinates and tags that need escaping. Uses its own random
+    stream and only appends, so the rest of the seed's data is unchanged."""
+    plain = list(data.nodes)
+    data.special = set()
+    for p in SPECIAL_COORDS:
+        n = data.node_at(p)
+        data.special.add(n)
+        uid, user = rnd.choice(SPECIAL_USERS)
+        data.meta[('node', n)] = (rnd.randint(1, 3), rnd.choice(TIMESTAMPS), uid, user)
+    for n in rnd.sample(plain, 8):
+        data.node_tags.setdefault(n, {})['name'] = rnd.choice(SPECIAL_VALUES)
+    for w in rnd.sample(list(data.ways), 4):
+        data.way_tags.setdefault(w, {})['note'] = rnd.choice(SPECIAL_VALUES)
+    for r in data.rels:
+        if data.rel_tags[r].get('type') == 'route':
+            data.rel_tags[r]['ref'] = rnd.choice(SPECIAL_VALUES)
 
 
 # ---------------------------------------------------------------------------------------
@@ -387,7 +424,9 @@ def gen_checks(data, seed):
     rnd = random.Random(seed * 7919 + 1)
     checks = []
     nodes, ways = data.nodes, data.ways
-    coords = list(nodes.values())
+    special = getattr(data, 'special', set())
+    plain = [i for i in nodes if i not in special]
+    coords = [nodes[i] for i in plain]
 
     def add(name, query, must, must_not=frozenset(), exact=False):
         checks.append((name, query, set(must), set(must_not), exact))
@@ -462,7 +501,7 @@ def gen_checks(data, seed):
     # Recursion and ids.
     for w in rnd.sample(list(ways), 4):
         add('way -> nodes', f'way({w}); node(w);', els('node', ways[w]), exact=True)
-    for n in rnd.sample(list(nodes), 4):
+    for n in rnd.sample(plain, 4):
         add('node -> ways', f'node({n}); way(bn);', {('way', w) for w, nds in ways.items() if n in nds}, exact=True)
     for r, mems in data.rels.items():
         add('rel -> ways', f'relation({r}); way(r);', {('way', ref) for t, ref, _ in mems if t == 'way'}, exact=True)
@@ -470,7 +509,7 @@ def gen_checks(data, seed):
         add('way -> rels', f'way({w}); rel(bw);',
             {('relation', r) for r, mems in data.rels.items() if ('way', w) in {(t, ref) for t, ref, _ in mems}},
             exact=True)
-    ids = rnd.sample(list(nodes), 5)
+    ids = rnd.sample(plain, 5)
     add('id list', f'node(id:{",".join(map(str, ids))});', els('node', ids), exact=True)
 
     # Set operations over two boxes.
@@ -497,6 +536,203 @@ def gen_checks(data, seed):
     add('newer', f'node(newer:"{ts}");', {('node', i) for i in nodes if data.meta[('node', i)][1] >= ts},
         exact=True)
     return checks
+
+
+# ---------------------------------------------------------------------------------------
+# Output checks: whole outputs (coordinates, metadata, tags, geometry) against the data
+#
+# Each is (name, query, verify) where query is the complete script and verify(data, out)
+# returns a list of problems. Formatting details that the check doesn't pin down (number
+# formatting, element order within an element) are left to the comparison with the baseline.
+
+WORLD = '-90,-180,90,180'
+
+
+def units(text):
+    return round(float(text) * UNIT)
+
+
+def expect_coord(problems, what, lat, lon, p):
+    if (units(lat), units(lon)) != p:
+        problems.append(f'{what}: coordinates {lat},{lon}, expected {deg(p[0])},{deg(p[1])}')
+
+
+def expect_meta(problems, what, got, data, kind, i):
+    v, ts, uid, user = data.meta[(kind, i)]
+    want = {'version': str(v), 'timestamp': ts, 'changeset': str(v), 'uid': str(uid), 'user': user}
+    for k, w in want.items():
+        if str(got.get(k)) != w:
+            problems.append(f'{what}: {k} {got.get(k)!r}, expected {w!r}')
+
+
+def expect_tags(problems, what, got, want):
+    if got != want:
+        problems.append(f'{what}: tags {got!r}, expected {want!r}')
+
+
+def expect_ids(problems, kind, got, want):
+    if set(got) != set(want):
+        missing, extra = sorted(set(want) - set(got)), sorted(set(got) - set(want))
+        problems.append(f'{kind}s: missing {missing[:10]}, unexpected {extra[:10]}')
+
+
+def xml_tags(e):
+    return {t.get('k'): t.get('v') for t in e.findall('tag')}
+
+
+def bounds_problems(problems, what, b, pts):
+    if b is None:
+        problems.append(f'{what}: no bounds')
+        return
+    got = (units(b.get('minlat')), units(b.get('minlon')), units(b.get('maxlat')), units(b.get('maxlon')))
+    want = (min(p[0] for p in pts), min(p[1] for p in pts), max(p[0] for p in pts), max(p[1] for p in pts))
+    if got != want:
+        problems.append(f'{what}: bounds {got}, expected {want}')
+
+
+def parse_xml(out):
+    try:
+        return ET.fromstring(out), None
+    except ET.ParseError as e:
+        return None, [f'output is not well-formed XML: {e}']
+
+
+def verify_xml_nodes_meta(data, out):
+    root, err = parse_xml(out)
+    if err:
+        return err
+    problems = []
+    found = {}
+    for e in root.findall('node'):
+        i = int(e.get('id'))
+        found[i] = e
+        if i not in data.nodes:
+            continue
+        expect_coord(problems, f'node {i}', e.get('lat'), e.get('lon'), data.nodes[i])
+        expect_meta(problems, f'node {i}', e.attrib, data, 'node', i)
+        expect_tags(problems, f'node {i}', xml_tags(e), data.node_tags.get(i, {}))
+    expect_ids(problems, 'node', found, data.nodes)
+    return problems[:20]
+
+
+def verify_json_nodes_meta(data, out):
+    try:
+        doc = json.loads(out)
+    except ValueError as e:
+        return [f'output is not valid JSON: {e}']
+    problems = []
+    found = {}
+    for e in doc.get('elements', []):
+        if e.get('type') != 'node':
+            continue
+        i = e['id']
+        found[i] = e
+        if i not in data.nodes:
+            continue
+        expect_coord(problems, f'node {i}', repr(e.get('lat')), repr(e.get('lon')), data.nodes[i])
+        expect_meta(problems, f'node {i}', e, data, 'node', i)
+        expect_tags(problems, f'node {i}', e.get('tags', {}), data.node_tags.get(i, {}))
+    expect_ids(problems, 'node', found, data.nodes)
+    return problems[:20]
+
+
+def verify_xml_ways_geom(data, out):
+    root, err = parse_xml(out)
+    if err:
+        return err
+    problems = []
+    found = {}
+    for e in root.findall('way'):
+        i = int(e.get('id'))
+        found[i] = e
+        if i not in data.ways:
+            continue
+        nds = e.findall('nd')
+        refs = [int(n.get('ref')) for n in nds]
+        if refs != data.ways[i]:
+            problems.append(f'way {i}: nodes {refs}, expected {data.ways[i]}')
+            continue
+        for n in nds:
+            expect_coord(problems, f'way {i} node {n.get("ref")}', n.get('lat'), n.get('lon'),
+                         data.nodes[int(n.get('ref'))])
+        bounds_problems(problems, f'way {i}', e.find('bounds'), data.way_pts(i))
+        expect_meta(problems, f'way {i}', e.attrib, data, 'way', i)
+        expect_tags(problems, f'way {i}', xml_tags(e), data.way_tags.get(i, {}))
+    expect_ids(problems, 'way', found, data.ways)
+    return problems[:20]
+
+
+def verify_xml_ways_bb(data, out):
+    root, err = parse_xml(out)
+    if err:
+        return err
+    problems = []
+    found = {}
+    for e in root.findall('way'):
+        i = int(e.get('id'))
+        found[i] = e
+        if i in data.ways:
+            bounds_problems(problems, f'way {i}', e.find('bounds'), data.way_pts(i))
+    expect_ids(problems, 'way', found, data.ways)
+    return problems[:20]
+
+
+def verify_xml_rels_geom(data, out):
+    root, err = parse_xml(out)
+    if err:
+        return err
+    problems = []
+    found = {}
+    for e in root.findall('relation'):
+        i = int(e.get('id'))
+        found[i] = e
+        if i not in data.rels:
+            continue
+        mems = e.findall('member')
+        got = [(m.get('type'), int(m.get('ref')), m.get('role')) for m in mems]
+        if got != list(data.rels[i]):
+            problems.append(f'relation {i}: members {got}, expected {data.rels[i]}')
+            continue
+        pts = []
+        for m, (t, ref, _) in zip(mems, data.rels[i]):
+            if t == 'node':
+                expect_coord(problems, f'relation {i} node {ref}', m.get('lat'), m.get('lon'), data.nodes[ref])
+                pts.append(data.nodes[ref])
+            elif t == 'way':
+                nds = m.findall('nd')
+                want = data.way_pts(ref)
+                if len(nds) != len(want):
+                    problems.append(f'relation {i} way {ref}: {len(nds)} points, expected {len(want)}')
+                    continue
+                for n, p in zip(nds, want):
+                    expect_coord(problems, f'relation {i} way {ref}', n.get('lat'), n.get('lon'), p)
+                pts.extend(want)
+        if pts:
+            bounds_problems(problems, f'relation {i}', e.find('bounds'), pts)
+        expect_tags(problems, f'relation {i}', xml_tags(e), data.rel_tags.get(i, {}))
+    expect_ids(problems, 'relation', found, data.rels)
+    return problems[:20]
+
+
+def no_verify(data, out):
+    return []
+
+
+def gen_output_checks(data, seed):
+    rels = ','.join(map(str, sorted(data.rels)))
+    return [
+        ('out meta xml', f'node({WORLD});\nout meta;\n', verify_xml_nodes_meta),
+        ('out meta json', f'[out:json];\nnode({WORLD});\nout meta;\n', verify_json_nodes_meta),
+        ('out geom ways', f'way({WORLD});\nout meta geom;\n', verify_xml_ways_geom),
+        ('out bb ways', f'way({WORLD});\nout bb;\n', verify_xml_ways_bb),
+        ('out geom rels', f'rel(id:{rels});\nout geom;\n', verify_xml_rels_geom),
+        # Compared with the baseline only.
+        ('out json geom', f'[out:json];\n(way({WORLD}); rel(id:{rels}););\nout geom;\n', no_verify),
+        ('out center', f'(way({WORLD}); rel(id:{rels}););\nout center;\n', no_verify),
+        ('out csv', f'[out:csv(::type,::id,::lat,::lon,::user,name,note,ref)];\nnwr({WORLD});\nout;\n',
+         no_verify),
+        ('out skel qt', f'(way({WORLD}); >;);\nout skel qt;\n', no_verify),
+    ]
 
 
 # ---------------------------------------------------------------------------------------
@@ -536,6 +772,19 @@ def run_query(bindir, db, query):
     return rc, out, err
 
 
+def run_raw(bindir, db, query):
+    try:
+        rc, out, err, _ = run_osm3s(bindir, db, query.encode(), timeout=120)
+    except subprocess.TimeoutExpired:
+        return -1, b'', b'timeout'
+    return rc, out, err
+
+
+def strip_generator(out):
+    """Drop the lines that name the build, as compare.py does."""
+    return b'\n'.join(line for line in out.split(b'\n') if b'generator' not in line)
+
+
 def verify(result, must, must_not, exact):
     """Problems with one result, as a list of strings (empty if it's right)."""
     problems = []
@@ -551,7 +800,7 @@ def verify(result, must, must_not, exact):
     return problems
 
 
-def describe_failure(out_dir, seed, k, data, query, cand, base, expected, problems):
+def describe_failure(out_dir, seed, k, data, query, cand, base, expected, problems, raw=False):
     if not out_dir:
         return None
     d = os.path.join(out_dir, f'{seed}-{k}')
@@ -559,7 +808,7 @@ def describe_failure(out_dir, seed, k, data, query, cand, base, expected, proble
     with open(os.path.join(d, 'data.osm'), 'w') as f:
         f.write(data.to_xml())
     with open(os.path.join(d, 'query.ql'), 'wb') as f:
-        f.write(wrap(query))
+        f.write(query.encode() if raw else wrap(query))
     with open(os.path.join(d, 'candidate.out'), 'wb') as f:
         f.write(cand)
     if base is not None:
@@ -594,6 +843,21 @@ def run_seed(seed, args, tmp):
             where = describe_failure(args.out_dir, seed, k, data, query, out, base_out,
                                      (must, must_not, exact), cand_problems)
         results.append((name, query, cand_problems, base_problems, differs, where))
+    for k, (name, script, check) in enumerate(gen_output_checks(data, seed), start=len(checks)):
+        query = f'[timeout:60];\n{script}' if not script.startswith('[') else script
+        rc, out, err = run_raw(args.bin, db, query)
+        cand_problems = check(data, out) if rc == 0 else [
+            f'exit status {rc}: {err.decode(errors="replace").strip()[-300:]}']
+        base_out, base_problems, differs = None, None, False
+        if args.baseline:
+            brc, base_out, berr = run_raw(args.baseline, db, query)
+            base_problems = check(data, base_out) if brc == 0 else [f'exit status {brc}']
+            differs = (brc, strip_generator(base_out)) != (rc, strip_generator(out))
+        where = None
+        if cand_problems or differs:
+            where = describe_failure(args.out_dir, seed, k, data, query, out, base_out,
+                                     (set(), set(), False), cand_problems, raw=True)
+        results.append((name, query.strip().replace('\n', ' '), cand_problems, base_problems, differs, where))
     shutil.rmtree(db, ignore_errors=True)
     return seed, data.scale, results
 
