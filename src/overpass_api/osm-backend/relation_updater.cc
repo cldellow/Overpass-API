@@ -1218,6 +1218,49 @@ void Relation_Updater::update(Osm_Backend_Callback* callback, Cpu_Stopwatch* cpu
         (existing_attic_map_positions, existing_idx_lists,
 	 *transaction, *attic_settings().RELATIONS, *attic_settings().RELATIONS_UNDELETED);
 
+    // An import without dispatcher may have written the member nodes and ways in earlier batches.
+    // Their attic versions are then only in the database, but older relation versions need them.
+    std::map< Node::Index, std::set< Attic< Node_Skeleton > > > stored_and_new_attic_nodes;
+    std::map< Uint31_Index, std::set< Attic< Way_Delta > > > stored_and_new_attic_ways;
+    const std::map< Node::Index, std::set< Attic< Node_Skeleton > > >* attic_nodes = &new_attic_node_skeletons;
+    const std::map< Uint31_Index, std::set< Attic< Way_Delta > > >* attic_ways = &new_attic_way_skeletons;
+    if (!external_transaction)
+    {
+      std::vector< Node_Skeleton::Id_Type > node_ids;
+      std::vector< Way_Skeleton::Id_Type > way_ids;
+      auto collect = [&node_ids, &way_ids](const std::vector< Relation_Entry >& members)
+      {
+        for (auto it = members.begin(); it != members.end(); ++it)
+        {
+          if (it->type == Relation_Entry::NODE)
+            node_ids.push_back(Node_Skeleton::Id_Type(it->ref.val()));
+          else if (it->type == Relation_Entry::WAY)
+            way_ids.push_back(Way_Skeleton::Id_Type(it->ref.val()));
+        }
+      };
+      for (auto it = new_data.data.begin(); it != new_data.data.end(); ++it)
+        collect(it->elem.members);
+      for (auto it = implicitly_moved_skeletons.begin(); it != implicitly_moved_skeletons.end(); ++it)
+      {
+        for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
+          collect(it2->members);
+      }
+      std::sort(node_ids.begin(), node_ids.end());
+      node_ids.erase(std::unique(node_ids.begin(), node_ids.end()), node_ids.end());
+      std::sort(way_ids.begin(), way_ids.end());
+      way_ids.erase(std::unique(way_ids.begin(), way_ids.end()), way_ids.end());
+
+      stored_and_new_attic_nodes = new_attic_node_skeletons;
+      add_stored_attic_skeletons< Node::Index, Node_Skeleton >(node_ids, *transaction,
+          *attic_settings().NODES, *attic_settings().NODE_IDX_LIST, stored_and_new_attic_nodes);
+      attic_nodes = &stored_and_new_attic_nodes;
+
+      stored_and_new_attic_ways = new_attic_way_skeletons;
+      add_stored_attic_skeletons< Uint31_Index, Way_Delta >(way_ids, *transaction,
+          *attic_settings().WAYS, *attic_settings().WAY_IDX_LIST, stored_and_new_attic_ways);
+      attic_ways = &stored_and_new_attic_ways;
+    }
+
     // Compute which objects really have changed
     new_attic_skeletons.clear();
     std::map< Relation_Skeleton::Id_Type, std::set< Uint31_Index > > new_attic_idx_lists = existing_idx_lists;
@@ -1226,8 +1269,8 @@ void Relation_Updater::update(Osm_Backend_Callback* callback, Cpu_Stopwatch* cpu
     compute_new_attic_skeletons(new_data, implicitly_moved_skeletons,
                                 existing_map_positions, existing_attic_map_positions, attic_skeletons,
 				existing_attic_skeleton_timestamps,
-                                new_node_idx_by_id, new_attic_node_skeletons,
-                                new_way_idx_by_id, new_attic_way_skeletons,
+                                new_node_idx_by_id, *attic_nodes,
+                                new_way_idx_by_id, *attic_ways,
                                 new_attic_skeletons, new_undeleted, new_attic_idx_lists, attic_skeletons_to_delete);
 
     std::map< Relation_Skeleton::Id_Type, std::vector< Attic< Uint31_Index > > > new_attic_idx_by_id_and_time =
@@ -1248,8 +1291,8 @@ void Relation_Updater::update(Osm_Backend_Callback* callback, Cpu_Stopwatch* cpu
     std::map< Timestamp, std::vector< Relation_Skeleton::Id_Type > > changelog
         = compute_changelog(new_data, implicitly_moved_skeletons,
                             existing_map_positions, existing_attic_map_positions, attic_skeletons,
-                            new_node_idx_by_id, new_attic_node_skeletons,
-                            new_way_idx_by_id, new_attic_way_skeletons);
+                            new_node_idx_by_id, *attic_nodes,
+                            new_way_idx_by_id, *attic_ways);
 
     strip_single_idxs(existing_idx_lists);
     std::vector< std::pair< Relation_Skeleton::Id_Type, Uint31_Index > > new_attic_map_positions

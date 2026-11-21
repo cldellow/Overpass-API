@@ -948,6 +948,29 @@ void Way_Updater::update(Osm_Backend_Callback* callback, Cpu_Stopwatch* cpu_stop
 
     callback->compute_attic_started();
     // Compute which objects really have changed
+    // An import without dispatcher may have written the nodes in earlier batches.
+    // Their attic versions are then only in the database, but older way versions need them.
+    std::map< Node::Index, std::set< Attic< Node_Skeleton > > > stored_and_new_attic_nodes;
+    const std::map< Node::Index, std::set< Attic< Node_Skeleton > > >* attic_nodes = &new_attic_node_skeletons;
+    if (!external_transaction)
+    {
+      std::vector< Node_Skeleton::Id_Type > node_ids;
+      for (auto it = new_data.data.begin(); it != new_data.data.end(); ++it)
+        node_ids.insert(node_ids.end(), it->elem.nds.begin(), it->elem.nds.end());
+      for (auto it = implicitly_moved_skeletons.begin(); it != implicitly_moved_skeletons.end(); ++it)
+      {
+        for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
+          node_ids.insert(node_ids.end(), it2->nds.begin(), it2->nds.end());
+      }
+      std::sort(node_ids.begin(), node_ids.end());
+      node_ids.erase(std::unique(node_ids.begin(), node_ids.end()), node_ids.end());
+
+      stored_and_new_attic_nodes = new_attic_node_skeletons;
+      add_stored_attic_skeletons< Node::Index, Node_Skeleton >(node_ids, *transaction,
+          *attic_settings().NODES, *attic_settings().NODE_IDX_LIST, stored_and_new_attic_nodes);
+      attic_nodes = &stored_and_new_attic_nodes;
+    }
+
     new_attic_skeletons.clear();
     std::map< Way_Skeleton::Id_Type, std::set< Uint31_Index > > new_attic_idx_lists = existing_idx_lists;
     std::map< Uint31_Index, std::set< Attic< Way_Skeleton::Id_Type > > > new_undeleted;
@@ -955,7 +978,7 @@ void Way_Updater::update(Osm_Backend_Callback* callback, Cpu_Stopwatch* cpu_stop
     compute_new_attic_skeletons(new_data, implicitly_moved_skeletons,
                                 existing_map_positions, existing_attic_map_positions, attic_skeletons,
 				existing_attic_skeleton_timestamps,
-                                new_node_idx_by_id, new_attic_node_skeletons,
+                                new_node_idx_by_id, *attic_nodes,
                                 new_attic_skeletons, new_undeleted, new_attic_idx_lists, attic_skeletons_to_delete);
 
     std::map< Way_Skeleton::Id_Type, std::vector< Attic< Uint31_Index > > > new_attic_idx_by_id_and_time =
@@ -976,7 +999,7 @@ void Way_Updater::update(Osm_Backend_Callback* callback, Cpu_Stopwatch* cpu_stop
     std::map< Timestamp, std::vector< Way_Skeleton::Id_Type > > changelog
         = compute_changelog(new_data, implicitly_moved_skeletons,
                             existing_map_positions, existing_attic_map_positions, attic_skeletons,
-                            new_node_idx_by_id, new_attic_node_skeletons);
+                            new_node_idx_by_id, *attic_nodes);
 
     strip_single_idxs(existing_idx_lists);
     std::vector< std::pair< Way_Skeleton::Id_Type, Uint31_Index > > new_attic_map_positions
