@@ -170,6 +170,22 @@ def meters(p, q):
     return math.radians(math.hypot(dy, dx)) * EARTH_ARC_TO_M
 
 
+def local_m(p, lat0):
+    """Unit coordinates -> local planar metres (good to well under 0.1% within a few km)."""
+    k = math.radians(1 / UNIT) * EARTH_ARC_TO_M
+    return (p[0] * k, p[1] * k * math.cos(math.radians(lat0 / UNIT)))
+
+
+def meters_geom(a, b, lat0):
+    """Distance in metres between two geometries, each a list of points (one point, or a
+    polyline)."""
+    pa = [local_m(p, lat0) for p in a]
+    pb = [local_m(p, lat0) for p in b]
+    sa = list(zip(pa, pa[1:])) or [(pa[0], pa[0])]
+    sb = list(zip(pb, pb[1:])) or [(pb[0], pb[0])]
+    return min(seg_seg_dist(x, y, u, v) for x, y in sa for u, v in sb)
+
+
 def meters_to_line(p, pts):
     if len(pts) == 1:
         return meters(p, pts[0])
@@ -535,6 +551,42 @@ def gen_checks(data, seed):
     ts = rnd.choice(TIMESTAMPS[:2])
     add('newer', f'node(newer:"{ts}");', {('node', i) for i in nodes if data.meta[('node', i)][1] >= ts},
         exact=True)
+    checks += gen_around_set_checks(data, seed, plain)
+    return checks
+
+
+def gen_around_set_checks(data, seed, plain):
+    """around with an input set (nodes, a way, a relation), from its own random stream so
+    the other queries of a seed are unchanged."""
+    if data.scale not in ('tile', 'wide'):
+        return []
+    rnd = random.Random(seed * 6151 + 11)
+    checks = []
+    nodes, ways = data.nodes, data.ways
+    lat0 = data.origin[0]
+    route = next(r for r, t in data.rel_tags.items() if t.get('type') == 'route')
+    inputs = []
+    some = rnd.sample(plain, 3)
+    inputs.append((f'node(id:{",".join(map(str, some))})', [[nodes[n]] for n in some]))
+    w = rnd.choice(list(ways))
+    inputs.append((f'way({w})', [data.way_pts(w)]))
+    inputs.append((f'relation({route})', [data.way_pts(ref) if t == 'way' else [nodes[ref]]
+                                          for t, ref, _ in data.rels[route]]))
+    for src, geoms in inputs:
+        ref = rnd.choice(plain)
+        r = round(min(meters_geom([nodes[ref]], g, lat0) for g in geoms) * rnd.uniform(0.8, 1.2) + 1, 1)
+        tol = 0.5 + r * 1e-3
+        dist_n = {i: min(meters_geom([p], g, lat0) for g in geoms) for i, p in nodes.items()}
+        dist_w = {i: min(meters_geom(data.way_pts(i), g, lat0) for g in geoms) for i in ways}
+        for kind, dist in (('node', dist_n), ('way', dist_w)):
+            must = {(kind, i) for i, d in dist.items() if d < r - tol}
+            must_not = {(kind, i) for i, d in dist.items() if d > r + tol}
+            checks.append((f'around set {kind}s', f'{src}->.s; {kind}(around.s:{r});', must, must_not, False))
+    # A large radius with a tag filter (the tag index may drive it).
+    c = nodes[rnd.choice(plain)]
+    cafes = {('node', i) for i in plain if data.node_tags.get(i, {}).get('amenity') == 'cafe'}
+    checks.append(('around large + tag', f'node[amenity=cafe](around:150000,{deg(c[0])},{deg(c[1])});',
+                   cafes, set(), True))
     return checks
 
 
@@ -752,7 +804,12 @@ def import_db(bindir, data, db):
 
 
 def wrap(query):
-    return f'[out:csv(::type,::id;false)][timeout:60];\n{query}\nout ids;\n'.encode()
+    # Settings must all be in the first statement, so merge a query's own ([date:], ...).
+    settings = ''
+    if query.startswith('['):
+        settings, query = query.split(';', 1)
+        query = query.lstrip()
+    return f'[out:csv(::type,::id;false)][timeout:60]{settings};\n{query}\nout ids;\n'.encode()
 
 
 def parse(out):
@@ -821,11 +878,7 @@ def describe_failure(out_dir, seed, k, data, query, cand, base, expected, proble
     return d
 
 
-def run_seed(seed, args, tmp):
-    data = generate(seed)
-    checks = gen_checks(data, seed)
-    db = os.path.join(tmp, f'db-{seed}')
-    import_db(args.import_bin, data, db)
+def run_checks(args, db, data, checks, seed, prefix=''):
     results = []
     for k, (name, query, must, must_not, exact) in enumerate(checks):
         rc, out, err = run_query(args.bin, db, query)
@@ -840,10 +893,44 @@ def run_seed(seed, args, tmp):
         failed = bool(cand_problems) or differs
         where = None
         if failed:
-            where = describe_failure(args.out_dir, seed, k, data, query, out, base_out,
+            where = describe_failure(args.out_dir, seed, f'{prefix}{k}', data, query, out, base_out,
                                      (must, must_not, exact), cand_problems)
         results.append((name, query, cand_problems, base_problems, differs, where))
-    for k, (name, script, check) in enumerate(gen_output_checks(data, seed), start=len(checks)):
+    return results
+
+
+def import_history_db(bindir, h, db):
+    os.makedirs(db, exist_ok=True)
+    p = subprocess.run([os.path.join(bindir, 'update_database'), f'--db-dir={db}/', '--meta', '--keep-attic'],
+                       input=h.to_xml().encode(), capture_output=True)
+    if p.returncode != 0:
+        raise RuntimeError(f'update_database (history) failed: {p.stderr.decode(errors="replace")[-2000:]}')
+
+
+def run_seed(seed, args, tmp):
+    data = generate(seed)
+    checks = gen_checks(data, seed)
+    db = os.path.join(tmp, f'db-{seed}')
+    import_db(args.import_bin, data, db)
+    results = run_checks(args, db, data, checks, seed)
+    results += run_output_checks(args, db, data, gen_output_checks(data, seed), seed, len(checks))
+    shutil.rmtree(db, ignore_errors=True)
+    if args.history_import_bin:
+        import history
+        h = history.generate_history(seed)
+        hdb = os.path.join(tmp, f'hdb-{seed}')
+        import_history_db(args.history_import_bin, h, hdb)
+        hchecks = history.gen_history_checks(h, seed)
+        results += run_checks(args, hdb, h, hchecks, seed, prefix='h')
+        results += run_output_checks(args, hdb, h, history.gen_history_output_checks(h, seed), seed,
+                                     len(hchecks), prefix='h')
+        shutil.rmtree(hdb, ignore_errors=True)
+    return seed, data.scale, results
+
+
+def run_output_checks(args, db, data, out_checks, seed, start, prefix=''):
+    results = []
+    for k, (name, script, check) in enumerate(out_checks, start=start):
         query = f'[timeout:60];\n{script}' if not script.startswith('[') else script
         rc, out, err = run_raw(args.bin, db, query)
         cand_problems = check(data, out) if rc == 0 else [
@@ -855,11 +942,10 @@ def run_seed(seed, args, tmp):
             differs = (brc, strip_generator(base_out)) != (rc, strip_generator(out))
         where = None
         if cand_problems or differs:
-            where = describe_failure(args.out_dir, seed, k, data, query, out, base_out,
+            where = describe_failure(args.out_dir, seed, f'{prefix}{k}', data, query, out, base_out,
                                      (set(), set(), False), cand_problems, raw=True)
         results.append((name, query.strip().replace('\n', ' '), cand_problems, base_problems, differs, where))
-    shutil.rmtree(db, ignore_errors=True)
-    return seed, data.scale, results
+    return results
 
 
 def parse_seeds(text):
@@ -879,6 +965,9 @@ def main():
     ap.add_argument('--baseline', help='directory of the baseline build; outputs must match it byte for byte')
     ap.add_argument('--import-bin', help='build whose update_database creates the databases '
                     '(default: --baseline if given, else --bin), so both builds query the same files')
+    ap.add_argument('--history-import-bin', help='also build a history database per seed with this '
+                    'build\'s update_database (it must import full history correctly, e.g. better-imports) '
+                    'and run the [date:] checks on it')
     ap.add_argument('--seeds', default='1-40', help='seeds, e.g. 1-40 or 3,7,9 (default 1-40)')
     ap.add_argument('--jobs', type=int, default=os.cpu_count() or 1)
     ap.add_argument('--out-dir', help='write each failure to OUT_DIR/<seed>-<check>/')

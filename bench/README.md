@@ -140,11 +140,26 @@ python3 bench/props/props.py --seeds 7 --show
   at extreme coordinates (0, one unit either side of 0, next to the poles and the antimeridian),
   and tag values and user names that need escaping (`&`, `<`, quotes, newlines, tabs, non-ASCII
   text, a 300-character value, an empty value).
+- **History:** with `--history-import-bin BETTER_IMPORTS/build/bin`, each seed also gets a history
+  database: the seed's data as version 1 in 2019, then three rounds of edits in 2020-2022 (nodes
+  moved, some by a single unit; tags changed; nodes and ways deleted and created; way node lists
+  and relation members changed), imported as one full-history file with `--meta --keep-attic`.
+  `upstream/master` imports full history incorrectly, so use a `better-imports` build for the
+  import. At twelve dates (before the data, at each edit, a second either side, in between,
+  after), `[date:]` queries are checked exactly: bbox, tag, id, `uid`, `node(w)`, `way(bn)`,
+  `way(r)`, `>` from ways and relations, and `out meta` and `out meta geom` (versions, node lists
+  and coordinates as of the date); `way(bbox)` and `poly:` with a margin. Also `changed` (an
+  element counts if a version falls in the interval; a way also counts if one of its nodes
+  moved then, but not for a node's tag edit), and `uid_touched`/`user_touched` (any version by
+  the user, also one after a `[date:]`, which is what upstream does). `[diff:]` and `[adiff:]`
+  outputs are compared with the baseline only.
 - **Failures on the baseline too** are counted separately and don't fail the run: they're
   upstream behaviour, not a regression. Expect some in the `poly ways` and `area ways` rows:
   upstream misses ways that cross a polygon edge when `uint32` latitudes wrap around in
   `ordered_intersects_inner`, and `way(area)` drops a way that touches the area's border if it
-  also crosses the interior.
+  also crosses the interior. With history, `date rel >` fails occasionally: at a past date,
+  `relation; >;` also returns nodes of a member way's current version when they're in another
+  index tile.
 - **Failures** are printed with their seed and query, and with `--out-dir` written to
   `OUT_DIR/<seed>-<check>/{data.osm,query.ql,candidate.out,baseline.out,problems.txt}`. The exit
   status is 1 if any check fails on the candidate but not the baseline, or any output differs.
