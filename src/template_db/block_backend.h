@@ -94,6 +94,12 @@ struct Block_Backend_Basic_Iterator
   {
     return idx_cache.object();
   }
+  // The serialized bytes of the current index, for reading a field without
+  // deserializing the whole index object.
+  const uint8* index_raw() const
+  {
+    return idx_cache.get_ptr_to_raw();
+  }
   const Object& object()
   {
     return obj_cache.object();

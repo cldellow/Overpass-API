@@ -140,6 +140,13 @@ struct Tag_Index_Local
   Tag_Index_Local(Uint31_Index index_, std::string key_, std::string value_)
       : index(index_.val() & 0x7fffff00), key(key_), value(value_) {}
 
+  // The index field of a serialized Tag_Index_Local, read without building the key and
+  // value strings. Equal to Tag_Index_Local(data).index.
+  static uint32 index_of(const void* data)
+  {
+    return (*((const uint32*)data + 1))<<8;
+  }
+
   Tag_Index_Local(void* data)
   {
     index = (*((uint32*)data + 1))<<8;

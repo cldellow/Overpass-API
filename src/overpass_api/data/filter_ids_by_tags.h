@@ -41,7 +41,7 @@ void filter_ids_by_tags
   std::vector< std::vector< Id_Type > > matched_ids(key_regexes.size());
 
   while ((!(tag_it == items_db.range_end())) &&
-      (((tag_it.index().index) & bitmask) == coarse_index))
+      (((Tag_Index_Local::index_of(tag_it.index_raw())) & bitmask) == coarse_index))
   {
     if (tag_it.index().key != last_key)
     {
@@ -111,7 +111,7 @@ void filter_ids_by_tags
     ++tag_it;
   }
   while ((!(tag_it == items_db.range_end())) &&
-      (((tag_it.index().index) & bitmask) == coarse_index))
+      (((Tag_Index_Local::index_of(tag_it.index_raw())) & bitmask) == coarse_index))
     ++tag_it;
 
   if (key_relevant && key_it != keys.end())
@@ -364,10 +364,10 @@ void filter_ids_by_tags
   while (true)
   {
     bool current_finished =
-        (tag_it == items_db.range_end() || ((tag_it.index().index) & 0x7fffff00) != coarse_index);
+        (tag_it == items_db.range_end() || ((Tag_Index_Local::index_of(tag_it.index_raw())) & 0x7fffff00) != coarse_index);
     bool attic_finished =
         (attic_tag_it == attic_items_db.range_end()
-        || ((attic_tag_it.index().index) & 0x7fffff00) != coarse_index);
+        || ((Tag_Index_Local::index_of(attic_tag_it.index_raw())) & 0x7fffff00) != coarse_index);
 
     if (!attic_finished && (current_finished || attic_tag_it.index().key < tag_it.index().key))
     {

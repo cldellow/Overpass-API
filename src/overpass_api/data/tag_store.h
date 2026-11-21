@@ -90,10 +90,10 @@ void collect_attic_tags
 
   // Collect all id-matched tag information from the current tags
   while ((!(current_tag_it == current_items_db.range_end())) &&
-      (((current_tag_it.index().index) & 0x7fffff00) < coarse_index))
+      (((Tag_Index_Local::index_of(current_tag_it.index_raw())) & 0x7fffff00) < coarse_index))
     ++current_tag_it;
   while ((!(current_tag_it == current_items_db.range_end())) &&
-      (((current_tag_it.index().index) & 0x7fffff00) == coarse_index))
+      (((Tag_Index_Local::index_of(current_tag_it.index_raw())) & 0x7fffff00) == coarse_index))
   {
     typename std::vector< Attic< Id_Type > >::const_iterator it_id
         = std::lower_bound(id_vec.begin(), id_vec.end(), Attic< Id_Type >(current_tag_it.object(), 0ull));
@@ -108,10 +108,10 @@ void collect_attic_tags
 
   // Collect all id-matched tag information that is younger than the respective timestamp from the attic tags
   while ((!(attic_tag_it == attic_items_db.range_end())) &&
-      (((attic_tag_it.index().index) & 0x7fffff00) < coarse_index))
+      (((Tag_Index_Local::index_of(attic_tag_it.index_raw())) & 0x7fffff00) < coarse_index))
     ++attic_tag_it;
   while ((!(attic_tag_it == attic_items_db.range_end())) &&
-      (((attic_tag_it.index().index) & 0x7fffff00) == coarse_index))
+      (((Tag_Index_Local::index_of(attic_tag_it.index_raw())) & 0x7fffff00) == coarse_index))
   {
     typename std::vector< Attic< Id_Type > >::const_iterator it_id
         = std::lower_bound(id_vec.begin(), id_vec.end(), Attic< Id_Type >(attic_tag_it.object(), 0ull));
@@ -227,10 +227,10 @@ void collect_tags
    const std::vector< Id_Type >& ids, uint32 coarse_index)
 {
   while ((!(tag_it == items_db.range_end())) &&
-      (((tag_it.index().index) & 0x7fffff00) < coarse_index))
+      (((Tag_Index_Local::index_of(tag_it.index_raw())) & 0x7fffff00) < coarse_index))
     ++tag_it;
   while ((!(tag_it == items_db.range_end())) &&
-      (((tag_it.index().index) & 0x7fffff00) == coarse_index))
+      (((Tag_Index_Local::index_of(tag_it.index_raw())) & 0x7fffff00) == coarse_index))
   {
     if ((binary_search(ids.begin(), ids.end(), tag_it.object())))
       tags_by_id[tag_it.object()].push_back
@@ -249,18 +249,22 @@ void collect_tags_framed
    uint32 coarse_index,
    Id_Type lower_id_bound, Id_Type upper_id_bound)
 {
+  // Looked up once, when the first entry within the id bounds needs it.
+  std::vector< Id_Type >* ids = 0;
   while ((!(tag_it == items_db.range_end())) &&
-      (((tag_it.index().index) & 0x7fffff00) < coarse_index))
+      (((Tag_Index_Local::index_of(tag_it.index_raw())) & 0x7fffff00) < coarse_index))
     ++tag_it;
   while ((!(tag_it == items_db.range_end())) &&
-      (((tag_it.index().index) & 0x7fffff00) == coarse_index))
+      (((Tag_Index_Local::index_of(tag_it.index_raw())) & 0x7fffff00) == coarse_index))
   {
-    if (!(tag_it.object() < lower_id_bound) &&
-      (tag_it.object() < upper_id_bound) &&
-      (binary_search(ids_by_coarse[coarse_index].begin(),
-	ids_by_coarse[coarse_index].end(), tag_it.object())))
-      tags_by_id[tag_it.object()].push_back
-          (std::make_pair(tag_it.index().key, tag_it.index().value));
+    if (!(tag_it.object() < lower_id_bound) && (tag_it.object() < upper_id_bound))
+    {
+      if (!ids)
+        ids = &ids_by_coarse[coarse_index];
+      if (binary_search(ids->begin(), ids->end(), tag_it.object()))
+        tags_by_id[tag_it.object()].push_back
+            (std::make_pair(tag_it.index().key, tag_it.index().value));
+    }
     ++tag_it;
   }
 }
