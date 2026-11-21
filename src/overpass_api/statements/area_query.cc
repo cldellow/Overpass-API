@@ -592,6 +592,15 @@ void Area_Query_Statement::collect_nodes
 	areas[area_it.object().id].push_back(area_it.object());
       ++area_it;
     }
+    // The same blocks decoded once for this tile, for the point-in-area tests below.
+    std::map< Area_Skeleton::Id_Type, std::vector< Coord_Query_Statement::Decoded_Area_Block > > decoded;
+    for (std::map< Area_Skeleton::Id_Type, std::vector< Area_Block > >::const_iterator it = areas.begin();
+        it != areas.end(); ++it)
+    {
+      std::vector< Coord_Query_Statement::Decoded_Area_Block >& blocks = decoded[it->first];
+      for (std::vector< Area_Block >::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
+        blocks.push_back(Coord_Query_Statement::Decoded_Area_Block(current_idx, *it2));
+    }
 
     while (nodes_it != nodes.end() && nodes_it->first.val() < current_idx)
     {
@@ -613,12 +622,13 @@ void Area_Query_Statement::collect_nodes
 	     it != areas.end(); ++it)
         {
           int inside = 0;
-          for (std::vector< Area_Block >::const_iterator it2 = it->second.begin(); it2 != it->second.end();
-	       ++it2)
+          const std::vector< Coord_Query_Statement::Decoded_Area_Block >& blocks = decoded[it->first];
+          for (std::vector< Coord_Query_Statement::Decoded_Area_Block >::const_iterator it2 = blocks.begin();
+	       it2 != blocks.end(); ++it2)
           {
             ++loop_count;
 
-	    int check(Coord_Query_Statement::check_area_block(current_idx, *it2, ilat, ilon));
+	    int check(Coord_Query_Statement::check_area_block(*it2, ilat, ilon));
 	    if (check == Coord_Query_Statement::HIT && add_border)
 	    {
 	      inside = 1;
@@ -801,6 +811,13 @@ int intersects_inner(const Area_Block& string_a, const Area_Block& string_b)
 
 void has_inner_points(const Area_Block& string_a, const Area_Block& string_b, int& inside)
 {
+  has_inner_points(string_a, Coord_Query_Statement::Decoded_Area_Block(0, string_b), inside);
+}
+
+
+void has_inner_points(const Area_Block& string_a, const Coord_Query_Statement::Decoded_Area_Block& string_b,
+    int& inside)
+{
   std::vector< std::pair< uint32, uint32 > > coords_a;
   for (std::vector< uint64 >::const_iterator it = string_a.coors.begin(); it != string_a.coors.end(); ++it)
     coords_a.push_back(std::make_pair(::ilat(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull)),
@@ -812,7 +829,7 @@ void has_inner_points(const Area_Block& string_a, const Area_Block& string_b, in
   {
     uint32 ilat = (coords_a[i].first + coords_a[i+1].first)/2;
     uint32 ilon = (coords_a[i].second + coords_a[i+1].second)/2 + 0x80000000u;
-    int check = Coord_Query_Statement::check_area_block(0, string_b, ilat, ilon);
+    int check = Coord_Query_Statement::check_area_block(string_b, ilat, ilon);
     if (check & Coord_Query_Statement::HIT)
       inside = check;
     else if (check)
@@ -875,6 +892,15 @@ void Area_Query_Statement::collect_ways
 	areas[area_it.object().id].push_back(area_it.object());
       ++area_it;
     }
+    // The same blocks decoded once for this tile, for the point-in-area tests below.
+    std::map< Area_Skeleton::Id_Type, std::vector< Coord_Query_Statement::Decoded_Area_Block > > decoded;
+    for (std::map< Area_Skeleton::Id_Type, std::vector< Area_Block > >::const_iterator it = areas.begin();
+        it != areas.end(); ++it)
+    {
+      std::vector< Coord_Query_Statement::Decoded_Area_Block >& blocks = decoded[it->first];
+      for (std::vector< Area_Block >::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
+        blocks.push_back(Coord_Query_Statement::Decoded_Area_Block(current_idx, *it2));
+    }
 
     // check nodes
     while (nodes_it != way_coords_to_id.end() && nodes_it->first < current_idx)
@@ -892,12 +918,13 @@ void Area_Query_Statement::collect_ways
 	     it != areas.end(); ++it)
         {
           int inside = 0;
-          for (std::vector< Area_Block >::const_iterator it2 = it->second.begin(); it2 != it->second.end();
-	       ++it2)
+          const std::vector< Coord_Query_Statement::Decoded_Area_Block >& blocks = decoded[it->first];
+          for (std::vector< Coord_Query_Statement::Decoded_Area_Block >::const_iterator it2 = blocks.begin();
+	       it2 != blocks.end(); ++it2)
           {
             ++loop_count;
 
-	    int check(Coord_Query_Statement::check_area_block(current_idx, *it2, ilat, ilon));
+	    int check(Coord_Query_Statement::check_area_block(*it2, ilat, ilon));
 	    if (check == Coord_Query_Statement::HIT)
             {
               inside = Coord_Query_Statement::HIT;
@@ -911,6 +938,16 @@ void Area_Query_Statement::collect_ways
         }
       }
       ++nodes_it;
+    }
+
+    // has_inner_points tests segment midpoints against the blocks decoded with ll_index 0.
+    std::map< Area_Skeleton::Id_Type, std::vector< Coord_Query_Statement::Decoded_Area_Block > > decoded_zero;
+    for (std::map< Area_Skeleton::Id_Type, std::vector< Area_Block > >::const_iterator it = areas.begin();
+        it != areas.end(); ++it)
+    {
+      std::vector< Coord_Query_Statement::Decoded_Area_Block >& blocks = decoded_zero[it->first];
+      for (std::vector< Area_Block >::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
+        blocks.push_back(Coord_Query_Statement::Decoded_Area_Block(0, *it2));
     }
 
     // check segments
@@ -945,7 +982,7 @@ void Area_Query_Statement::collect_ways
               area_status[it2->id] = Coord_Query_Statement::HIT;
             break;
           }
-          has_inner_points(*sit, *it2, area_status[it2->id]);
+          has_inner_points(*sit, decoded_zero[it->first][it2 - it->second.begin()], area_status[it2->id]);
 	}
       }
       for (std::map< Area::Id_Type, int >::const_iterator it = area_status.begin(); it != area_status.end(); ++it)
