@@ -48,6 +48,7 @@ class User_Constraint : public Query_Constraint
     bool get_relation_ids(Resource_Manager& rman, std::vector< Relation_Skeleton::Id_Type >& ids) override;
 
     void filter(const Statement& query, Resource_Manager& rman, Set& into) override;
+    bool filter_reads_only_metadata() const override { return true; }
     virtual ~User_Constraint() {}
 
   private:
