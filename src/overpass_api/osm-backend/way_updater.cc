@@ -70,6 +70,7 @@ void compute_idx_and_geometry
          std::vector< std::pair< Node::Index, Attic< Node_Skeleton > > > >& nodes_by_id)
 {
   std::vector< Quad_Coord > geometry;
+  std::vector< uint32 > nd_idxs;
 
   for (std::vector< Node_Skeleton::Id_Type >::const_iterator it = skeleton.nds.begin();
        it != skeleton.nds.end(); ++it)
@@ -86,15 +87,17 @@ void compute_idx_and_geometry
       if (it2 == nit->second.end())
         --it2;
       geometry.push_back(Quad_Coord(it2->first.val(), it2->second.ll_lower));
+      nd_idxs.push_back(it2->first.val());
     }
     else
+    {
+      // The node has no known position, e.g. if an extract has only its deletion.
+      // Like compute_geometry, keep one coordinate per nd, so that the deltas of
+      // older versions can still be expanded, but leave it out of the index.
       std::cerr<<"compute_idx_and_geometry: Node "<<it->val()<<" used in way "<<skeleton.id.val()<<" not found.\n";
-    // Otherwise the node is not contained in our list - something has gone wrong seriously.
+      geometry.push_back(Quad_Coord(0, 0));
+    }
   }
-
-  std::vector< uint32 > nd_idxs;
-  for (std::vector< Quad_Coord >::const_iterator it = geometry.begin(); it != geometry.end(); ++it)
-    nd_idxs.push_back(it->ll_upper);
 
   idx = Way::calc_index(nd_idxs);
 
