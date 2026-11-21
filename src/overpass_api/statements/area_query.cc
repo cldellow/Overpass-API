@@ -758,18 +758,18 @@ inline int longitude_a_intersects_inner
 }
 
 
-int intersects_inner(const Area_Block& string_a, const Area_Block& string_b)
+void decode_coords(const Area_Block& block, Decoded_Coords& coords)
 {
-  std::vector< std::pair< uint32, uint32 > > coords_a;
-  for (std::vector< uint64 >::const_iterator it = string_a.coors.begin(); it != string_a.coors.end(); ++it)
-    coords_a.push_back(std::make_pair(::ilat(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull)),
-				 ::ilon(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull))));
+  coords.clear();
+  coords.reserve(block.coors.size());
+  for (std::vector< uint64 >::const_iterator it = block.coors.begin(); it != block.coors.end(); ++it)
+    coords.push_back(std::make_pair(::ilat(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull)),
+                                    ::ilon(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull))));
+}
 
-  std::vector< std::pair< uint32, uint32 > > coords_b;
-  for (std::vector< uint64 >::const_iterator it = string_b.coors.begin(); it != string_b.coors.end(); ++it)
-    coords_b.push_back(std::make_pair(::ilat(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull)),
-				 ::ilon(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull))));
 
+int intersects_inner(const Decoded_Coords& coords_a, const Decoded_Coords& coords_b)
+{
   for (std::vector< std::pair< uint32, uint32 > >::size_type i = 0; i < coords_a.size()-1; ++i)
   {
     if (coords_a[i].second < coords_a[i+1].second)
@@ -809,19 +809,9 @@ int intersects_inner(const Area_Block& string_a, const Area_Block& string_b)
 }
 
 
-void has_inner_points(const Area_Block& string_a, const Area_Block& string_b, int& inside)
-{
-  has_inner_points(string_a, Coord_Query_Statement::Decoded_Area_Block(0, string_b), inside);
-}
-
-
-void has_inner_points(const Area_Block& string_a, const Coord_Query_Statement::Decoded_Area_Block& string_b,
+void has_inner_points(const Decoded_Coords& coords_a, const Coord_Query_Statement::Decoded_Area_Block& string_b,
     int& inside)
 {
-  std::vector< std::pair< uint32, uint32 > > coords_a;
-  for (std::vector< uint64 >::const_iterator it = string_a.coors.begin(); it != string_a.coors.end(); ++it)
-    coords_a.push_back(std::make_pair(::ilat(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull)),
-                                 ::ilon(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull))));
 
   // Check additionally the middle of the segment to also get segments
   // that run through the area
@@ -942,18 +932,26 @@ void Area_Query_Statement::collect_ways
 
     // has_inner_points tests segment midpoints against the blocks decoded with ll_index 0.
     std::map< Area_Skeleton::Id_Type, std::vector< Coord_Query_Statement::Decoded_Area_Block > > decoded_zero;
+    std::map< Area_Skeleton::Id_Type, std::vector< Decoded_Coords > > area_coords;
     for (std::map< Area_Skeleton::Id_Type, std::vector< Area_Block > >::const_iterator it = areas.begin();
         it != areas.end(); ++it)
     {
       std::vector< Coord_Query_Statement::Decoded_Area_Block >& blocks = decoded_zero[it->first];
+      std::vector< Decoded_Coords >& coords = area_coords[it->first];
       for (std::vector< Area_Block >::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
+      {
         blocks.push_back(Coord_Query_Statement::Decoded_Area_Block(0, *it2));
+        coords.push_back(Decoded_Coords());
+        decode_coords(*it2, coords.back());
+      }
     }
 
     // check segments
+    Decoded_Coords sit_coords;
     for (std::vector< Area_Block >::const_iterator sit = way_segments[Uint31_Index(current_idx)].begin();
 	 sit != way_segments[Uint31_Index(current_idx)].end(); ++sit)
     {
+      decode_coords(*sit, sit_coords);
       std::map< Area::Id_Type, int > area_status;
       for (std::map< Area_Skeleton::Id_Type, std::vector< Area_Block > >::const_iterator it = areas.begin();
 	   it != areas.end(); ++it)
@@ -968,7 +966,7 @@ void Area_Query_Statement::collect_ways
           // The endpoints are properly handled via the point-in-area test
           // Check additionally the middle of the segment to also get segments
           // that run through the area
-          int intersect = intersects_inner(*sit, *it2);
+          int intersect = intersects_inner(sit_coords, area_coords[it->first][it2 - it->second.begin()]);
 	  if (intersect == Coord_Query_Statement::INTERSECT)
 	  {
 	    ways_inside[Way::Id_Type(sit->id)] = true;
@@ -982,7 +980,7 @@ void Area_Query_Statement::collect_ways
               area_status[it2->id] = Coord_Query_Statement::HIT;
             break;
           }
-          has_inner_points(*sit, decoded_zero[it->first][it2 - it->second.begin()], area_status[it2->id]);
+          has_inner_points(sit_coords, decoded_zero[it->first][it2 - it->second.begin()], area_status[it2->id]);
 	}
       }
       for (std::map< Area::Id_Type, int >::const_iterator it = area_status.begin(); it != area_status.end(); ++it)
