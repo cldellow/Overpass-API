@@ -28,7 +28,7 @@ This fork's `master` only adds fork-specific files (this file, the README); neve
 - Start a PR description with `Fixes cldellow/Overpass-API#N.`, one line per issue it fixes.
 - Label every PR by kind: `query-perf` for query performance changes, `import-fix` for import
   changes, `docs` for documentation only. Also add `format-change` if it changes the on-disk
-  format. Give an import change's issues `import-fix` too. Ask if unsure.
+  format, and `bug` if it fixes wrong results. Give the issues the same labels. Ask if unsure.
 - PR descriptions cover the change, the impact on the benchmark queries and on the prompting query
   versus `upstream/master`, testing, and limitations or open questions.
 - Descriptions and commit messages must stand alone. Define every query you cite (full text, or a
