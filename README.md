@@ -1,6 +1,6 @@
-This is a Claude-assisted [^0] fork of [fossgis/Overpass-API](https://github.com/fossgis/Overpass-API).
+This is a Claude-assisted [^0] fork of [fossgis/Overpass-API](https://github.com/fossgis/Overpass-API). This `README` and any issue comments that open with `Colin's thoughts` were written by a meat popsicle. Pretty much everything else was written by Claude.
 
-It is motivated by the [Overpass API performance issues](https://community.openstreetmap.org/t/overpass-api-performance-issues/140598) thread.
+The fork is motivated by the [Overpass API performance issues](https://community.openstreetmap.org/t/overpass-api-performance-issues/140598) thread.
 
 The goal is to produce small patches that can be merged upstream that improve CPU performance [^1], but which don't require on-disk format changes [^2].
 
