@@ -121,10 +121,12 @@ class Area_Query_Statement : public Output_Statement
 };
 
 
-int intersects_inner(const Area_Block& string_a, const Area_Block& string_b);
-
-void has_inner_points(const Area_Block& string_a, const Area_Block& string_b, int& inside);
-void has_inner_points(const Area_Block& string_a, const Coord_Query_Statement::Decoded_Area_Block& string_b,
+// The coordinates of an Area_Block as (ilat, ilon) pairs, decoded once so that the tests
+// below can run against many other blocks without decoding again.
+typedef std::vector< std::pair< uint32, uint32 > > Decoded_Coords;
+void decode_coords(const Area_Block& block, Decoded_Coords& coords);
+int intersects_inner(const Decoded_Coords& coords_a, const Decoded_Coords& coords_b);
+void has_inner_points(const Decoded_Coords& coords_a, const Coord_Query_Statement::Decoded_Area_Block& string_b,
     int& inside);
 
 #endif
