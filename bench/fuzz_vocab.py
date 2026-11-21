@@ -6,11 +6,15 @@ coordinate for each node, relation roles, and the data's bounding box.
 Needs osmium-tool.
 
 Also collects names of relations that become areas (boundaries, admin areas, named
-multipolygons), and, given --osc-dir, the users, user ids and edit timestamps found in a
-directory of osmChange files (the regional diffs of a history database).
+multipolygons), and, given --osc-dir or --history, the users, user ids and edit timestamps
+found in a directory of osmChange files (the regional diffs of a history database) or in a
+full-history file (.osh.pbf).
+
+The users and user ids come from the data, so for a licensed extract the vocabulary is
+covered by the same terms: keep it with the data and never commit or publish it.
 
 Usage:
-  fuzz_vocab.py EXTRACT.osm.pbf VOCAB.json [--seed 1] [--osc-dir DIR]
+  fuzz_vocab.py EXTRACT.osm.pbf VOCAB.json [--seed 1] [--osc-dir DIR | --history FILE.osh.pbf]
 """
 import argparse
 import collections
@@ -18,6 +22,7 @@ import glob
 import json
 import os
 import random
+import re
 import subprocess
 import xml.etree.ElementTree as ET
 
@@ -95,19 +100,48 @@ def area_names(pbf, limit=300):
     return [n for n, _ in names.most_common(limit)]
 
 
-def history_vocab(osc_dir):
-    """Users, user ids and edit timestamps from a directory of osmChange files."""
-    users, uids, times = collections.Counter(), collections.Counter(), []
+def edits_from_osc(osc_dir):
+    """(user, uid, timestamp) of every object version in a directory of osmChange files."""
     for path in sorted(glob.glob(os.path.join(osc_dir, '*.osc'))):
         for _, el in ET.iterparse(path):
             if el.tag in ('node', 'way', 'relation'):
-                if el.get('user') and '"' not in el.get('user') and '\\' not in el.get('user'):
-                    users[el.get('user')] += 1
-                if el.get('uid'):
-                    uids[int(el.get('uid'))] += 1
-                if el.get('timestamp'):
-                    times.append(el.get('timestamp'))
+                yield el.get('user'), el.get('uid'), el.get('timestamp')
                 el.clear()
+
+
+def opl_unescape(text):
+    return re.sub(r'%([0-9a-fA-F]+)%', lambda m: chr(int(m.group(1), 16)), text)
+
+
+def edits_from_history(pbf):
+    """(user, uid, timestamp) of every object version in a full-history file."""
+    proc = subprocess.Popen(['osmium', 'cat', '-f', 'opl', '-o', '-', pbf],
+                            stdout=subprocess.PIPE, text=True)
+    for line in proc.stdout:
+        user = uid = ts = None
+        for field in line.split(' '):
+            if field.startswith('u'):
+                user = opl_unescape(field[1:]) or None
+            elif field.startswith('i'):
+                uid = field[1:] if field[1:] != '0' else None
+            elif field.startswith('t'):
+                ts = field[1:] or None
+            elif field.startswith(('T', 'N', 'M', 'x', 'y')):
+                break
+        yield user, uid, ts
+    proc.wait()
+
+
+def history_vocab(edits):
+    """Users, user ids and edit timestamps from (user, uid, timestamp) triples."""
+    users, uids, times = collections.Counter(), collections.Counter(), []
+    for user, uid, ts in edits:
+        if user and '"' not in user and '\\' not in user:
+            users[user] += 1
+        if uid:
+            uids[int(uid)] += 1
+        if ts:
+            times.append(ts)
     times.sort()
     return {
         'users': [u for u, _ in users.most_common(200)],
@@ -124,6 +158,7 @@ def main():
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--per-type', type=int, default=3000, help='ids to sample per object type')
     parser.add_argument('--osc-dir', help='osmChange files of a history database, for users and dates')
+    parser.add_argument('--history', help='full-history file (.osh.pbf), for users and dates')
     args = parser.parse_args()
     rng = random.Random(args.seed)
 
@@ -156,14 +191,16 @@ def main():
         'area_names': area_names(args.pbf),
     }
     if args.osc_dir:
-        vocab.update(history_vocab(args.osc_dir))
+        vocab.update(history_vocab(edits_from_osc(args.osc_dir)))
+    elif args.history:
+        vocab.update(history_vocab(edits_from_history(args.history)))
     with open(args.vocab, 'w') as f:
         json.dump(vocab, f)
     print(f'{len(common)} common tags, {len(rare)} rare tags, {len(nodes)} nodes, '
           f'{len(samples["w"])} ways, {len(samples["r"])} relations, {len(vocab["roles"])} roles, '
           f'{len(vocab["area_names"])} area names'
           + (f', {len(vocab["users"])} users, {len(vocab["edit_times"])} edit times {vocab["time_range"]}'
-             if args.osc_dir else ''))
+             if args.osc_dir or args.history else ''))
 
 
 if __name__ == '__main__':
