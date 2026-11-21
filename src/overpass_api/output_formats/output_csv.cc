@@ -18,6 +18,7 @@
 
 #include "../../expat/escape_json.h"
 #include "output_csv.h"
+#include "fixed7.h"
 
 
 bool Output_CSV::write_http_headers()
@@ -197,13 +198,13 @@ void process_csv_line(int otype, const std::string& type, Id_Type id, const Opaq
       {
         if ((mode.mode & (Output_Mode::COORDS | Output_Mode::GEOMETRY | Output_Mode::BOUNDS | Output_Mode::CENTER))
 	    && geometry.has_center())
-          std::cout<<std::fixed<<std::setprecision(7)<<geometry.center_lat();
+          std::cout<<Fixed7(geometry.center_lat());
       }
       else if (it->first == "lon")
       {
         if ((mode.mode & (Output_Mode::COORDS | Output_Mode::GEOMETRY | Output_Mode::BOUNDS | Output_Mode::CENTER))
 	    && geometry.has_center())
-          std::cout<<std::fixed<<std::setprecision(7)<<geometry.center_lon();
+          std::cout<<Fixed7(geometry.center_lon());
       }
       if (type == "count")
       {
