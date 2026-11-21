@@ -26,16 +26,18 @@ This fork's `master` only adds fork-specific files (this file, the README); neve
   PRs still target this fork's `master`. A dependent PR targets its base branch and says so at
   the top.
 - Start a PR description with `Fixes cldellow/Overpass-API#N.`, one line per issue it fixes.
-- Label every PR by kind: `query-perf` for query performance changes, `import-fix` for import
-  changes, `docs` for documentation only. Also add `format-change` if it changes the on-disk
-  format, and `bug` if it fixes wrong results. Give the issues the same labels. Ask if unsure.
+- Label every PR by kind: `query-perf` for query performance changes, `query-memory` for changes
+  that lower a query's peak memory, `import-fix` for import changes, `docs` for documentation
+  only. A change that lowers both runtime and memory gets both `query-perf` and `query-memory`.
+  Also add `format-change` if it changes the on-disk format, and `bug` if it fixes wrong results.
+  Give the issues the same labels. Ask if unsure.
 - PR descriptions cover the change, the impact on the benchmark queries and on the prompting query
   versus `upstream/master`, testing, and limitations or open questions.
 - Descriptions and commit messages must stand alone. Define every query you cite (full text, or a
   table of the benchmark queries) in the same text. No `…` in place of query text.
-- Keep `all-changes` (every performance change, cherry-picked onto `upstream/master`) and its PR current.
-  Its PR tracks `upstream/master` against `all-changes` for the benchmark queries and each commit's
-  prompting query.
+- Keep `all-changes` (every performance and memory change, cherry-picked onto `upstream/master`) and
+  its PR current. Its PR tracks `upstream/master` against `all-changes` for the benchmark queries
+  and each commit's prompting query.
 - Import changes (`update_database`, `update_from_dir` and the updaters in `osm-backend/`) never go
   into `all-changes`, so performance work isn't affected by them. Keep `better-imports` (every import
   change, cherry-picked onto `upstream/master`) and its PR current instead. Import changes get their
