@@ -743,22 +743,43 @@ Ranges< Uint32_Index > Around_Statement::calc_ranges(const Set& input, Resource_
 
 //-----------------------------------------------------------------------------
 
-/* Why reach boxes are enough. Let reach(X) be the bounding box of X widened by
-   (length of X + radius), where a point has length 0. Every exact test only passes
-   when the two objects' reach boxes overlap:
+/* Why reach boxes are enough. Let reach(X) be the bounding box of X's endpoints
+   widened by segment_reach(len(X), radius): the radius plus twice the most a
+   great-circle arc of that length can bulge out of its endpoints' bounding box, plus
+   one metre. A point has length 0. Every exact test only passes when the two objects'
+   reach boxes overlap:
 
    - Point P near segment S (is_inside(lat, lon)): the test requires
-     great_circle_dist(P, first point of S) <= sqrt(len(S)^2 + radius^2)
-     <= len(S) + radius, so P lies in reach(S).
+     great_circle_line_dist(S, P) <= radius, and P within sqrt(len(S)^2 + radius^2) of
+     both endpoints of S. The second condition keeps P's foot on S's great circle
+     within sqrt(len(S)^2 + radius^2) - len(S) <= radius beyond either endpoint. So P
+     is within about 2 * radius of the arc S, hence within the arc's bounding box,
+     which lies within S's endpoint box widened by the bulge, widened by 2 * radius.
+     Overlap needs only one of the two boxes to be widened by that much; each is
+     widened by radius, so together they cover it.
    - Segment C near point Q (is_inside(segment), first loop): the same test with the
-     roles swapped puts Q in reach(C).
+     roles swapped.
    - Segments S and C intersect (intersect()): the crossing point lies on both arcs,
-     so within len(S) of S's first point and within len(C) of C's first point; it is
-     in both reach boxes.
+     so within each arc's bounding box, which lies within its endpoint box widened by
+     the bulge.
 
    The widening uses a slightly larger distance than needed and the latitude closest
    to the pole for the longitude scale, so the boxes are conservative. Boxes too
    close to a pole, crossing the antimeridian or spanning many cells are never pruned. */
+
+double Reach_Grid::segment_reach(double length, double radius, double lat1, double lat2)
+{
+  // A great-circle arc of length L deviates in latitude from its endpoints' bounding
+  // box by at most about L^2 * tan(latitude) / (8 * R). Beyond 50 km, or near a pole,
+  // keep the much wider bound of the arc's own length.
+  double poleward = std::max(std::abs(lat1), std::abs(lat2));
+  if (length > 50000.0 || poleward >= 80.0)
+    return length + radius;
+  const double earth_radius = 10.0*1000*1000/acos(0);  // as in great_circle_dist
+  double bulge = length * length * tan(poleward/90.0*acos(0)) / (8.0 * earth_radius);
+  return radius + 2.0 * bulge + 1.0;
+}
+
 
 Reach_Grid::Box Reach_Grid::reach_box(double lat1, double lon1, double lat2, double lon2, double reach)
 {
@@ -794,6 +815,9 @@ void Reach_Grid::clear()
 {
   cells.clear();
   always.clear();
+  filed.clear();
+  seen.clear();
+  lookup = 0;
   total = 0;
 }
 
@@ -812,6 +836,18 @@ void Reach_Grid::add(const Box& box, uint32 id)
     for (int64 j = lon0; j <= lon1; ++j)
       cells[key(i, j)].push_back(id);
   }
+  filed.push_back(id);
+  if (seen.size() <= id)
+    seen.resize(id + 1, 0);
+}
+
+
+bool Reach_Grid::first_visit(uint32 id) const
+{
+  if (seen[id] == lookup)
+    return false;
+  seen[id] = lookup;
+  return true;
 }
 
 
@@ -828,8 +864,8 @@ void Around_Statement::build_grids()
   {
     const Prepared_Segment& s = simple_segments[i];
     double length = great_circle_dist(s.first_lat, s.first_lon, s.second_lat, s.second_lon);
-    segment_grid.add(Reach_Grid::reach_box(
-        s.first_lat, s.first_lon, s.second_lat, s.second_lon, length + radius), i);
+    segment_grid.add(Reach_Grid::reach_box(s.first_lat, s.first_lon, s.second_lat, s.second_lon,
+        Reach_Grid::segment_reach(length, radius, s.first_lat, s.second_lat)), i);
   }
 }
 
@@ -1050,7 +1086,7 @@ bool Around_Statement::is_inside
   Prepared_Segment segment(first_lat, first_lon, second_lat, second_lon);
   double length = great_circle_dist(first_lat, first_lon, second_lat, second_lon);
   Reach_Grid::Box box = Reach_Grid::reach_box(first_lat, first_lon, second_lat, second_lon,
-      length + radius);
+      Reach_Grid::segment_reach(length, radius, first_lat, second_lat));
 
   if (point_grid.any(box, [&](uint32 id)
       {
