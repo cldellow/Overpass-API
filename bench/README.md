@@ -91,8 +91,8 @@ osmium cat region.osh.pbf -f osh -o - | BASELINE/install/bin/update_database --d
   `visible="false"`. With `-f osm` they look like nodes without coordinates and ways or relations
   without members.
 - **`upstream/master` imports history incorrectly.** It ignores `visible="false"` and stores
-  wrong geometry for older versions. Use a build with the history-import fixes; see the
-  `history-*` branches.
+  wrong geometry for older versions. Import with a build of the `better-imports` branch, which
+  collects the import fixes; query with the build under test.
 
 **From a snapshot plus replication diffs:** `build_history_db.sh` builds a database with history (attic data) from a regional extract plus
 planet replication diffs:
