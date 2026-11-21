@@ -1404,15 +1404,10 @@ void Recurse_Statement::execute(Resource_Manager& rman)
       source_ways.set_union(result_ways.swap(into.ways, into.attic_ways).sort());
       result_ways.swap(into.ways, into.attic_ways);
     }
-    Timeless< Uint32_Index, Node_Skeleton > rel_nodes = relation_node_members(
-        context, into.relations, into.attic_relations, Ranges< Uint32_Index >::global(), {}, true);
+    // The relations' node members and the ways' nodes, in one pass over the node blocks.
+    Timeless< Uint32_Index, Node_Skeleton > rel_nodes = relation_and_way_node_members(
+        context, into.relations, into.attic_relations, source_ways.current, source_ways.attic);
     rel_nodes.sort();
-    {
-      Timeless< Uint32_Index, Node_Skeleton > more_nodes
-          = way_members(context, source_ways.current, source_ways.attic, 0,
-                        Ranges< Uint32_Index >::global(), {}, true);
-      rel_nodes.set_union(more_nodes.sort());
-    }
     keep_matching_skeletons(rel_nodes.current, rel_nodes.attic, rman.get_desired_timestamp());
     rel_nodes.swap(into.nodes, into.attic_nodes);
   }
