@@ -224,6 +224,27 @@ const Ranges< Uint31_Index >& Bbox_Query_Statement::get_ranges_31()
 }
 
 
+namespace
+{
+  // Moves the vectors of from into into, keeping indices left empty by filtering, as the
+  // unchunked path does (eval_map counts them). Chunks end at index boundaries, so an index is
+  // normally new to into; if not, its elements are appended.
+  template< typename Index, typename Object >
+  void move_into(std::map< Index, std::vector< Object > >& into, std::map< Index, std::vector< Object > >& from)
+  {
+    for (typename std::map< Index, std::vector< Object > >::iterator it = from.begin(); it != from.end(); ++it)
+    {
+      std::vector< Object >& target = into[it->first];
+      if (target.empty())
+        target.swap(it->second);
+      else
+        target.insert(target.end(), it->second.begin(), it->second.end());
+    }
+    from.clear();
+  }
+}
+
+
 void Bbox_Query_Statement::execute(Resource_Manager& rman)
 {
   Set into;
@@ -231,10 +252,30 @@ void Bbox_Query_Statement::execute(Resource_Manager& rman)
   Bbox_Constraint constraint(*this);
   Ranges< Uint32_Index > ranges;
   constraint.get_ranges(rman, ranges);
-  get_elements_from_db< Uint32_Index, Node_Skeleton >(ranges, *this, rman)
-      .swap(into.nodes, into.attic_nodes);
-  constraint.filter(rman, into);
-  filter_attic_elements(rman, rman.get_desired_timestamp(), into.nodes, into.attic_nodes);
+  if (rman.get_desired_timestamp() == NOW)
+  {
+    get_elements_from_db< Uint32_Index, Node_Skeleton >(ranges, *this, rman)
+        .swap(into.nodes, into.attic_nodes);
+    constraint.filter(rman, into);
+    filter_attic_elements(rman, rman.get_desired_timestamp(), into.nodes, into.attic_nodes);
+  }
+  else
+  {
+    // At a past date the candidates include every attic version in the box, far more than the
+    // result, so they are collected and filtered in chunks.
+    std::vector< Node_Skeleton::Id_Type > no_ids;
+    Collect_Items< Uint32_Index, Node_Skeleton > db_reader(no_ids, true, ranges, *this, rman);
+    Set chunk;
+    bool more = true;
+    while (more)
+    {
+      more = db_reader.get_chunk(chunk.nodes, chunk.attic_nodes);
+      constraint.filter(rman, chunk);
+      filter_attic_elements(rman, rman.get_desired_timestamp(), chunk.nodes, chunk.attic_nodes);
+      move_into(into.nodes, chunk.nodes);
+      move_into(into.attic_nodes, chunk.attic_nodes);
+    }
+  }
 
   transfer_output(rman, into);
   rman.health_check(*this);
