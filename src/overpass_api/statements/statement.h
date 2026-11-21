@@ -101,6 +101,22 @@ class Query_Constraint
         (Resource_Manager& rman, std::vector< Area_Skeleton::Id_Type >& ids)
       { return false; }
 
+    // A constraint whose id lists are expensive to build returns true. Query_Statement then asks
+    // it after the other constraints, through the get_*_ids_within functions, and passes the ids
+    // those allow.
+    virtual bool narrows_by_known_ids() const { return false; }
+    // Like get_*_ids, but may leave out ids that aren't in known (sorted), since the caller
+    // intersects the result with known anyway. The defaults ignore known.
+    virtual bool get_node_ids_within(Resource_Manager& rman,
+        const std::vector< Node_Skeleton::Id_Type >& known, std::vector< Node_Skeleton::Id_Type >& ids)
+      { return get_node_ids(rman, ids); }
+    virtual bool get_way_ids_within(Resource_Manager& rman,
+        const std::vector< Way_Skeleton::Id_Type >& known, std::vector< Way_Skeleton::Id_Type >& ids)
+      { return get_way_ids(rman, ids); }
+    virtual bool get_relation_ids_within(Resource_Manager& rman,
+        const std::vector< Relation_Skeleton::Id_Type >& known, std::vector< Relation_Skeleton::Id_Type >& ids)
+      { return get_relation_ids(rman, ids); }
+
     virtual bool get_data(const Statement& query, Resource_Manager& rman, Set& into,
 			  const Ranges< Uint32_Index >& ranges,
 			  const std::vector< Node::Id_Type >& ids,

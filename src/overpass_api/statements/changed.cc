@@ -141,6 +141,17 @@ struct Trivial_Id_Predicate
 };
 
 
+template< typename Id_Type >
+struct Known_Ids_Predicate
+{
+  Known_Ids_Predicate(const std::vector< Id_Type >& known_) : known(&known_) {}
+  bool operator()(Id_Type id) const { return std::binary_search(known->begin(), known->end(), id); }
+
+private:
+  const std::vector< Id_Type >* known;
+};
+
+
 template< typename Index, typename Skeleton >
 struct Ids_In_Set_Predicate
 {
@@ -196,6 +207,16 @@ class Changed_Constraint : public Query_Constraint
     bool get_relation_ids
         (Resource_Manager& rman, std::vector< Relation_Skeleton::Id_Type >& ids);
 
+    // The changelog holds an entry per change, so a full id list can be far larger than the
+    // explicit ids other constraints allow.
+    bool narrows_by_known_ids() const { return true; }
+    bool get_node_ids_within(Resource_Manager& rman,
+        const std::vector< Node_Skeleton::Id_Type >& known, std::vector< Node_Skeleton::Id_Type >& ids);
+    bool get_way_ids_within(Resource_Manager& rman,
+        const std::vector< Way_Skeleton::Id_Type >& known, std::vector< Way_Skeleton::Id_Type >& ids);
+    bool get_relation_ids_within(Resource_Manager& rman,
+        const std::vector< Relation_Skeleton::Id_Type >& known, std::vector< Relation_Skeleton::Id_Type >& ids);
+
     void filter(Resource_Manager& rman, Set& into);
     virtual ~Changed_Constraint() {}
 
@@ -224,6 +245,33 @@ bool Changed_Constraint::get_relation_ids(Resource_Manager& rman, std::vector< R
 {
   ids = collect_changed_elements< Uint31_Index, Relation_Skeleton >(
       stmt->get_since(rman), stmt->get_until(rman), Trivial_Id_Predicate< Relation_Skeleton::Id_Type >(), rman);
+  return true;
+}
+
+
+bool Changed_Constraint::get_node_ids_within(Resource_Manager& rman,
+    const std::vector< Node_Skeleton::Id_Type >& known, std::vector< Node_Skeleton::Id_Type >& ids)
+{
+  ids = collect_changed_elements< Uint32_Index, Node_Skeleton >(
+      stmt->get_since(rman), stmt->get_until(rman), Known_Ids_Predicate< Node_Skeleton::Id_Type >(known), rman);
+  return true;
+}
+
+
+bool Changed_Constraint::get_way_ids_within(Resource_Manager& rman,
+    const std::vector< Way_Skeleton::Id_Type >& known, std::vector< Way_Skeleton::Id_Type >& ids)
+{
+  ids = collect_changed_elements< Uint31_Index, Way_Skeleton >(
+      stmt->get_since(rman), stmt->get_until(rman), Known_Ids_Predicate< Way_Skeleton::Id_Type >(known), rman);
+  return true;
+}
+
+
+bool Changed_Constraint::get_relation_ids_within(Resource_Manager& rman,
+    const std::vector< Relation_Skeleton::Id_Type >& known, std::vector< Relation_Skeleton::Id_Type >& ids)
+{
+  ids = collect_changed_elements< Uint31_Index, Relation_Skeleton >(
+      stmt->get_since(rman), stmt->get_until(rman), Known_Ids_Predicate< Relation_Skeleton::Id_Type >(known), rman);
   return true;
 }
 
