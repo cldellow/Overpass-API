@@ -1080,8 +1080,13 @@ void add_nw_member_objects(Request_Context& context, const Set& input_set, Set& 
     return;
   }
 
-  Timeless< Uint32_Index, Node_Skeleton > rel_nodes
-      = relation_node_members(context, input_set.relations, input_set.attic_relations, ranges_32, {}, true);
+  // For a date without a range restriction, the relations' node members are collected below,
+  // in the same pass over the node blocks as the ways' nodes.
+  bool one_pass = !ranges_32_;
+  Timeless< Uint32_Index, Node_Skeleton > rel_nodes;
+  if (!one_pass)
+    rel_nodes = relation_node_members(
+        context, input_set.relations, input_set.attic_relations, ranges_32, {}, true);
 
   if (context.get_desired_timestamp() == NOW)
   {
@@ -1114,8 +1119,10 @@ void add_nw_member_objects(Request_Context& context, const Set& input_set, Set& 
     indexed_set_union(all_ways.current, source_ways);
     indexed_set_union(all_ways.attic, source_attic_ways);
 
-    Timeless< Uint32_Index, Node_Skeleton > more_nodes
-        = way_members(context, all_ways.current, all_ways.attic, 0, Ranges< Uint32_Index >::global(), {}, true);
+    Timeless< Uint32_Index, Node_Skeleton > more_nodes = one_pass
+        ? relation_and_way_node_members(
+            context, input_set.relations, input_set.attic_relations, all_ways.current, all_ways.attic)
+        : way_members(context, all_ways.current, all_ways.attic, 0, Ranges< Uint32_Index >::global(), {}, true);
     more_nodes.sort();
     sort_second(into.nodes);
     sort_second(into.attic_nodes);
