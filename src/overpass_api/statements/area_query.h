@@ -127,15 +127,25 @@ typedef std::vector< std::pair< uint32, uint32 > > Decoded_Coords;
 void decode_coords(const Area_Block& block, Decoded_Coords& coords);
 int intersects_inner(const Decoded_Coords& coords_a, const Decoded_Coords& coords_b);
 
-// The bounding box of decoded coordinates. Two chains of segments can only touch, and so
-// intersects_inner can only return non-zero, if their bounding boxes overlap.
+// The bounding box of decoded coordinates, to skip intersects_inner for pairs of chains
+// that can't intersect or touch.
 struct Coords_Bounds
 {
   uint32 min_lat, max_lat, min_lon, max_lon;
   explicit Coords_Bounds(const Decoded_Coords& coords);
+
+  // False only if intersects_inner(this chain, rhs chain) must return 0.
+  //
+  // The latitude test deliberately allows a gap of up to 1 unit. Don't simplify it to a
+  // plain box overlap: for parallel segments, ordered_intersects_inner returns HIT when an
+  // endpoint lies within 1 unit of latitude of the other segment's line. Two east-west
+  // segments 1 unit apart touch by that rule, though their boxes don't overlap.
+  // Longitude needs no slack: ordered_a_intersects_inner and longitude_a_intersects_inner
+  // require overlapping longitude ranges before they test anything.
   bool overlaps(const Coords_Bounds& rhs) const
   {
-    return !(max_lat < rhs.min_lat || rhs.max_lat < min_lat
+    return !((max_lat < rhs.min_lat && rhs.min_lat - max_lat > 1)
+        || (rhs.max_lat < min_lat && min_lat - rhs.max_lat > 1)
         || max_lon < rhs.min_lon || rhs.max_lon < min_lon);
   }
 };
