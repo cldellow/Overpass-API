@@ -19,6 +19,7 @@
 #ifndef DE__OSM3S___OVERPASS_API__STATEMENTS__AROUND_H
 #define DE__OSM3S___OVERPASS_API__STATEMENTS__AROUND_H
 
+#include <algorithm>
 #include <iostream>
 #include <map>
 #include <set>
@@ -79,7 +80,8 @@ struct Prepared_Point
    decides a match itself.
 
    Each entry is filed under every cell its "reach box" covers: its bounding box widened
-   by its own length plus the radius. A point or segment can only pass any of the exact
+   by the radius plus a small margin for the bulge of a great-circle arc (see
+   segment_reach). A point or segment can only pass any of the exact
    tests against an entry if their reach boxes overlap (see around.cc), so looking up the
    cells of a candidate's reach box finds every entry that could match it. Entries whose
    reach box is too large to file, or lies near a pole or the antimeridian, are kept in
@@ -98,9 +100,12 @@ public:
   void clear();
   void add(const Box& box, uint32 id);
 
-  // Calls f(id) for every entry whose cells the box touches, plus the always-checked
-  // entries. Stops and returns true as soon as f returns true. An id can be passed
-  // more than once.
+  // The reach to use for a segment of the given length: the radius plus a margin for
+  // how far a great-circle arc can bulge out of its endpoints' bounding box.
+  static double segment_reach(double length, double radius, double lat1, double lat2);
+
+  // Calls f(id) once for every entry whose cells the box touches, plus the
+  // always-checked entries. Stops and returns true as soon as f returns true.
   template< typename F >
   bool any(const Box& box, F f) const;
 
@@ -113,7 +118,14 @@ private:
 
   std::unordered_map< int64, std::vector< uint32 > > cells;
   std::vector< uint32 > always;
+  std::vector< uint32 > filed;  // every id filed in cells, once each
   uint32 total = 0;
+
+  // An entry filed in several cells is passed to f only once per lookup: seen[id] holds
+  // the number of the last lookup that passed it.
+  mutable std::vector< uint32 > seen;
+  mutable uint32 lookup = 0;
+  bool first_visit(uint32 id) const;
 };
 
 
@@ -128,16 +140,18 @@ bool Reach_Grid::any(const Box& box, F f) const
   int64 lat0, lat1, lon0, lon1;
   if (!cell_range(box, lat0, lat1, lon0, lon1))
   {
-    // The box is too large to look up cell by cell: check every entry.
-    for (const auto& cell : cells)
+    // The box is too large to look up cell by cell: check every filed entry once.
+    for (uint32 id : filed)
     {
-      for (uint32 id : cell.second)
-      {
-        if (f(id))
-          return true;
-      }
+      if (f(id))
+        return true;
     }
     return false;
+  }
+  if (++lookup == 0)
+  {
+    std::fill(seen.begin(), seen.end(), 0);
+    lookup = 1;
   }
   for (int64 i = lat0; i <= lat1; ++i)
   {
@@ -148,7 +162,7 @@ bool Reach_Grid::any(const Box& box, F f) const
         continue;
       for (uint32 id : it->second)
       {
-        if (f(id))
+        if (first_visit(id) && f(id))
           return true;
       }
     }
