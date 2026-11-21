@@ -80,9 +80,12 @@ void compute_idx_and_geometry
       auto it2 = nit->second.begin();
       while (it2 != nit->second.end() && it2->second.timestamp < expiration_timestamp)
         ++it2;
-      if (it2 != nit->second.end())
-        geometry.push_back(Quad_Coord(it2->first.val(), it2->second.ll_lower));
-      // Otherwise the node has expired before our way - something has gone wrong seriously.
+      // If the node has expired before our way, the way refers to a deleted node.
+      // History data has such ways, e.g. if a node is deleted shortly before its way.
+      // Use the last known position, to keep one coordinate per nd.
+      if (it2 == nit->second.end())
+        --it2;
+      geometry.push_back(Quad_Coord(it2->first.val(), it2->second.ll_lower));
     }
     else
       std::cerr<<"compute_idx_and_geometry: Node "<<it->val()<<" used in way "<<skeleton.id.val()<<" not found.\n";

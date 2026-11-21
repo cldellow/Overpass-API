@@ -511,9 +511,10 @@ void compute_idx_and_geometry
           auto it2 = nit->second.begin();
           while (it2 != nit->second.end() && it2->second.timestamp < expiration_timestamp)
             ++it2;
-          if (it2 != nit->second.end())
-            node_idxs.push_back(Uint31_Index(it2->first.val()));
-          // Otherwise the node has expired before our relation - something has gone wrong seriously.
+          // A deleted member: use its last known position, as for ways.
+          if (it2 == nit->second.end())
+            --it2;
+          node_idxs.push_back(Uint31_Index(it2->first.val()));
         }
         else
           std::cerr<<"compute_idx_and_geometry: Node "<<mit->ref.val()<<" used in relation "<<skeleton.id.val()<<" not found.\n";
@@ -530,9 +531,10 @@ void compute_idx_and_geometry
               it2 = nit->second.begin();
           while (it2 != nit->second.end() && it2->second.timestamp < expiration_timestamp)
             ++it2;
-          if (it2 != nit->second.end())
-            way_idxs.push_back(it2->first);
-          // Otherwise the way has expired before our relation - something has gone wrong seriously.
+          // A deleted member: use its last known position, as for ways.
+          if (it2 == nit->second.end())
+            --it2;
+          way_idxs.push_back(it2->first);
         }
         else
           std::cerr<<"compute_idx_and_geometry: Way "<<mit->ref.val()<<" used in relation "<<skeleton.id.val()<<" not found.\n";
