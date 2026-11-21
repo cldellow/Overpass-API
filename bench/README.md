@@ -57,6 +57,9 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
   the vocabulary's hash), not on `--jobs` or on which other queries ran.
 - **Reusable:** `--a` and `--b` take any two builds, so the same seeds can be replayed against every
   change.
+- **Import changes:** `--db-b` runs `--b` against a second database. With the same build for `--a`
+  and `--b`, this compares two databases, e.g. one imported by the baseline and one by a changed
+  `update_database`, or the same file imported with two `--flush-size` values.
 - **Failures** are written to `--out-dir` as `<seed>-<index>/{query.ql,a.out,b.out}`, and the exit
   status is 1.
 - **Optional statement families:** `--features areas,history,users,complete` adds area queries
@@ -81,8 +84,15 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
 metadata, so don't also pass `--meta`: the later flag wins, and `--meta` would drop the history.
 
 ```bash
-osmium cat region.osh.pbf -f osm -o - | BASELINE/install/bin/update_database --db-dir=$PWD/db/ --keep-attic
+osmium cat region.osh.pbf -f osh -o - | BASELINE/install/bin/update_database --db-dir=$PWD/db/ --keep-attic
 ```
+
+- **Use `-f osh`, not `-f osm`:** only the history format marks deleted versions with
+  `visible="false"`. With `-f osm` they look like nodes without coordinates and ways or relations
+  without members.
+- **`upstream/master` imports history incorrectly.** It ignores `visible="false"` and stores
+  wrong geometry for older versions. Use a build with the history-import fixes; see the
+  `history-*` branches.
 
 **From a snapshot plus replication diffs:** `build_history_db.sh` builds a database with history (attic data) from a regional extract plus
 planet replication diffs:

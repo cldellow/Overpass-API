@@ -371,10 +371,10 @@ def run_once(bindir, db, query, timeout):
 
 
 def check(args_tuple):
-    a, b, db, vocab, seed, index, timeout, features = args_tuple
+    a, b, db, db_b, vocab, seed, index, timeout, features = args_tuple
     query = generate(vocab, seed, index, features)
     status_a, digest_a, out_a, cpu_a = run(a, db, query, timeout)
-    status_b, digest_b, out_b, cpu_b = run(b, db, query, timeout)
+    status_b, digest_b, out_b, cpu_b = run(b, db_b, query, timeout)
     if 'timeout' in (status_a, status_b) or 'resource-limit' in (status_a, status_b):
         verdict = 'skipped'
     elif digest_a == digest_b:
@@ -393,6 +393,8 @@ def main():
     parser.add_argument('--a', help='bin directory of the baseline build')
     parser.add_argument('--b', help='bin directory of the build under test')
     parser.add_argument('--db', help='database directory')
+    parser.add_argument('--db-b', help='database directory for --b (default: --db); with the same build '
+                        'for --a and --b, this compares two databases, e.g. to test an import change')
     parser.add_argument('--start', type=int, default=0, help='first query index (default 0)')
     parser.add_argument('--count', type=int, default=1000)
     parser.add_argument('--jobs', type=int, default=os.cpu_count())
@@ -423,7 +425,7 @@ def main():
     verdicts = collections.Counter()
     statuses = collections.Counter()
     empty = 0
-    tasks = [(args.a, args.b, args.db, vocab, args.seed, i, args.timeout, features)
+    tasks = [(args.a, args.b, args.db, args.db_b or args.db, vocab, args.seed, i, args.timeout, features)
              for i in range(args.start, args.start + args.count)]
     report = None
     if args.report:
