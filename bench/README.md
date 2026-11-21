@@ -20,7 +20,14 @@ python3 bench/compare.py --a BASELINE/install/bin --b CANDIDATE/install/bin \
 - Exit status is 1 if any output differs.
 
 `queries/` holds the sample queries; their bounding boxes are in Halifax, Nova Scotia, so they
-expect a database built from a Nova Scotia extract.
+expect a database built from a Nova Scotia extract. Two more sets need databases with extra data:
+
+- `queries-areas/`: area queries (`area[...]`, `(area.a)`, `is_in`), for a database with the area
+  rules run (`osm3s_query --rules < rules/areas.osm3s`).
+- `queries-history/`: `[date:]`, `[diff:]` and `newer`, for a database with history built by
+  `build_history_db.sh`.
+
+Run each set with `--db` pointed at its database; the baseline cache keeps them apart.
 
 ## Differential fuzzing
 
