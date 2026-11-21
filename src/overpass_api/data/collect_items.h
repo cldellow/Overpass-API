@@ -60,6 +60,12 @@ void reconstruct_items(
 class Statement;
 
 
+// A chunk of collected elements also ends once its accounted size (as eval_map counts it) reaches
+// this, so a query whose filters drop most candidates doesn't hold all of them at once when its
+// [maxsize:] budget is large. 64 MiB accounted is 8M nodes or 512k ways.
+const uint64 MAX_CHUNK_ACCOUNTED_SIZE = 64ull*1024*1024;
+
+
 class Health_Guard
 {
 public:
@@ -265,8 +271,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
     if (++count >= 128*1024)
     {
       count = 0;
-      health_guard.check(0, eval_map(result));
-      health_guard.check(0, eval_map(attic_result));
+      uint64 chunk_size = eval_map(result) + eval_map(attic_result);
+      too_much_data = health_guard.check(0, chunk_size) || chunk_size >= MAX_CHUNK_ACCOUNTED_SIZE;
     }
     Index index =
         (attic_begin == attic_end ||
@@ -311,8 +317,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
     if (++count >= 128*1024)
     {
       count = 0;
-      health_guard.check(0, eval_map(result));
-      health_guard.check(0, eval_map(attic_result));
+      uint64 chunk_size = eval_map(result) + eval_map(attic_result);
+      too_much_data = health_guard.check(0, chunk_size) || chunk_size >= MAX_CHUNK_ACCOUNTED_SIZE;
     }
     Index index =
         (attic_begin == attic_end ||
@@ -396,8 +402,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
     if (++count >= 128*1024)
     {
       count = 0;
-      health_guard.check(0, eval_map(result));
-      health_guard.check(0, eval_map(attic_result));
+      uint64 chunk_size = eval_map(result) + eval_map(attic_result);
+      too_much_data = health_guard.check(0, chunk_size) || chunk_size >= MAX_CHUNK_ACCOUNTED_SIZE;
     }
     Index index =
         (attic_begin == attic_end ||
@@ -539,7 +545,8 @@ bool collect_items_range(Request_Context& context,
       if (++count >= 256*1024)
       {
         count = 0;
-        too_much_data = context.get_health_guard().check(0, result_size);
+        too_much_data = context.get_health_guard().check(0, result_size)
+            || result_size >= MAX_CHUNK_ACCOUNTED_SIZE;
         cur_idx = it.index();
       }
       if (predicate.match(it.handle()))
