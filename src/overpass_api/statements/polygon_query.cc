@@ -464,11 +464,14 @@ void Polygon_Query_Statement::collect_ways
       areas_in_tile.push_back(Coord_Query_Statement::Decoded_Area_Block(current_idx, *ait));
     // The same segments decoded once for this tile, for the segment tests below.
     std::vector< Decoded_Coords > area_coords(areas.size());
+    std::vector< Coords_Bounds > area_bounds;
+    area_bounds.reserve(areas.size());
     std::vector< Coord_Query_Statement::Decoded_Area_Block > areas_decoded;
     areas_decoded.reserve(areas.size());
     for (std::vector< Area_Block >::size_type i = 0; i < areas.size(); ++i)
     {
       decode_coords(areas[i], area_coords[i]);
+      area_bounds.push_back(Coords_Bounds(area_coords[i]));
       areas_decoded.push_back(Coord_Query_Statement::Decoded_Area_Block(0, areas[i]));
     }
 
@@ -510,6 +513,7 @@ void Polygon_Query_Statement::collect_ways
          sit != way_segments[Uint31_Index(current_idx)].end(); ++sit)
     {
       decode_coords(*sit, sit_coords);
+      Coords_Bounds sit_bounds(sit_coords);
       int inside = 0;
       for (std::vector< Area_Block >::const_iterator it = areas.begin();
            it != areas.end(); ++it)
@@ -519,7 +523,8 @@ void Polygon_Query_Statement::collect_ways
         // The endpoints are properly handled via the point-in-area test
         // Check additionally the middle of the segment to also get segments
         // that run through the area
-        int intersect = intersects_inner(sit_coords, area_coords[it - areas.begin()]);
+        int intersect = sit_bounds.overlaps(area_bounds[it - areas.begin()])
+            ? intersects_inner(sit_coords, area_coords[it - areas.begin()]) : 0;
         if (intersect == Coord_Query_Statement::INTERSECT)
         {
           ways_inside[Way::Id_Type(sit->id)] = true;

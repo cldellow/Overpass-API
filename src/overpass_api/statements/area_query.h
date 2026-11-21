@@ -126,6 +126,19 @@ class Area_Query_Statement : public Output_Statement
 typedef std::vector< std::pair< uint32, uint32 > > Decoded_Coords;
 void decode_coords(const Area_Block& block, Decoded_Coords& coords);
 int intersects_inner(const Decoded_Coords& coords_a, const Decoded_Coords& coords_b);
+
+// The bounding box of decoded coordinates. Two chains of segments can only touch, and so
+// intersects_inner can only return non-zero, if their bounding boxes overlap.
+struct Coords_Bounds
+{
+  uint32 min_lat, max_lat, min_lon, max_lon;
+  explicit Coords_Bounds(const Decoded_Coords& coords);
+  bool overlaps(const Coords_Bounds& rhs) const
+  {
+    return !(max_lat < rhs.min_lat || rhs.max_lat < min_lat
+        || max_lon < rhs.min_lon || rhs.max_lon < min_lon);
+  }
+};
 void has_inner_points(const Decoded_Coords& coords_a, const Coord_Query_Statement::Decoded_Area_Block& string_b,
     int& inside);
 
