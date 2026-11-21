@@ -60,7 +60,24 @@ class Generator:
     def tag(self):
         return self.pick(self.v['rare_tags'] if self.r.random() < 0.4 else self.v['common_tags'])
 
+    def alternation_filter(self):
+        """A regex over several values of one key, as client tools write them: osmnx excludes
+        lists of values with ["k"!~"a|b|c"], osmdata matches several with ["k"~"^(a|b)$"]."""
+        if not hasattr(self, '_values_by_key'):
+            self._values_by_key = {}
+            for k, v in self.v['common_tags'] + self.v['rare_tags']:
+                self._values_by_key.setdefault(k, []).append(v)
+        key, value = self.tag()
+        values = self._values_by_key.get(key, [value])
+        chosen = sorted({self.pick(values) for _ in range(self.r.randint(2, 22))} | {value})
+        alternation = '|'.join(re.escape(v) for v in chosen)
+        if self.r.random() < 0.6:
+            return f'[{self.quote(key)}!~{self.quote(alternation)}]'
+        return f'[{self.quote(key)}~{self.quote("^(" + alternation + ")$")}{",i" if self.r.random() < 0.3 else ""}]'
+
     def tag_filter(self):
+        if self.r.random() < 0.08:
+            return self.alternation_filter()
         key, value = self.tag()
         form = self.r.random()
         if form < 0.45:

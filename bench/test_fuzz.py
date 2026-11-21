@@ -23,7 +23,8 @@ spec.loader.exec_module(fuzz)
 # A synthetic vocabulary shaped like fuzz_vocab.py's output. Values are made up.
 VOCAB = {
     'common_tags': [['amenity', 'cafe'], ['highway', 'residential'], ['building', 'yes'],
-                    ['shop', 'bakery'], ['natural', 'tree'], ['landuse', 'grass']],
+                    ['shop', 'bakery'], ['natural', 'tree'], ['landuse', 'grass'],
+                    ['highway', 'footway'], ['highway', 'service'], ['amenity', 'parking']],
     'rare_tags': [['amenity', 'drinking_water'], ['shop', 'florist'], ['man_made', 'tower']],
     'keys': ['amenity', 'highway', 'building', 'shop', 'name', 'natural', 'landuse'],
     'node_ids': [1001 + i for i in range(50)],
@@ -52,6 +53,8 @@ BASE = [
     ('poly: filter', r'\(poly:', 0.05),
     ('poly: with single quotes', r"\(poly:'", 0.01),
     ('negated regex', r'!~', 0.005),
+    ('negated alternation (osmnx)', r'!~"[^"]*\|[^"]*"', 0.005),
+    ('anchored alternation (osmdata)', r'~"\^\([^"]*\|[^"]*\)\$"', 0.003),
     ('recursion down', r'>', 0.05),
     ('recursion up', r'<', 0.02),
     ('member filter', r'\((w|r|bn|bw|br)(\.\w+)?(:"[^"]*")?\)', 0.05),
