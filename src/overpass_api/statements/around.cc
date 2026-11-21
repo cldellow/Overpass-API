@@ -847,12 +847,27 @@ Ranges< Uint32_Index > Around_Statement::calc_ranges(const Set& input, Resource_
     return expand(calc_children(ranges(ways)), radius);
   }
   else
+  {
+    // The geometry of a relation is that of its direct node and way members (see
+    // calc_lat_lons), so take the ranges from their indexes. A relation's own index
+    // covers its whole extent, which for a long route or a boundary is a large area.
+    Ranges< Uint32_Index > member_node_ranges;
+    Ranges< Uint31_Index > member_way_ranges;
+    if (!input.relations.empty())
+    {
+      Request_Context context(this, rman);
+      member_node_ranges = ranges(relation_node_members(
+          context, input.relations, {}, Ranges< Uint32_Index >::global(), {}, true).current);
+      member_way_ranges = ranges(relation_way_members(
+          context, input.relations, {}, Ranges< Uint31_Index >::global(), {}, true).current);
+    }
     return expand(
-        ranges(input.nodes).union_(ranges(input.attic_nodes)).union_(
+        ranges(input.nodes).union_(ranges(input.attic_nodes)).union_(member_node_ranges).union_(
             calc_children(
                 ranges(input.ways).union_(ranges(input.attic_ways)).union_(
-                ranges(input.relations).union_(ranges(input.attic_relations))))),
+                member_way_ranges.union_(ranges(input.attic_relations))))),
         radius);
+  }
 }
 
 
