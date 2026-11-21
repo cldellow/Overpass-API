@@ -63,3 +63,26 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
   status, the CPU time on each build, the output size and the CPU time per KB of output. Sort it to
   find queries that time out, cost a lot for little output, or got slower on the build under test,
   then reprint them with `--show`.
+
+## A database with history
+
+`build_history_db.sh` builds a database with history (attic data) from a regional extract plus
+planet replication diffs:
+
+```bash
+# Daily diffs covering the time since the extract's timestamp, named so that sort -V orders them.
+bench/build_history_db.sh nova-scotia.osm.pbf diffs/ out/ BASELINE/install/bin "-67.3,43.3,-59.6,47.1"
+python3 bench/fuzz_vocab.py nova-scotia.osm.pbf vocab.json --osc-dir out/osc
+python3 bench/fuzz.py --a BASE/install/bin --b NEW/install/bin --db out/db --vocab vocab.json \
+    --features history,users,complete --seed 12 --count 2000
+```
+
+- **How the diffs are filtered:** each planet diff is applied to the previous regional snapshot and
+  cut to the bounding box. The real diff is then filtered to every object seen in the region so
+  far, so edits keep their actual timestamps, versions and users, deletions included.
+- **The overlap with the snapshot:** edits at or before the snapshot's timestamp are dropped, since
+  the snapshot already contains them.
+- **Pass a bounding box:** the extract's own data bbox can be far larger than the region, because
+  long boundary and coastline ways extend beyond it.
+- **No users in the snapshot:** a Geofabrik public extract has no user data, so only edits from
+  the diffs carry users.
