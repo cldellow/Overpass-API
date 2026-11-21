@@ -361,6 +361,11 @@ void Polygon_Query_Statement::collect_nodes(std::map< Uint32_Index, std::vector<
       areas.push_back(block);
       ++area_it;
     }
+    // The same segments decoded once for this tile, for the node tests below.
+    std::vector< Coord_Query_Statement::Decoded_Area_Block > areas_in_tile;
+    areas_in_tile.reserve(areas.size());
+    for (std::vector< Area_Block >::const_iterator ait = areas.begin(); ait != areas.end(); ++ait)
+      areas_in_tile.push_back(Coord_Query_Statement::Decoded_Area_Block(current_idx, *ait));
 
     while (nodes_it != nodes.end() && nodes_it->first.val() < current_idx)
     {
@@ -383,7 +388,7 @@ void Polygon_Query_Statement::collect_nodes(std::map< Uint32_Index, std::vector<
         for (std::vector< Area_Block >::const_iterator it = areas.begin();
 	     it != areas.end(); ++it)
         {
-	  int check(Coord_Query_Statement::check_area_block(current_idx, *it, ilat, ilon));
+	  int check(Coord_Query_Statement::check_area_block(areas_in_tile[it - areas.begin()], ilat, ilon));
 	  if (check == Coord_Query_Statement::HIT && add_border)
 	  {
 	    inside = 1;
@@ -452,6 +457,11 @@ void Polygon_Query_Statement::collect_ways
       areas.push_back(block);
       ++area_it;
     }
+    // The same segments decoded once for this tile, for the node tests below.
+    std::vector< Coord_Query_Statement::Decoded_Area_Block > areas_in_tile;
+    areas_in_tile.reserve(areas.size());
+    for (std::vector< Area_Block >::const_iterator ait = areas.begin(); ait != areas.end(); ++ait)
+      areas_in_tile.push_back(Coord_Query_Statement::Decoded_Area_Block(current_idx, *ait));
     // The same segments decoded once for this tile, for the segment tests below.
     std::vector< Decoded_Coords > area_coords(areas.size());
     std::vector< Coord_Query_Statement::Decoded_Area_Block > areas_decoded;
@@ -479,7 +489,7 @@ void Polygon_Query_Statement::collect_ways
         for (std::vector< Area_Block >::const_iterator it2 = areas.begin(); it2 != areas.end();
              ++it2)
         {
-          int check(Coord_Query_Statement::check_area_block(current_idx, *it2, ilat, ilon));
+          int check(Coord_Query_Statement::check_area_block(areas_in_tile[it2 - areas.begin()], ilat, ilon));
           if (check == Coord_Query_Statement::HIT)
           {
             inside = Coord_Query_Statement::HIT;
