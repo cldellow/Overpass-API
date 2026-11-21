@@ -38,6 +38,7 @@ class Newer_Constraint : public Query_Constraint
     Query_Filter_Strategy delivers_data(Resource_Manager& rman) { return ids_required; }
 
     void filter(const Statement& query, Resource_Manager& rman, Set& into);
+    bool filter_reads_only_metadata() const override { return true; }
     virtual ~Newer_Constraint() {}
 
   private:
