@@ -16,6 +16,10 @@ python3 bench/compare.py --a BASELINE/install/bin --b CANDIDATE/install/bin \
 - **Close comparisons:** with `--no-cache`, runs alternate between the two builds after one untimed
   warm-up each, so background noise affects both alike. Use this when the difference is small.
   Cached runs time the builds separately.
+- **Placeholders:** a query may contain `{{NAME}}` placeholders, filled from the JSON file given
+  with `--vars`. They keep values that must not be committed, such as user ids from a licensed
+  extract, out of the query files. `pick_vars.py --bin BIN --db DB --out VARS.json` chooses them
+  from a database; keep that file with the database.
 - Output equality ignores lines that name the build (generator/version).
 - Exit status is 1 if any output differs.
 
@@ -24,8 +28,8 @@ expect a database built from a Nova Scotia extract. Two more sets need databases
 
 - `queries-areas/`: area queries (`area[...]`, `(area.a)`, `is_in`), for a database with the area
   rules run (`osm3s_query --rules < rules/areas.osm3s`).
-- `queries-history/`: `[date:]`, `[diff:]` and `newer`, for a database with history built by
-  `build_history_db.sh`.
+- `queries-history/`: `[date:]`, `[diff:]`, `newer` and user filters, for a database with history
+  (see below). `h5` and `h6` take `{{UID}}`, so they need `--vars`.
 
 Run each set with `--db` pointed at its database; the baseline cache keeps them apart.
 
@@ -73,7 +77,14 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
 
 ## A database with history
 
-`build_history_db.sh` builds a database with history (attic data) from a regional extract plus
+**From a full-history extract** (`.osh.pbf`): import it directly. `--keep-attic` includes the
+metadata, so don't also pass `--meta`: the later flag wins, and `--meta` would drop the history.
+
+```bash
+osmium cat region.osh.pbf -f osm -o - | BASELINE/install/bin/update_database --db-dir=$PWD/db/ --keep-attic
+```
+
+**From a snapshot plus replication diffs:** `build_history_db.sh` builds a database with history (attic data) from a regional extract plus
 planet replication diffs:
 
 ```bash

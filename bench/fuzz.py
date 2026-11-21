@@ -97,7 +97,7 @@ class Generator:
 
     def evaluator(self):
         key, value = self.tag()
-        return self.r.choice([
+        choices = [
             f't[{self.quote(key)}]=={self.quote(value)}',
             f'count_tags()>{self.r.randint(0, 6)}',
             f'id()>{self.r.randint(1, 9)}000000000',
@@ -106,7 +106,13 @@ class Generator:
             f'number(t[{self.quote(key)}])>{self.r.randint(0, 50)}',
             f'is_tag({self.quote(key)})',
             f'version()>{self.r.randint(1, 5)}',
-        ])
+            f'date(timestamp())>date("{self.r.randint(2008, 2026)}-01-01")',
+            f'changeset()>{self.r.randint(1, 170)}000000',
+            f'uid()>{self.r.randint(1, 25)}000000',
+        ]
+        if 'users' in self.features and self.v.get('users'):
+            choices.append(f'user()=={self.quote(self.pick(self.v["users"]))}')
+        return self.r.choice(choices)
 
     def when(self):
         """A timestamp within the database's history, from the vocabulary's edit times."""

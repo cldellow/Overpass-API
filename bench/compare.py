@@ -12,8 +12,12 @@ baseline binary, the database or a query invalidates its entry.
 With --no-cache, each query runs --reps times per build, alternating A and B so that
 background noise affects both builds alike. Use that when the difference is small.
 
+A query may contain placeholders such as {{UID}}, filled in from the JSON object in
+--vars. Use them for values that must not be committed, such as user ids from a
+licensed extract; bench/pick_vars.py writes such a file from a database.
+
 Usage:
-  compare.py --a OLD/bin --b NEW/bin --db DB_DIR [--reps 7] [--no-cache] QUERY.ql [QUERY.ql ...]
+  compare.py --a OLD/bin --b NEW/bin --db DB_DIR [--reps 7] [--no-cache] [--vars FILE] QUERY.ql [QUERY.ql ...]
 
 Exit status is 1 if any query's output differs between the builds.
 """
@@ -31,19 +35,37 @@ import sys
 VOLATILE = re.compile(rb'(generator|Overpass API \d|"version":)')
 
 
+PLACEHOLDER = re.compile(r'\{\{([A-Z_]+)\}\}')
+QUERY_VARS = {}
+
+
+def query_text(query_path):
+    """The query's text, with {{NAME}} placeholders filled in from --vars."""
+    with open(query_path) as f:
+        text = f.read()
+    def fill(m):
+        if m.group(1) not in QUERY_VARS:
+            sys.exit(f'{query_path}: placeholder {m.group(0)} needs a value in --vars')
+        return str(QUERY_VARS[m.group(1)])
+    return PLACEHOLDER.sub(fill, text).encode()
+
+
 def run_query(bindir, db, query_path):
     """Run one query; return (cpu_seconds, output_digest, output_bytes)."""
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
-    with open(query_path, 'rb') as stdin:
-        proc = subprocess.run(
-            [os.path.join(bindir, 'osm3s_query'), '--db-dir=' + db.rstrip('/') + '/'],
-            stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+    proc = subprocess.run(
+        [os.path.join(bindir, 'osm3s_query'), '--db-dir=' + db.rstrip('/') + '/'],
+        input=query_text(query_path), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
     after = resource.getrusage(resource.RUSAGE_CHILDREN)
     cpu = (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
     if proc.returncode != 0:
         sys.exit(f'{query_path}: osm3s_query in {bindir} exited with {proc.returncode}')
     stable = b'\n'.join(line for line in proc.stdout.split(b'\n') if not VOLATILE.search(line))
     return cpu, hashlib.sha256(stable).hexdigest(), len(proc.stdout)
+
+
+def query_sha(path):
+    return hashlib.sha256(query_text(path)).hexdigest()
 
 
 def file_sha(path):
@@ -72,8 +94,12 @@ def main():
                         help='baseline result cache (default ~/.cache/overpass-bench/baseline.json)')
     parser.add_argument('--no-cache', action='store_true',
                         help='time both builds, alternating runs, and ignore the cache')
+    parser.add_argument('--vars', help='JSON file with values for {{NAME}} placeholders in queries')
     parser.add_argument('queries', nargs='+')
     args = parser.parse_args()
+    if args.vars:
+        with open(args.vars) as f:
+            QUERY_VARS.update(json.load(f))
 
     cache = {}
     if not args.no_cache and os.path.exists(args.cache):
@@ -87,7 +113,7 @@ def main():
     differing = []
     reused = 0
     for query in args.queries:
-        key = f'{baseline_sha}|{db_key}|{file_sha(query)}'
+        key = f'{baseline_sha}|{db_key}|{query_sha(query)}'
         if args.no_cache:
             run_query(args.a, args.db, query)
             run_query(args.b, args.db, query)
