@@ -89,13 +89,7 @@ Way_Geometry_Store::Way_Geometry_Store
   std::map< Uint32_Index, std::vector< Node_Skeleton > > way_members_ = small_way_members(&query, rman, ways);
 
   // Order node ids by id.
-  for (std::map< Uint32_Index, std::vector< Node_Skeleton > >::iterator it = way_members_.begin();
-      it != way_members_.end(); ++it)
-  {
-    for (std::vector< Node_Skeleton >::const_iterator iit = it->second.begin();
-        iit != it->second.end(); ++iit)
-      nodes.push_back(Node(iit->id, it->first.val(), iit->ll_lower));
-  }
+  move_to_node_positions(way_members_, nodes);
   sort(nodes.begin(), nodes.end(), Node_Comparator_By_Id());
 }
 

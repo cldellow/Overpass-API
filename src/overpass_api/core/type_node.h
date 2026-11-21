@@ -58,8 +58,29 @@ struct Node
 };
 
 
+// A node's id and position without Node's tag vector, so it takes 16 bytes instead of 40.
+// The geometry stores keep many of these to look up the coordinates of way and relation members.
+struct Node_Position
+{
+  typedef Node::Id_Type Id_Type;
+
+  Id_Type id;
+  uint32 index;
+  uint32 ll_lower_;
+
+  Node_Position(Id_Type id_, uint32 ll_upper_, uint32 ll_lower__)
+      : id(id_), index(ll_upper_), ll_lower_(ll_lower__)
+  {}
+};
+
+
 struct Node_Comparator_By_Id {
   bool operator() (const Node& a, const Node& b)
+  {
+    return (a.id.val() < b.id.val());
+  }
+
+  bool operator() (const Node_Position& a, const Node_Position& b)
   {
     return (a.id.val() < b.id.val());
   }
