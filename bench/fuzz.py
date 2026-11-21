@@ -37,9 +37,15 @@ RESOURCE_LIMIT = re.compile(rb'(timed out|out of memory|Timeout is|Query run out
 class Generator:
     """Build one query from a seeded random source and the vocabulary."""
 
-    def __init__(self, vocab, rng):
+    def __init__(self, vocab, rng, features=frozenset()):
         self.v = vocab
         self.r = rng
+        # Optional statement families, for databases that support them:
+        #   areas    area queries, is_in, map_to_area, pivot (needs areas built by the area rules)
+        #   history  [date:], [diff:], [adiff:], newer, changed, retro, timeline (needs attic data)
+        #   users    user, uid, user_touched, uid_touched (needs user metadata)
+        #   complete complete loops
+        self.features = features
         self.sets = []  # names of the sets defined so far, with their element types
 
     # ----- leaves -----------------------------------------------------------
@@ -94,13 +100,46 @@ class Generator:
         return self.r.choice([
             f't[{self.quote(key)}]=={self.quote(value)}',
             f'count_tags()>{self.r.randint(0, 6)}',
-            f'id()%{self.r.randint(2, 5)}==0',
+            f'id()>{self.r.randint(1, 9)}000000000',
             'is_closed()',
             f'length()>{self.r.choice([10, 100, 1000])}',
             f'number(t[{self.quote(key)}])>{self.r.randint(0, 50)}',
             f'is_tag({self.quote(key)})',
             f'version()>{self.r.randint(1, 5)}',
         ])
+
+    def when(self):
+        """A timestamp within the database's history, from the vocabulary's edit times."""
+        return self.quote(self.pick(self.v['edit_times']))
+
+    def time_pair(self):
+        a, b = sorted([self.pick(self.v['edit_times']), self.pick(self.v['edit_times'])])
+        return self.quote(a), self.quote(b)
+
+    def user_filter(self):
+        form = self.r.random()
+        if form < 0.3:
+            return f'(user:{self.quote(self.pick(self.v["users"]))})'
+        if form < 0.6:
+            return f'(uid:{self.pick(self.v["uids"])})'
+        if form < 0.8:
+            return f'(user_touched:{self.quote(self.pick(self.v["users"]))})'
+        return f'(uid_touched:{self.pick(self.v["uids"])})'
+
+    def history_filter(self):
+        if self.r.random() < 0.5:
+            return f'(newer:{self.when()})'
+        a, b = self.time_pair()
+        return f'(changed:{a},{b})' if self.r.random() < 0.7 else f'(changed:{a})'
+
+    def area_query(self):
+        """An area set: by name, or by containment of a point."""
+        if self.r.random() < 0.75 and self.v.get('area_names'):
+            name = self.quote(self.pick(self.v['area_names']))
+            extra = '' if self.r.random() < 0.7 else self.r.choice(['[admin_level]', '[boundary]', '["type"="multipolygon"]'])
+            return f'area[name={name}]{extra}->.{self.new_set("area")};'
+        lat, lon = self.pick(self.v['node_coords'])
+        return f'is_in({lat:.6f},{lon:.6f})->.{self.new_set("area")};'
 
     def new_set(self, kind):
         name = f's{len(self.sets)}'
@@ -142,6 +181,10 @@ class Generator:
                 filters.append(self.ids(kind))
             else:
                 filters.append(f'(if:{self.evaluator()})')
+        if 'users' in self.features and self.v.get('users') and self.r.random() < 0.15:
+            filters.append(self.user_filter())
+        if 'history' in self.features and self.v.get('edit_times') and self.r.random() < 0.15:
+            filters.append(self.history_filter())
         self.r.shuffle(filters)
         out_kind = {'nwr': 'any', 'nw': 'any', 'wr': 'any'}.get(kind, kind)
         return f'{kind}{"".join(filters)}->.{self.new_set(out_kind)};'
@@ -149,6 +192,10 @@ class Generator:
     def derived(self):
         """A statement that builds on an earlier set."""
         name, kind = self.existing_set()
+        if self.features and self.r.random() < 0.3:
+            extra = self.feature_statement(name, kind)
+            if extra:
+                return extra
         choice = self.r.random()
         if choice < 0.2:
             arrow = self.r.choice(['>', '>>', '<', '<<'])
@@ -182,10 +229,44 @@ class Generator:
                 return f'(.{name}; .{other};)->.{self.new_set("any")};'
             return f'(.{name}; - .{other};)->.{self.new_set(kind)};'
         if choice < 0.86:
-            return f'node(way_cnt.{name}:{self.r.choice(["2-", "1", "0-1", "3-"])})->.{self.new_set("node")};'
+            return f'node(way_cnt.{name}:{self.r.choice(["2-", "1", "1-2", "3-"])})->.{self.new_set("node")};'
         if choice < 0.92:
             return f'node(way_link.{name}:{self.r.choice(["2-", "3-", "1"])})->.{self.new_set("node")};'
-        return self.anchored_query()
+        extra = self.feature_statement(name, kind)
+        return extra if extra else self.anchored_query()
+
+    def feature_statement(self, name, kind):
+        """A statement from an enabled optional family, or None."""
+        options = []
+        if 'areas' in self.features:
+            options += ['area_filter', 'area_filter', 'is_in_set', 'map_to_area', 'pivot']
+        if 'complete' in self.features:
+            options.append('complete')
+        if not options:
+            return None
+        pick = self.r.choice(options)
+        if pick == 'area_filter':
+            area_stmt = self.area_query()
+            area_name = self.sets[-1][0]
+            target = self.r.choice(['node', 'way', 'rel', 'nwr'])
+            key, value = self.pick(self.v['rare_tags'] if self.r.random() < 0.6 else self.v['common_tags'])
+            filt = f'[{self.quote(key)}={self.quote(value)}]' if self.r.random() < 0.8 else self.bbox(0.1)
+            return f'{area_stmt}\n{target}(area.{area_name}){filt}->.{self.new_set(target)};'
+        if pick == 'is_in_set':
+            return f'.{name} is_in->.{self.new_set("area")};'
+        if pick == 'map_to_area':
+            return f'.{name} map_to_area->.{self.new_set("area")};'
+        if pick == 'pivot':
+            areas = [s for s in self.sets if s[1] == 'area']
+            if not areas:
+                return None
+            target = self.r.choice(['way', 'rel', 'nwr'])
+            return f'{target}(pivot.{self.pick(areas)[0]})->.{self.new_set(target)};'
+        if pick == 'complete':
+            key = self.quote(self.pick(self.v['keys'][:30]))
+            body = self.r.choice([f'way(bn)[{key}]; node(w);', f'way(around:0)[{key}];', f'node(w); way(bn)[{key}];'])
+            return f'complete({self.r.randint(1, 6)}).{name}->.{self.new_set("any")} {{ {body} }}'
+        return None
 
     def out_statement(self, name):
         if self.r.random() < 0.15:
@@ -210,7 +291,26 @@ class Generator:
             header += '[out:csv(::type,::id,::lat,::lon,' + self.quote(self.pick(self.v['keys'])) + ')]'
         if self.r.random() < 0.1:
             header += '[bbox:' + self.bbox(0.3)[1:-1] + ']'
+        if 'history' in self.features and self.v.get('edit_times'):
+            mode = self.r.random()
+            if mode < 0.25:
+                header += f'[date:{self.when()}]'
+            elif mode < 0.4:
+                a, b = self.time_pair()
+                header += f'[diff:{a},{b}]' if self.r.random() < 0.7 else f'[diff:{a}]'
+            elif mode < 0.5:
+                a, b = self.time_pair()
+                header += f'[adiff:{a},{b}]'
         lines = [header + ';', self.anchored_query()]
+        if 'history' in self.features and self.v.get('edit_times') and self.r.random() < 0.08:
+            kind = self.r.choice(['node', 'way', 'relation'])
+            pool = {'node': 'node_ids', 'way': 'way_ids', 'relation': 'relation_ids'}[kind]
+            version = f',{self.r.randint(1, 4)}' if self.r.random() < 0.5 else ''
+            lines.append(f'timeline({kind},{self.pick(self.v[pool])}{version})->.{self.new_set("derived")};')
+        if 'history' in self.features and self.v.get('edit_times') and self.r.random() < 0.06:
+            inner = self.anchored_query()
+            inner_name = self.sets[-1][0]
+            lines.append(f'retro(date({self.when()})) {{ {inner} .{inner_name} out ids; }}')
         for _ in range(self.r.randint(0, 4)):
             lines.append(self.derived())
         if self.r.random() < 0.08:
@@ -225,8 +325,8 @@ class Generator:
         return '\n'.join(lines) + '\n'
 
 
-def generate(vocab, seed, index):
-    return Generator(vocab, random.Random(f'{seed}-{index}')).query()
+def generate(vocab, seed, index, features=frozenset()):
+    return Generator(vocab, random.Random(f'{seed}-{index}'), features).query()
 
 
 def child_cpu():
@@ -248,19 +348,24 @@ def run_once(bindir, db, query, timeout):
                               timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
         return 'timeout', None, b''
-    if RESOURCE_LIMIT.search(proc.stdout[-4096:]) and b'Timeout is' not in proc.stdout[-4096:]:
+    # osm3s_query reports errors, including timeouts, on stderr; some formats repeat them in stdout.
+    errors = [line for line in proc.stderr.split(b'\n') if b'error' in line.lower()]
+    if (RESOURCE_LIMIT.search(proc.stdout[-4096:]) and b'Timeout is' not in proc.stdout[-4096:]) \
+            or any(RESOURCE_LIMIT.search(line) for line in errors):
         return 'resource-limit', None, proc.stdout
     stable = b'\n'.join(line for line in proc.stdout.split(b'\n') if not VOLATILE.search(line))
     status = 'ok' if proc.returncode == 0 else f'exit-{proc.returncode}'
-    if b'runtime error' in proc.stdout or b'static error' in proc.stdout or b'parse error' in proc.stdout:
-        status = 'query-error'
-    digest = hashlib.sha256(status.encode() + b'\0' + stable).hexdigest()
+    if errors or b'runtime error' in proc.stdout or b'static error' in proc.stdout or b'parse error' in proc.stdout:
+        # Keep the first message, without line numbers, so the summary shows which errors occur.
+        first = (errors[0] if errors else b'error in output').decode(errors='replace')
+        status = 'query-error: ' + re.sub(r'line \d+', 'line N', first)[:90]
+    digest = hashlib.sha256(status.encode() + b'\0' + stable + b'\0' + b'\n'.join(errors)).hexdigest()
     return status, digest, proc.stdout
 
 
 def check(args_tuple):
-    a, b, db, vocab, seed, index, timeout = args_tuple
-    query = generate(vocab, seed, index)
+    a, b, db, vocab, seed, index, timeout, features = args_tuple
+    query = generate(vocab, seed, index, features)
     status_a, digest_a, out_a, cpu_a = run(a, db, query, timeout)
     status_b, digest_b, out_b, cpu_b = run(b, db, query, timeout)
     if 'timeout' in (status_a, status_b) or 'resource-limit' in (status_a, status_b):
@@ -286,6 +391,8 @@ def main():
     parser.add_argument('--jobs', type=int, default=os.cpu_count())
     parser.add_argument('--timeout', type=int, default=30, help='seconds per run before giving up')
     parser.add_argument('--out-dir', default='fuzz-failures')
+    parser.add_argument('--features', default='',
+                        help='comma-separated optional statement families: areas, history, users, complete')
     parser.add_argument('--report', metavar='CSV',
                         help='write one row per query: status, CPU time per build, output size '
                              '(for finding slow or degenerate queries)')
@@ -294,18 +401,22 @@ def main():
     with open(args.vocab, 'rb') as f:
         raw = f.read()
     vocab = json.loads(raw)
+    features = frozenset(f for f in args.features.split(',') if f)
+    unknown = features - {'areas', 'history', 'users', 'complete'}
+    if unknown:
+        parser.error('unknown features: ' + ', '.join(sorted(unknown)))
     if args.show is not None:
-        sys.stdout.write(generate(vocab, args.seed, args.show))
+        sys.stdout.write(generate(vocab, args.seed, args.show, features))
         return 0
     if not (args.a and args.b and args.db):
         parser.error('--a, --b and --db are required unless --show is given')
 
-    print(f'seed {args.seed}, queries {args.start}..{args.start + args.count - 1}, '
+    print(f'seed {args.seed}, features {",".join(sorted(features)) or "none"}, queries {args.start}..{args.start + args.count - 1}, '
           f'vocab sha256 {hashlib.sha256(raw).hexdigest()[:12]}')
     verdicts = collections.Counter()
     statuses = collections.Counter()
     empty = 0
-    tasks = [(args.a, args.b, args.db, vocab, args.seed, i, args.timeout)
+    tasks = [(args.a, args.b, args.db, vocab, args.seed, i, args.timeout, features)
              for i in range(args.start, args.start + args.count)]
     report = None
     if args.report:
@@ -334,7 +445,11 @@ def main():
     if report:
         report.close()
     print(f'verdicts: {dict(verdicts)}')
-    print(f'baseline outcomes: {dict(statuses)}; ok but empty: {empty}')
+    plain = collections.Counter({k: v for k, v in statuses.items() if not k.startswith('query-error')})
+    errs = {k: v for k, v in statuses.items() if k.startswith('query-error')}
+    print(f'baseline outcomes: {dict(plain)}, query errors: {sum(errs.values())}; ok but empty: {empty}')
+    for k, v in sorted(errs.items(), key=lambda kv: -kv[1])[:8]:
+        print(f'  {v:5}  {k}')
     return 1 if verdicts['DIFFERENT'] else 0
 
 

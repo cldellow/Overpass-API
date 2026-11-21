@@ -5,14 +5,21 @@ Collects common and rare tags, a random sample of node/way/relation ids with a
 coordinate for each node, relation roles, and the data's bounding box.
 Needs osmium-tool.
 
+Also collects names of relations that become areas (boundaries, admin areas, named
+multipolygons), and, given --osc-dir, the users, user ids and edit timestamps found in a
+directory of osmChange files (the regional diffs of a history database).
+
 Usage:
-  fuzz_vocab.py EXTRACT.osm.pbf VOCAB.json [--seed 1]
+  fuzz_vocab.py EXTRACT.osm.pbf VOCAB.json [--seed 1] [--osc-dir DIR]
 """
 import argparse
 import collections
+import glob
 import json
+import os
 import random
 import subprocess
+import xml.etree.ElementTree as ET
 
 
 def tag_counts(pbf):
@@ -69,12 +76,54 @@ def sample_objects(pbf, per_type, rng):
     return samples, roles
 
 
+def area_names(pbf, limit=300):
+    """Names of relations that the standard area rules turn into areas."""
+    out = subprocess.run(
+        'osmium tags-filter -O -f opl -o - "%s" r/boundary r/admin_level r/type=multipolygon' % pbf,
+        shell=True, check=True, stdout=subprocess.PIPE, text=True).stdout
+    names = collections.Counter()
+    for line in out.splitlines():
+        if not line.startswith('r'):
+            continue
+        for field in line.split(' '):
+            if field.startswith('T'):
+                for kv in field[1:].split(','):
+                    if kv.startswith('name='):
+                        name = kv[5:].replace('%20%', ' ').replace('%2c%', ',')
+                        if '%' not in name and '"' not in name and '\\' not in name:
+                            names[name] += 1
+    return [n for n, _ in names.most_common(limit)]
+
+
+def history_vocab(osc_dir):
+    """Users, user ids and edit timestamps from a directory of osmChange files."""
+    users, uids, times = collections.Counter(), collections.Counter(), []
+    for path in sorted(glob.glob(os.path.join(osc_dir, '*.osc'))):
+        for _, el in ET.iterparse(path):
+            if el.tag in ('node', 'way', 'relation'):
+                if el.get('user') and '"' not in el.get('user') and '\\' not in el.get('user'):
+                    users[el.get('user')] += 1
+                if el.get('uid'):
+                    uids[int(el.get('uid'))] += 1
+                if el.get('timestamp'):
+                    times.append(el.get('timestamp'))
+                el.clear()
+    times.sort()
+    return {
+        'users': [u for u, _ in users.most_common(200)],
+        'uids': [u for u, _ in uids.most_common(200)],
+        'edit_times': times[::max(1, len(times) // 500)],
+        'time_range': [times[0], times[-1]] if times else [],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('pbf')
     parser.add_argument('vocab')
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--per-type', type=int, default=3000, help='ids to sample per object type')
+    parser.add_argument('--osc-dir', help='osmChange files of a history database, for users and dates')
     args = parser.parse_args()
     rng = random.Random(args.seed)
 
@@ -104,11 +153,17 @@ def main():
         'relation_ids': [r['id'] for r in samples['r']],
         'roles': [r for r, _ in roles.most_common(30) if '"' not in r and "'" not in r],
         'bbox': [min(lats), min(lons), max(lats), max(lons)],
+        'area_names': area_names(args.pbf),
     }
+    if args.osc_dir:
+        vocab.update(history_vocab(args.osc_dir))
     with open(args.vocab, 'w') as f:
         json.dump(vocab, f)
     print(f'{len(common)} common tags, {len(rare)} rare tags, {len(nodes)} nodes, '
-          f'{len(samples["w"])} ways, {len(samples["r"])} relations, {len(vocab["roles"])} roles')
+          f'{len(samples["w"])} ways, {len(samples["r"])} relations, {len(vocab["roles"])} roles, '
+          f'{len(vocab["area_names"])} area names'
+          + (f', {len(vocab["users"])} users, {len(vocab["edit_times"])} edit times {vocab["time_range"]}'
+             if args.osc_dir else ''))
 
 
 if __name__ == '__main__':
