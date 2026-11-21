@@ -20,6 +20,7 @@
 #define DE__OSM3S___OVERPASS_API__OSM_BACKEND__BASIC_UPDATER_H
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <set>
 #include <vector>
@@ -527,6 +528,28 @@ std::map< Id_Type, std::set< Index > > get_existing_idx_lists
     result[it.index()].insert(it.object());
 
   return result;
+}
+
+
+/* Removes from ids (sorted) those of the elements that have attic versions in skeletons.
+ * Since update_database flushes only between elements, such an element has all its
+ * versions of this import in memory, so its stored attic versions need not be read. */
+template< typename Index, typename Attic_Object, typename Id_Type >
+void remove_ids_with_attic_in_memory
+    (std::vector< Id_Type >& ids, const std::map< Index, std::set< Attic< Attic_Object > > >& skeletons)
+{
+  std::vector< Id_Type > in_memory;
+  for (auto it = skeletons.begin(); it != skeletons.end(); ++it)
+  {
+    for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
+      in_memory.push_back(it2->id);
+  }
+  std::sort(in_memory.begin(), in_memory.end());
+  in_memory.erase(std::unique(in_memory.begin(), in_memory.end()), in_memory.end());
+
+  std::vector< Id_Type > rest;
+  std::set_difference(ids.begin(), ids.end(), in_memory.begin(), in_memory.end(), std::back_inserter(rest));
+  ids.swap(rest);
 }
 
 
