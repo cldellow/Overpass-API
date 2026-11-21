@@ -191,6 +191,22 @@ class Around_Statement : public Output_Statement
 
     Ranges< Uint32_Index > calc_ranges(const Set& input_nodes, Resource_Manager& rman) const;
 
+  private:
+    // The index ranges of the input relations' members, which calc_ranges needs. It runs
+    // several times per execution, so they are kept, together with what they depend on:
+    // the date, the ids of the current relations, and the ids and timestamps of the
+    // relations at a past date.
+    void member_ranges(const Set& input, Resource_Manager& rman,
+        Ranges< Uint32_Index >& node_ranges, Ranges< Uint31_Index >& way_ranges) const;
+    mutable bool member_ranges_known = false;
+    mutable uint64 member_ranges_timestamp = 0;
+    mutable std::vector< Relation_Skeleton::Id_Type > member_ranges_relations;
+    mutable std::vector< std::pair< Relation_Skeleton::Id_Type, uint64 > > member_ranges_attic_relations;
+    mutable Ranges< Uint32_Index > member_node_ranges;
+    mutable Ranges< Uint31_Index > member_way_ranges;
+
+  public:
+
     void calc_lat_lons(const Set& input_nodes, Statement& query, Resource_Manager& rman);
 
     bool is_inside(double lat, double lon) const;
