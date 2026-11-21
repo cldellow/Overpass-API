@@ -56,9 +56,6 @@ class User_Constraint : public Query_Constraint
     // The ids of the objects the users touched depend only on the users, so they are
     // the same for the whole query. They are kept after first use and shared by
     // get_*_ids and filter, which otherwise each read all of the users' metadata.
-    // Lists longer than max_kept_ids are not kept, so a prolific user's list never
-    // stays in memory longer than before.
-    static const std::size_t max_kept_ids = 2*1024*1024;
     bool node_ids_known = false;
     bool way_ids_known = false;
     bool relation_ids_known = false;
@@ -69,17 +66,6 @@ class User_Constraint : public Query_Constraint
     const std::vector< Node_Skeleton::Id_Type >& touched_nodes(Resource_Manager& rman);
     const std::vector< Way_Skeleton::Id_Type >& touched_ways(Resource_Manager& rman);
     const std::vector< Relation_Skeleton::Id_Type >& touched_relations(Resource_Manager& rman);
-
-    // Drops a list that is too long to keep, so that it is computed again when needed.
-    template< typename Id_Type >
-    static void release_if_large(std::vector< Id_Type >& ids, bool& known)
-    {
-      if (ids.size() > max_kept_ids)
-      {
-        std::vector< Id_Type >().swap(ids);
-        known = false;
-      }
-    }
 };
 
 
@@ -242,17 +228,14 @@ void User_Constraint::filter(const Statement& query, Resource_Manager& rman, Set
       Timeless< Uint32_Index, Node_Skeleton >{ into.nodes, into.attic_nodes }.filter_by_id(
           touched_nodes(rman))
           .swap(into.nodes, into.attic_nodes);
-    release_if_large(touched_node_ids, node_ids_known);
     if (!into.ways.empty() || !into.attic_ways.empty())
       Timeless< Uint31_Index, Way_Skeleton >{ into.ways, into.attic_ways }.filter_by_id(
           touched_ways(rman))
           .swap(into.ways, into.attic_ways);
-    release_if_large(touched_way_ids, way_ids_known);
     if (!into.relations.empty() || !into.attic_relations.empty())
       Timeless< Uint31_Index, Relation_Skeleton >{ into.relations, into.attic_relations }.filter_by_id(
           touched_relations(rman))
           .swap(into.relations, into.attic_relations);
-    release_if_large(touched_relation_ids, relation_ids_known);
   }
 
   into.areas.clear();
@@ -479,15 +462,7 @@ bool User_Constraint::get_node_ids(Resource_Manager& rman, std::vector< Node_Ske
 {
   if (user->get_criterion() == User_Statement::touched)
   {
-    touched_nodes(rman);
-    if (touched_node_ids.size() > max_kept_ids)
-    {
-      // Too long to keep: hand it over, as before this list was kept.
-      ids.swap(touched_node_ids);
-      node_ids_known = false;
-    }
-    else
-      ids = touched_node_ids;
+    ids = touched_nodes(rman);
     return true;
   }
   return false;
@@ -498,15 +473,7 @@ bool User_Constraint::get_way_ids(Resource_Manager& rman, std::vector< Way_Skele
 {
   if (user->get_criterion() == User_Statement::touched)
   {
-    touched_ways(rman);
-    if (touched_way_ids.size() > max_kept_ids)
-    {
-      // Too long to keep: hand it over, as before this list was kept.
-      ids.swap(touched_way_ids);
-      way_ids_known = false;
-    }
-    else
-      ids = touched_way_ids;
+    ids = touched_ways(rman);
     return true;
   }
   return false;
@@ -517,15 +484,7 @@ bool User_Constraint::get_relation_ids(Resource_Manager& rman, std::vector< Rela
 {
   if (user->get_criterion() == User_Statement::touched)
   {
-    touched_relations(rman);
-    if (touched_relation_ids.size() > max_kept_ids)
-    {
-      // Too long to keep: hand it over, as before this list was kept.
-      ids.swap(touched_relation_ids);
-      relation_ids_known = false;
-    }
-    else
-      ids = touched_relation_ids;
+    ids = touched_relations(rman);
     return true;
   }
   return false;
