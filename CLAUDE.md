@@ -31,13 +31,20 @@ This fork's `master` only adds fork-specific files (this file, the README); neve
   versus `upstream/master`, testing, and limitations or open questions.
 - Descriptions and commit messages must stand alone. Define every query you cite (full text, or a
   table of the benchmark queries) in the same text. No `…` in place of query text.
-- Keep `all-changes` (every change, cherry-picked onto `upstream/master`) and its PR current. Its PR tracks
-  `upstream/master` against `all-changes` for the benchmark queries and each commit's prompting query.
+- Keep `all-changes` (every performance change, cherry-picked onto `upstream/master`) and its PR current.
+  Its PR tracks `upstream/master` against `all-changes` for the benchmark queries and each commit's
+  prompting query.
+- Import changes (`update_database`, `update_from_dir` and the updaters in `osm-backend/`) never go
+  into `all-changes`, so performance work isn't affected by them. Keep `better-imports` (every import
+  change, cherry-picked onto `upstream/master`) and its PR current instead. Import changes get their
+  own issues and PRs like any other change.
 
 ## Testing changes
 
 The tools are in `bench/` on the `bench-tools` branch; see `bench/README.md`. The test database is
 the Geofabrik Nova Scotia extract, imported with `--meta` (convert PBF to XML with `osmium`).
+Databases with history, built from a full-history extract, need a `better-imports` build of
+`update_database`; `upstream/master` imports history incorrectly. Query with the build under test.
 
 - **Performance:** run `bench/compare.py`. Don't re-time the baseline; it is cached. Use
   `--no-cache` (alternating runs) when the expected difference is under about 25%: separately
