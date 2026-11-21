@@ -54,6 +54,19 @@ the Geofabrik Nova Scotia extract, imported with `--meta` (convert PBF to XML wi
 - **Reporting:** state the dataset, cache state and machine for every number. Report skipped or
   unverified cases.
 
+## Confidential data
+
+Some test data, such as a Geofabrik full-history extract (`.osh.pbf`), is licensed on condition
+that it isn't shared and that its personal data isn't disclosed. For such data and anything
+derived from it (databases, diffs, fuzz vocabularies, query outputs):
+
+- Never upload, commit, publish or link it, or its download URL, anywhere: not in issues, PRs,
+  comments, commit messages, branches or artifacts. Keep it on the session machine.
+- Never put user names, user ids or changeset ids from it in anything written, including queries
+  cited in issues and PRs. Report results in aggregate, and use placeholders (e.g. `(uid:N)`)
+  where a query's shape matters.
+- Committed tools may read such data, but must not embed values from it.
+
 ## Building
 
 Use one git worktree and build directory per branch, so long runs keep their binaries:
