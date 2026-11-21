@@ -59,6 +59,11 @@ python3 bench/fuzz.py --a BASE/install/bin --b NEW/install/bin  --db DB --vocab 
 python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
 ```
 
+- **Tested:** `python3 bench/test_fuzz.py [--bin BUILD/bin]` checks, with a synthetic vocabulary,
+  that each feature set still generates every construct it should (`poly:`, both area-by-id forms,
+  `[bbox:]`, `around`, each out mode, history and user filters, and so on), that generation is
+  reproducible, and, with `--bin`, that the queries parse (`osm3s_query --dump-xml`, no database
+  needed). Run it after changing the generator; it takes about half a minute.
 - **Reproducible:** query N of seed S depends only on S, N and the vocabulary file (the run prints
   the vocabulary's hash), not on `--jobs` or on which other queries ran.
 - **Reusable:** `--a` and `--b` take any two builds, so the same seeds can be replayed against every
