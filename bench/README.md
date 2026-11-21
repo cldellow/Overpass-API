@@ -99,6 +99,51 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
   find queries that time out, cost a lot for little output, or got slower on the build under test,
   then reprint them with `--show`.
 
+## Property tests on synthetic data
+
+`props/props.py` generates small synthetic databases, runs queries on them and checks every
+result. Where `fuzz.py` replays random queries on real data, this targets the configurations real
+data almost never contains: points on or 1-2 units (1e-7 degrees) off polygon edges and vertices,
+segments parallel to an axis 0-3 units apart, shared endpoints, and data straddling index tile
+boundaries, at four scales from a few units to several tiles.
+
+```bash
+# Check a build against upstream: properties, plus byte-identical output.
+python3 bench/props/props.py --bin NEW/build/bin --baseline UPSTREAM/build/bin --seeds 1-60
+
+# Check upstream against itself (outputs must be deterministic).
+python3 bench/props/props.py --bin UPSTREAM/build/bin --baseline UPSTREAM/build/bin --seeds 1-60
+
+# Print one seed's data and queries.
+python3 bench/props/props.py --seeds 7 --show
+```
+
+- **Only the binaries:** the tests use `update_database` and `osm3s_query`, nothing internal, so
+  the same seeds replay unchanged against upstream and every branch. A build directory after
+  `make bin/osm3s_query` is enough for the candidate; the importing build also needs
+  `make bin/update_database`.
+- **Same database for both builds:** each seed is imported once, by the baseline's
+  `update_database` (or `--import-bin`), with `--meta`, and the area rules are run on it. Both
+  builds then query the same files. Use `--import-bin` with the candidate for changes to the
+  on-disk format; import and area-creation changes themselves aren't tested this way.
+- **What is checked:** each query's result against an answer computed from the generated data:
+  bbox, tag, id, recursion, relation members, set operations, `uid`/`user`/`newer` exactly;
+  `poly:`, areas, `is_in` and `around` with a margin (objects clearly inside must be returned,
+  objects clearly outside must not; objects within 2 units of the boundary, or within 0.5 m plus
+  0.1% of an `around` radius, aren't checked). With `--baseline`, every output must also be
+  byte-identical to the baseline's, which covers the boundary cases the margins leave out.
+- **Failures on the baseline too** are counted separately and don't fail the run: they're
+  upstream behaviour, not a regression. Expect some in the `poly ways` and `area ways` rows:
+  upstream misses ways that cross a polygon edge when `uint32` latitudes wrap around in
+  `ordered_intersects_inner`, and `way(area)` drops a way that touches the area's border if it
+  also crosses the interior.
+- **Failures** are printed with their seed and query, and with `--out-dir` written to
+  `OUT_DIR/<seed>-<check>/{data.osm,query.ql,candidate.out,baseline.out,problems.txt}`. The exit
+  status is 1 if any check fails on the candidate but not the baseline, or any output differs.
+- **Reproducible:** a seed's data and queries depend only on the seed and the script (its hash
+  is printed).
+- **Speed:** 60 seeds (about 5,000 queries per build) take under a minute on 4 cores.
+
 ## A database with history
 
 **From a full-history extract** (`.osh.pbf`): import it directly. `--keep-attic` includes the
