@@ -868,11 +868,19 @@ Ranges< Uint32_Index > Around_Statement::calc_ranges(const Set& input, Resource_
       member_way_ranges = ranges(relation_way_members(
           context, input.relations, {}, Ranges< Uint31_Index >::global(), {}, true).current);
     }
+    // The same for relations at a past date, with the members calc_lat_lons uses for them.
+    if (!input.attic_relations.empty())
+    {
+      Request_Context context(this, rman);
+      member_node_ranges = member_node_ranges.union_(ranges(relation_node_members(
+          context, input.attic_relations, relation_node_member_indices({}, input.attic_relations))));
+      member_way_ranges = member_way_ranges.union_(ranges(relation_way_members(
+          context, input.attic_relations, Ranges< Uint31_Index >::global())));
+    }
     return expand(
         ranges(input.nodes).union_(ranges(input.attic_nodes)).union_(member_node_ranges).union_(
             calc_children(
-                ranges(input.ways).union_(ranges(input.attic_ways)).union_(
-                member_way_ranges.union_(ranges(input.attic_relations))))),
+                ranges(input.ways).union_(ranges(input.attic_ways)).union_(member_way_ranges))),
         radius);
   }
 }
