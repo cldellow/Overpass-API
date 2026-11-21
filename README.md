@@ -5,9 +5,9 @@
 
 This is a Claude-assisted [^0] fork of [fossgis/Overpass-API](https://github.com/fossgis/Overpass-API). This `README` and any issue comments that open with `Colin's thoughts` were written by a meat popsicle. Pretty much everything else was written by Claude.
 
-The fork is motivated by the [Overpass API performance issues](https://community.openstreetmap.org/t/overpass-api-performance-issues/140598) thread.
+The fork is motivated by the [Overpass API performance issues](https://community.openstreetmap.org/t/overpass-api-performance-issues/140598) thread. The thread proposes several longer-term solutions like authentication/authorization or pushing people to use "cloud-native" solutions like querying .pmtiles. I think those are good solutions, but I don't have the political clout to help with either of them, so for now, I'm looking at code changes to Overpass-API itself.
 
-The goal is to produce small patches that can be merged upstream that improve CPU performance [^1], but which don't require on-disk format changes [^2].
+Specifically, the goal is to produce small patches that can be merged upstream that improve CPU performance [^1], but which don't require on-disk format changes [^2].
 
 I don't actually operate an Overpass API server, nor have I ever written Overpass QL. 
 
