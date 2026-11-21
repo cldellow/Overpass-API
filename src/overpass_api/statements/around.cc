@@ -35,13 +35,20 @@
 template < class TIndex, class TObject >
 Ranges< TIndex > ranges(const std::map< TIndex, std::vector< TObject > >& elems)
 {
+  // Indexes whose vector is empty hold no objects and contribute no geometry. Filters
+  // often leave such entries behind, e.g. for attic data at other dates, and for
+  // relations they can be coarse indexes covering large areas, so skip them.
   Ranges< TIndex > result;
-  if (elems.empty())
+  typename std::map< TIndex, std::vector< TObject > >::const_iterator it = elems.begin();
+  while (it != elems.end() && it->second.empty())
+    ++it;
+  if (it == elems.end())
     return result;
-  std::pair< TIndex, TIndex > range = std::make_pair(elems.begin()->first, inc(elems.begin()->first));
-  for (typename std::map< TIndex, std::vector< TObject > >::const_iterator
-      it = elems.begin(); it != elems.end(); ++it)
+  std::pair< TIndex, TIndex > range = std::make_pair(it->first, inc(it->first));
+  for (; it != elems.end(); ++it)
   {
+    if (it->second.empty())
+      continue;
     if (!(range.second < it->first))
       range.second = inc(it->first);
     else
@@ -52,7 +59,7 @@ Ranges< TIndex > ranges(const std::map< TIndex, std::vector< TObject > >& elems)
   }
   result.push_back(range.first, range.second);
   result.sort();
-  
+
   return result;
 }
 
