@@ -25,7 +25,7 @@ This fork's `master` only adds fork-specific files (this file, the README); neve
 - Use one branch per change, from `upstream/master`, so fork-specific files never enter a change.
   PRs still target this fork's `master`. A dependent PR targets its base branch and says so at
   the top.
-- Start a PR description with `Fixes cldellow/Overpass-API#N.`, one line per issue it fixes.
+- Start a PR description with `Fixes #N.`, one line per issue it fixes.
   Tracking PRs (`all-changes`, `better-imports`) use one line: `Fixes #3, fixes #4.` Repeat the
   keyword, and keep the list: GitHub ignores `Fixes` in stacked PRs, so only the tracking PR links them.
 - Label every PR by kind: `query-perf` for query performance changes, `query-memory` for changes
@@ -90,5 +90,5 @@ cd src && mkdir -p m4 && autoreconf -i && mkdir -p ../build && cd ../build
 ```
 
 `autoreconf -i` also installs `src/ar-lib` and `src/compile`. `upstream/master`'s `src/.gitignore` doesn't
-list them (cldellow/Overpass-API#82), so they show up as untracked files. Never commit them: stage
+list them (#82), so they show up as untracked files. Never commit them: stage
 files by name rather than with `git add -A` or `git add .`, and check `git show --stat` before pushing.
