@@ -31,6 +31,12 @@ expect a database built from a Nova Scotia extract. Two more sets need databases
 - `queries-history/`: `[date:]`, `[diff:]`, `newer` and user filters, for a database with history
   (see below). `h5` and `h6` take `{{UID}}`, so they need `--vars`.
 
+- `queries-tools/`: queries shaped like those that popular client tools generate (overpass turbo,
+  JOSM, QGIS QuickOSM, osmnx, osmdata and MapComplete; templates read from each tool's source),
+  filled in for Halifax. Run them on the area database: the area and `poly:` forms need it.
+  `t08` and `t09` carry the Halifax boundary (relation 9092218, 1,041 points) as a `poly:` filter,
+  as osmnx sends a place polygon (osmnx also buffers it by 500 m first; these don't).
+
 Run each set with `--db` pointed at its database; the baseline cache keeps them apart.
 
 ## Differential fuzzing
