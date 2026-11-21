@@ -566,6 +566,67 @@ inline std::vector< Way::Id_Type > relation_way_member_ids
 }
 
 
+// For each id, the end of validity of the version valid at a past date: NOW for the current
+// version, else the earliest attic timestamp after that date, else 0 (no valid version).
+// This is what a std::map< Id_Type, uint64 > filled by the same rules held, in a sorted vector
+// of 16-byte entries instead of a tree node of about 48 bytes per id.
+template< typename Id_Type >
+class Valid_Until_By_Id
+{
+public:
+  Valid_Until_By_Id(uint64 timestamp_) : timestamp(timestamp_), valid_count(0) {}
+
+  void add_current(const Id_Type& id) { entries.push_back(std::make_pair(id, NOW)); }
+
+  // Versions that ended at or before the date can't be the valid one, so they aren't stored:
+  // an id without entries reads as 0, like an id whose entries are all 0.
+  void add_attic(const Id_Type& id, uint64 attic_timestamp)
+  {
+    if (attic_timestamp > timestamp)
+      entries.push_back(std::make_pair(id, attic_timestamp));
+  }
+
+  // Call once after adding all entries: keeps per id the smallest nonzero value, else 0.
+  void finish()
+  {
+    std::sort(entries.begin(), entries.end());
+    typename std::vector< std::pair< Id_Type, uint64 > >::iterator kept = entries.begin();
+    typename std::vector< std::pair< Id_Type, uint64 > >::iterator it = entries.begin();
+    while (it != entries.end())
+    {
+      typename std::vector< std::pair< Id_Type, uint64 > >::iterator run_end = it;
+      uint64 valid_until = 0;
+      while (run_end != entries.end() && run_end->first == it->first)
+      {
+        if (valid_until == 0)
+          valid_until = run_end->second;
+        ++run_end;
+      }
+      if (valid_until != 0)
+        ++valid_count;
+      *kept++ = std::make_pair(it->first, valid_until);
+      it = run_end;
+    }
+    entries.erase(kept, entries.end());
+  }
+
+  uint64 get(const Id_Type& id) const
+  {
+    typename std::vector< std::pair< Id_Type, uint64 > >::const_iterator it = std::lower_bound(
+        entries.begin(), entries.end(), std::make_pair(id, uint64(0)));
+    return (it != entries.end() && it->first == id) ? it->second : 0;
+  }
+
+  // The number of ids that have a valid version, i.e. the number of skeletons kept.
+  std::size_t count_valid() const { return valid_count; }
+
+private:
+  uint64 timestamp;
+  std::size_t valid_count;
+  std::vector< std::pair< Id_Type, uint64 > > entries;
+};
+
+
 template< typename Index, typename Skeleton >
 void keep_matching_skeletons
     (std::map< Index, std::vector< Skeleton > >& current,
@@ -578,30 +639,27 @@ void keep_matching_skeletons
     return;
   }
   
-  std::map< typename Skeleton::Id_Type, uint64 > timestamp_by_id;
+  Valid_Until_By_Id< typename Skeleton::Id_Type > timestamp_by_id(timestamp);
 
   for (auto it = current.begin(); it != current.end(); ++it)
   {
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
-      timestamp_by_id[it2->id] = NOW;
+      timestamp_by_id.add_current(it2->id);
   }
 
   for (auto it = attic.begin(); it != attic.end(); ++it)
   {
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
-    {
-      uint64& stored_timestamp = timestamp_by_id[it2->id];
-      if (it2->timestamp > timestamp && (stored_timestamp == 0 || stored_timestamp > it2->timestamp))
-        stored_timestamp = it2->timestamp;
-    }
+      timestamp_by_id.add_attic(it2->id, it2->timestamp);
   }
+  timestamp_by_id.finish();
 
   for (auto it = current.begin(); it != current.end(); ++it)
   {
     std::vector< Skeleton > local_into;
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
     {
-      if (timestamp_by_id[it2->id] == NOW)
+      if (timestamp_by_id.get(it2->id) == NOW)
         local_into.push_back(*it2);
     }
     local_into.swap(it->second);
@@ -612,7 +670,7 @@ void keep_matching_skeletons
     std::vector< Attic< Skeleton > > local_into;
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
     {
-      if (timestamp_by_id[it2->id] == it2->timestamp)
+      if (timestamp_by_id.get(it2->id) == it2->timestamp)
         local_into.push_back(*it2);
     }
     local_into.swap(it->second);
@@ -627,32 +685,29 @@ void keep_matching_skeletons
      const std::map< Index, std::vector< Attic< Skeleton > > >& attic,
      uint64 timestamp)
 {
-  std::map< typename Skeleton::Id_Type, uint64 > timestamp_by_id;
+  Valid_Until_By_Id< typename Skeleton::Id_Type > timestamp_by_id(timestamp);
 
   result.clear();
 
   for (auto it = current.begin(); it != current.end(); ++it)
   {
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
-      timestamp_by_id[it2->id] = NOW;
+      timestamp_by_id.add_current(it2->id);
   }
 
   for (auto it = attic.begin(); it != attic.end(); ++it)
   {
     for (typename std::vector< Attic< Skeleton > >::const_iterator it2 = it->second.begin();
          it2 != it->second.end(); ++it2)
-    {
-      uint64& stored_timestamp = timestamp_by_id[it2->id];
-      if (it2->timestamp > timestamp && (stored_timestamp == 0 || stored_timestamp > it2->timestamp))
-        stored_timestamp = it2->timestamp;
-    }
+      timestamp_by_id.add_attic(it2->id, it2->timestamp);
   }
+  timestamp_by_id.finish();
 
   for (auto it = current.begin(); it != current.end(); ++it)
   {
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
     {
-      if (timestamp_by_id[it2->id] == NOW)
+      if (timestamp_by_id.get(it2->id) == NOW)
         result[it->first].push_back(Attic< Skeleton >(*it2, NOW));
     }
   }
@@ -661,7 +716,7 @@ void keep_matching_skeletons
   {
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
     {
-      if (timestamp_by_id[it2->id] == it2->timestamp)
+      if (timestamp_by_id.get(it2->id) == it2->timestamp)
         result[it->first].push_back(Attic< Skeleton >(*it2, it2->timestamp));
     }
   }
