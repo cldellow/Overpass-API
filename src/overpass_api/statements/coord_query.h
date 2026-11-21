@@ -45,6 +45,22 @@ class Coord_Query_Statement : public Output_Statement
         (uint32 ll_index, const Area_Block& area_block,
 	 uint32 coord_lat, int32 coord_lon);
 
+    /* An area block with its vertices decoded once, for testing many coordinates against
+       it. Decoding packed coordinates dominated the cost of testing each coordinate against
+       the raw block. */
+    struct Decoded_Area_Block
+    {
+      Decoded_Area_Block(uint32 ll_index, const Area_Block& area_block);
+      std::vector< uint32 > lat;
+      std::vector< int32 > lon;
+      int32 min_lon;
+      int32 max_lon;
+    };
+    // Same result as check_area_block(ll_index, area_block, coord_lat, coord_lon) for the block
+    // decoded with that ll_index.
+    static int check_area_block
+        (const Decoded_Area_Block& area_block, uint32 coord_lat, int32 coord_lon);
+
     // Used as bitmasks.
     const static int HIT = 1;
     const static int TOGGLE_EAST = 2;

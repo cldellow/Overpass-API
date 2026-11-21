@@ -22,6 +22,7 @@
 #include "../data/collect_members.h"
 #include "../data/utils.h"
 #include "../data/way_geometry_store.h"
+#include "coord_query.h"
 #include "statement.h"
 
 #include <map>
@@ -123,5 +124,7 @@ class Area_Query_Statement : public Output_Statement
 int intersects_inner(const Area_Block& string_a, const Area_Block& string_b);
 
 void has_inner_points(const Area_Block& string_a, const Area_Block& string_b, int& inside);
+void has_inner_points(const Area_Block& string_a, const Coord_Query_Statement::Decoded_Area_Block& string_b,
+    int& inside);
 
 #endif
