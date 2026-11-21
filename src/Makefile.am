@@ -278,6 +278,7 @@ nobase_dist_HEADERS = \
   overpass_api/osm-backend/way_updater.h\
   overpass_api/output_formats/output_csv.h\
   overpass_api/output_formats/output_custom.h\
+  overpass_api/output_formats/fixed7.h\
   overpass_api/output_formats/output_json.h\
   overpass_api/output_formats/output_popup.h\
   overpass_api/output_formats/output_xml.h\

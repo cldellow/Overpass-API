@@ -19,6 +19,7 @@
 #include "../../expat/escape_xml.h"
 #include "../frontend/basic_formats.h"
 #include "output_custom.h"
+#include "fixed7.h"
 
 #include <cmath>
 #include <fstream>
@@ -329,9 +330,9 @@ std::string process_coords(const std::string& raw_template, uint32 id, double la
     else if (raw_template.substr(new_pos, 8) == "{{{id}}}")
       result<<id;
     else if (raw_template.substr(new_pos, 9) == "{{{lat}}}")
-      result<<std::fixed<<std::setprecision(7)<<lat;
+      result<<Fixed7(lat);
     else if (raw_template.substr(new_pos, 9) == "{{{lon}}}")
-      result<<std::fixed<<std::setprecision(7)<<lon;
+      result<<Fixed7(lon);
     else
       result<<raw_template.substr(new_pos, old_pos - new_pos);
     new_pos = raw_template.find("{{", old_pos);
@@ -362,17 +363,17 @@ std::string process_coords(const std::string& raw_template, uint32 id,
     else if (raw_template.substr(new_pos, 8) == "{{{id}}}")
       result<<id;
     else if (raw_template.substr(new_pos, 11) == "{{{south}}}")
-      result<<std::fixed<<std::setprecision(7)<<south;
+      result<<Fixed7(south);
     else if (raw_template.substr(new_pos, 10) == "{{{west}}}")
-      result<<std::fixed<<std::setprecision(7)<<west;
+      result<<Fixed7(west);
     else if (raw_template.substr(new_pos, 11) == "{{{north}}}")
-      result<<std::fixed<<std::setprecision(7)<<north;
+      result<<Fixed7(north);
     else if (raw_template.substr(new_pos, 10) == "{{{east}}}")
-      result<<std::fixed<<std::setprecision(7)<<east;
+      result<<Fixed7(east);
     else if (raw_template.substr(new_pos, 9) == "{{{lat}}}")
-      result<<std::fixed<<std::setprecision(7)<<(south + north)/2.0;
+      result<<Fixed7((south + north)/2.0);
     else if (raw_template.substr(new_pos, 9) == "{{{lon}}}")
-      result<<std::fixed<<std::setprecision(7)<<(east + west)/2.0;
+      result<<Fixed7((east + west)/2.0);
     else if (raw_template.substr(new_pos, 10) == "{{{zoom}}}")
       result<<zoom;
     else if (raw_template.substr(new_pos, 7) == "{{none:")
