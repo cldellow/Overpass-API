@@ -99,6 +99,21 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
   find queries that time out, cost a lot for little output, or got slower on the build under test,
   then reprint them with `--show`.
 
+### Deadline audit
+
+`deadline_audit.py` looks for loops that don't check the query's time limit often enough. It runs
+`fuzz.py`'s queries on one build with `[timeout:T]` in place of their own limit, and reports those
+whose wall time exceeds T by more than `--slack` seconds, with the statement where the timeout was
+finally noticed (from the `Query timed out` error), or `killed` after `--kill` seconds:
+
+```bash
+python3 bench/deadline_audit.py --bin BASE/install/bin --db DB --vocab vocab.json --seed 8 --count 2000 --limit 2
+```
+
+It prints query indices, not query text, so it's safe with private vocabularies; reprint a query
+with `fuzz.py --show`. Run it against a slow build (`upstream/master`): on a fast one few queries
+reach the limit at all.
+
 ## A database with history
 
 **From a full-history extract** (`.osh.pbf`): import it directly. `--keep-attic` includes the
