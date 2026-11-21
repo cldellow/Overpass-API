@@ -19,6 +19,7 @@ deterministic before blaming a change.
 import argparse
 import collections
 import concurrent.futures
+import csv
 import hashlib
 import json
 import os
@@ -27,6 +28,8 @@ import re
 import resource
 import subprocess
 import sys
+
+from osm3s_run import check_rss_support, run_osm3s
 
 # Lines that name the build, so they differ between builds without the data differing.
 VOLATILE = re.compile(rb'(generator|Overpass API \d|"version":)')
@@ -381,25 +384,24 @@ def child_cpu():
     return usage.ru_utime + usage.ru_stime
 
 
-def run(bindir, db, query, timeout):
-    """Run one query; return (status, digest, raw_output, cpu_seconds)."""
+def run(bindir, db, query, timeout, rss=False):
+    """Run one query; return (status, digest, raw_output, cpu_seconds, peak_rss_kb or None)."""
     before = child_cpu()
-    result = run_once(bindir, db, query, timeout)
-    return result + (child_cpu() - before,)
+    status, digest, out, peak = run_once(bindir, db, query, timeout, rss)
+    return status, digest, out, child_cpu() - before, peak
 
 
-def run_once(bindir, db, query, timeout):
+def run_once(bindir, db, query, timeout, rss=False):
     try:
-        proc = subprocess.run([os.path.join(bindir, 'osm3s_query'), '--db-dir=' + db.rstrip('/') + '/'],
-                              input=query.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              timeout=timeout, check=False)
+        returncode, stdout, stderr, peak = run_osm3s(bindir, db, query.encode(), timeout=timeout, rss=rss)
     except subprocess.TimeoutExpired:
-        return 'timeout', None, b''
+        return 'timeout', None, b'', None
+    proc = subprocess.CompletedProcess([], returncode, stdout, stderr)
     # osm3s_query reports errors, including timeouts, on stderr; some formats repeat them in stdout.
     errors = [line for line in proc.stderr.split(b'\n') if b'error' in line.lower()]
     if (RESOURCE_LIMIT.search(proc.stdout[-4096:]) and b'Timeout is' not in proc.stdout[-4096:]) \
             or any(RESOURCE_LIMIT.search(line) for line in errors):
-        return 'resource-limit', None, proc.stdout
+        return 'resource-limit', None, proc.stdout, peak
     stable = b'\n'.join(line for line in proc.stdout.split(b'\n') if not VOLATILE.search(line))
     status = 'ok' if proc.returncode == 0 else f'exit-{proc.returncode}'
     if errors or b'runtime error' in proc.stdout or b'static error' in proc.stdout or b'parse error' in proc.stdout:
@@ -407,14 +409,14 @@ def run_once(bindir, db, query, timeout):
         first = (errors[0] if errors else b'error in output').decode(errors='replace')
         status = 'query-error: ' + re.sub(r'line \d+', 'line N', first)[:90]
     digest = hashlib.sha256(status.encode() + b'\0' + stable + b'\0' + b'\n'.join(errors)).hexdigest()
-    return status, digest, proc.stdout
+    return status, digest, proc.stdout, peak
 
 
 def check(args_tuple):
-    a, b, db, db_b, vocab, seed, index, timeout, features = args_tuple
+    a, b, db, db_b, vocab, seed, index, timeout, features, rss = args_tuple
     query = generate(vocab, seed, index, features)
-    status_a, digest_a, out_a, cpu_a = run(a, db, query, timeout)
-    status_b, digest_b, out_b, cpu_b = run(b, db_b, query, timeout)
+    status_a, digest_a, out_a, cpu_a, rss_a = run(a, db, query, timeout, rss)
+    status_b, digest_b, out_b, cpu_b, rss_b = run(b, db_b, query, timeout, rss)
     if 'timeout' in (status_a, status_b) or 'resource-limit' in (status_a, status_b):
         verdict = 'skipped'
     elif digest_a == digest_b:
@@ -422,7 +424,7 @@ def check(args_tuple):
     else:
         verdict = 'DIFFERENT'
     empty = status_a == 'ok' and out_a.count(b'\n') <= 6
-    return index, verdict, status_a, status_b, empty, query, out_a, out_b, cpu_a, cpu_b
+    return index, verdict, status_a, status_b, empty, query, out_a, out_b, cpu_a, cpu_b, rss_a, rss_b
 
 
 def main():
@@ -445,6 +447,9 @@ def main():
     parser.add_argument('--report', metavar='CSV',
                         help='write one row per query: status, CPU time per build, output size '
                              '(for finding slow or degenerate queries)')
+    parser.add_argument('--rss', action='store_true',
+                        help='run each query under GNU time and add each build\'s peak memory (RSS) '
+                             'to the --report rows (for finding memory-hungry queries)')
     args = parser.parse_args()
 
     with open(args.vocab, 'rb') as f:
@@ -459,26 +464,36 @@ def main():
         return 0
     if not (args.a and args.b and args.db):
         parser.error('--a, --b and --db are required unless --show is given')
+    if args.rss:
+        check_rss_support()
 
     print(f'seed {args.seed}, features {",".join(sorted(features)) or "none"}, queries {args.start}..{args.start + args.count - 1}, '
           f'vocab sha256 {hashlib.sha256(raw).hexdigest()[:12]}')
     verdicts = collections.Counter()
     statuses = collections.Counter()
     empty = 0
-    tasks = [(args.a, args.b, args.db, args.db_b or args.db, vocab, args.seed, i, args.timeout, features)
+    tasks = [(args.a, args.b, args.db, args.db_b or args.db, vocab, args.seed, i, args.timeout, features,
+              args.rss)
              for i in range(args.start, args.start + args.count)]
     report = None
     if args.report:
-        report = open(args.report, 'w')
-        report.write('seed,index,verdict,status_a,status_b,cpu_a_ms,cpu_b_ms,b_over_a,out_bytes,cpu_a_ms_per_kb\n')
+        report = open(args.report, 'w', newline='')
+        report_csv = csv.writer(report)
+        report_csv.writerow(['seed', 'index', 'verdict', 'status_a', 'status_b', 'cpu_a_ms', 'cpu_b_ms', 'b_over_a',
+                             'out_bytes', 'cpu_a_ms_per_kb']
+                            + (['rss_a_kb', 'rss_b_kb', 'rss_b_over_a'] if args.rss else []))
     with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs) as pool:
         for done, result in enumerate(pool.map(check, tasks, chunksize=4), 1):
-            index, verdict, status_a, status_b, is_empty, query, out_a, out_b, cpu_a, cpu_b = result
+            index, verdict, status_a, status_b, is_empty, query, out_a, out_b, cpu_a, cpu_b, rss_a, rss_b = result
             if report:
                 size = len(out_a)
                 ratio = cpu_b / cpu_a if cpu_a > 0 else 0
-                report.write(f'{args.seed},{index},{verdict},{status_a},{status_b},{cpu_a*1000:.1f},'
-                             f'{cpu_b*1000:.1f},{ratio:.3f},{size},{cpu_a*1000/max(size/1024, 1):.2f}\n')
+                # Statuses carry error messages, which can contain commas: csv quotes them.
+                row = [args.seed, index, verdict, status_a, status_b, f'{cpu_a*1000:.1f}', f'{cpu_b*1000:.1f}',
+                       f'{ratio:.3f}', size, f'{cpu_a*1000/max(size/1024, 1):.2f}']
+                if args.rss:
+                    row += [rss_a or '', rss_b or '', f'{rss_b / rss_a:.3f}' if rss_a and rss_b else '']
+                report_csv.writerow(row)
             verdicts[verdict] += 1
             statuses[status_a] += 1
             empty += is_empty

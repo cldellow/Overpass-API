@@ -31,6 +31,8 @@ import statistics
 import subprocess
 import sys
 
+from osm3s_run import check_rss_support, run_osm3s
+
 # Lines that name the build, so they differ between builds without the data differing.
 VOLATILE = re.compile(rb'(generator|Overpass API \d|"version":)')
 
@@ -50,18 +52,16 @@ def query_text(query_path):
     return PLACEHOLDER.sub(fill, text).encode()
 
 
-def run_query(bindir, db, query_path):
-    """Run one query; return (cpu_seconds, output_digest, output_bytes)."""
+def run_query(bindir, db, query_path, rss=False):
+    """Run one query; return (cpu_seconds, output_digest, output_bytes, peak_rss_kb or None)."""
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
-    proc = subprocess.run(
-        [os.path.join(bindir, 'osm3s_query'), '--db-dir=' + db.rstrip('/') + '/'],
-        input=query_text(query_path), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+    returncode, stdout, _, peak = run_osm3s(bindir, db, query_text(query_path), rss=rss)
     after = resource.getrusage(resource.RUSAGE_CHILDREN)
     cpu = (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
-    if proc.returncode != 0:
-        sys.exit(f'{query_path}: osm3s_query in {bindir} exited with {proc.returncode}')
-    stable = b'\n'.join(line for line in proc.stdout.split(b'\n') if not VOLATILE.search(line))
-    return cpu, hashlib.sha256(stable).hexdigest(), len(proc.stdout)
+    if returncode != 0:
+        sys.exit(f'{query_path}: osm3s_query in {bindir} exited with {returncode}')
+    stable = b'\n'.join(line for line in stdout.split(b'\n') if not VOLATILE.search(line))
+    return cpu, hashlib.sha256(stable).hexdigest(), len(stdout), peak
 
 
 def query_sha(path):
@@ -78,7 +78,7 @@ def measure(bindir, db, query, reps):
     run_query(bindir, db, query)
     times, digests, size = [], set(), 0
     for _ in range(reps):
-        seconds, digest, size = run_query(bindir, db, query)
+        seconds, digest, size, _ = run_query(bindir, db, query)
         times.append(seconds)
         digests.add(digest)
     return {'times': times, 'digests': sorted(digests), 'size': size}
@@ -95,11 +95,16 @@ def main():
     parser.add_argument('--no-cache', action='store_true',
                         help='time both builds, alternating runs, and ignore the cache')
     parser.add_argument('--vars', help='JSON file with values for {{NAME}} placeholders in queries')
+    parser.add_argument('--rss', action='store_true',
+                        help='also report peak memory (RSS) of each build, from one extra untimed run '
+                             'per query under GNU time; the baseline\'s is cached with its times')
     parser.add_argument('queries', nargs='+')
     args = parser.parse_args()
     if args.vars:
         with open(args.vars) as f:
             QUERY_VARS.update(json.load(f))
+    if args.rss:
+        check_rss_support()
 
     cache = {}
     if not args.no_cache and os.path.exists(args.cache):
@@ -108,7 +113,8 @@ def main():
     baseline_sha = file_sha(os.path.join(args.a, 'osm3s_query'))
     db_key = os.path.realpath(args.db)
 
-    print(f'{"query":28} {"A cpu":>9} {"B cpu":>9} {"B/A":>6}  {"A spread":>15} {"B spread":>15}  output')
+    rss_header = f'  {"A rss":>9} {"B rss":>9} {"B/A":>5}' if args.rss else ''
+    print(f'{"query":28} {"A cpu":>9} {"B cpu":>9} {"B/A":>6}  {"A spread":>15} {"B spread":>15}{rss_header}  output')
     total_a = total_b = 0.0
     differing = []
     reused = 0
@@ -121,7 +127,7 @@ def main():
             b = {'times': [], 'digests': set(), 'size': 0}
             for _ in range(args.reps):
                 for result, bindir in ((a, args.a), (b, args.b)):
-                    seconds, digest, size = run_query(bindir, args.db, query)
+                    seconds, digest, size, _ = run_query(bindir, args.db, query)
                     result['times'].append(seconds)
                     result['digests'].add(digest)
                     result['size'] = size
@@ -135,6 +141,17 @@ def main():
                 a = measure(args.a, args.db, query, args.reps)
                 cache[key] = a
             b = measure(args.b, args.db, query, args.reps)
+        rss_cols = ''
+        if args.rss:
+            # One untimed run per build, after the timed ones; peak RSS varies little between runs.
+            if a.get('rss') is None:
+                a['rss'] = run_query(args.a, args.db, query, rss=True)[3]
+                if not args.no_cache:
+                    cache[key] = a
+            b['rss'] = run_query(args.b, args.db, query, rss=True)[3]
+            ratio = f'{b["rss"] / a["rss"]:5.2f}' if a['rss'] and b['rss'] else '    -'
+            mb = lambda kb: f'{kb / 1024:7.1f}MB' if kb else '        -'
+            rss_cols = f'  {mb(a["rss"]):>9} {mb(b["rss"]):>9} {ratio}'
         med_a, med_b = statistics.median(a['times']), statistics.median(b['times'])
         total_a += med_a
         total_b += med_b
@@ -144,7 +161,7 @@ def main():
         name = os.path.splitext(os.path.basename(query))[0]
         spread = lambda xs: f'{min(xs)*1000:6.1f}-{max(xs)*1000:6.1f}ms'
         print(f'{name:28} {med_a*1000:7.1f}ms {med_b*1000:7.1f}ms {med_b/med_a:6.2f}  '
-              f'{spread(a["times"]):>15} {spread(b["times"]):>15}  '
+              f'{spread(a["times"]):>15} {spread(b["times"]):>15}{rss_cols}  '
               f'{"same" if same else "DIFFERENT"} ({b["size"]} bytes)', flush=True)
     print(f'{"TOTAL (sum of medians)":28} {total_a*1000:7.1f}ms {total_b*1000:7.1f}ms {total_b/total_a:6.2f}')
     if not args.no_cache:
