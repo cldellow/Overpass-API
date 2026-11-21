@@ -19,6 +19,7 @@ deterministic before blaming a change.
 import argparse
 import collections
 import concurrent.futures
+import csv
 import hashlib
 import json
 import os
@@ -476,21 +477,23 @@ def main():
              for i in range(args.start, args.start + args.count)]
     report = None
     if args.report:
-        report = open(args.report, 'w')
-        report.write('seed,index,verdict,status_a,status_b,cpu_a_ms,cpu_b_ms,b_over_a,out_bytes,cpu_a_ms_per_kb'
-                     + (',rss_a_kb,rss_b_kb,rss_b_over_a' if args.rss else '') + '\n')
+        report = open(args.report, 'w', newline='')
+        report_csv = csv.writer(report)
+        report_csv.writerow(['seed', 'index', 'verdict', 'status_a', 'status_b', 'cpu_a_ms', 'cpu_b_ms', 'b_over_a',
+                             'out_bytes', 'cpu_a_ms_per_kb']
+                            + (['rss_a_kb', 'rss_b_kb', 'rss_b_over_a'] if args.rss else []))
     with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs) as pool:
         for done, result in enumerate(pool.map(check, tasks, chunksize=4), 1):
             index, verdict, status_a, status_b, is_empty, query, out_a, out_b, cpu_a, cpu_b, rss_a, rss_b = result
             if report:
                 size = len(out_a)
                 ratio = cpu_b / cpu_a if cpu_a > 0 else 0
-                report.write(f'{args.seed},{index},{verdict},{status_a},{status_b},{cpu_a*1000:.1f},'
-                             f'{cpu_b*1000:.1f},{ratio:.3f},{size},{cpu_a*1000/max(size/1024, 1):.2f}')
+                # Statuses carry error messages, which can contain commas: csv quotes them.
+                row = [args.seed, index, verdict, status_a, status_b, f'{cpu_a*1000:.1f}', f'{cpu_b*1000:.1f}',
+                       f'{ratio:.3f}', size, f'{cpu_a*1000/max(size/1024, 1):.2f}']
                 if args.rss:
-                    rss_ratio = f'{rss_b / rss_a:.3f}' if rss_a and rss_b else ''
-                    report.write(f',{rss_a or ""},{rss_b or ""},{rss_ratio}')
-                report.write('\n')
+                    row += [rss_a or '', rss_b or '', f'{rss_b / rss_a:.3f}' if rss_a and rss_b else '']
+                report_csv.writerow(row)
             verdicts[verdict] += 1
             statuses[status_a] += 1
             empty += is_empty
