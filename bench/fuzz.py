@@ -154,7 +154,11 @@ class Generator:
         return f'(changed:{a},{b})' if self.r.random() < 0.7 else f'(changed:{a})'
 
     def area_query(self):
-        """An area set: by name, or by containment of a point."""
+        """An area set: by name, by id (both forms clients send), or by containment of a point."""
+        if self.r.random() < 0.3 and self.v.get('area_relation_ids'):
+            area_id = 3600000000 + self.pick(self.v['area_relation_ids'])
+            form = self.r.choice([f'area(id:{area_id})', f'area({area_id})'])
+            return f'{form}->.{self.new_set("area")};'
         if self.r.random() < 0.75 and self.v.get('area_names'):
             name = self.quote(self.pick(self.v['area_names']))
             extra = '' if self.r.random() < 0.7 else self.r.choice(['[admin_level]', '[boundary]', '["type"="multipolygon"]'])

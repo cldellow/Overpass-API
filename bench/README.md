@@ -68,8 +68,11 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
   `update_database`, or the same file imported with two `--flush-size` values.
 - **Failures** are written to `--out-dir` as `<seed>-<index>/{query.ql,a.out,b.out}`, and the exit
   status is 1.
+- **Spatial filters:** bboxes, the global `[bbox:]` setting, `around` points and `poly:` polygons
+  (star-shaped, 3 to 400 vertices, double or single quotes, as client tools send them).
 - **Optional statement families:** `--features areas,history,users,complete` adds area queries
-  (`area`, `is_in`, `map_to_area`, `pivot`), history (`[date:]`, `[diff:]`, `[adiff:]`, `newer`,
+  (`area` by name or by id in both the `area(id:N)` and `area(N)` forms, `is_in`, `map_to_area`,
+  `pivot`), history (`[date:]`, `[diff:]`, `[adiff:]`, `newer`,
   `changed`, `retro`, `timeline`), user filters and `complete` loops. Use them only on a database
   that supports them: areas need the area rules run (`osm3s_query --rules < rules/areas.osm3s`),
   and history and users need a database built with `--keep-attic` from diffs with metadata.

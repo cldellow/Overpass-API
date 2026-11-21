@@ -5,8 +5,8 @@ Collects common and rare tags, a random sample of node/way/relation ids with a
 coordinate for each node, relation roles, and the data's bounding box.
 Needs osmium-tool.
 
-Also collects names of relations that become areas (boundaries, admin areas, named
-multipolygons), and, given --osc-dir or --history, the users, user ids and edit timestamps
+Also collects names and ids of relations that become areas (boundaries, admin areas,
+named multipolygons), and, given --osc-dir or --history, the users, user ids and edit timestamps
 found in a directory of osmChange files (the regional diffs of a history database) or in a
 full-history file (.osh.pbf).
 
@@ -82,11 +82,12 @@ def sample_objects(pbf, per_type, rng):
 
 
 def area_names(pbf, limit=300):
-    """Names of relations that the standard area rules turn into areas."""
+    """Names and ids of named relations that the standard area rules turn into areas."""
     out = subprocess.run(
         'osmium tags-filter -O -f opl -o - "%s" r/boundary r/admin_level r/type=multipolygon' % pbf,
         shell=True, check=True, stdout=subprocess.PIPE, text=True).stdout
     names = collections.Counter()
+    ids = []
     for line in out.splitlines():
         if not line.startswith('r'):
             continue
@@ -95,9 +96,12 @@ def area_names(pbf, limit=300):
                 for kv in field[1:].split(','):
                     if kv.startswith('name='):
                         name = kv[5:].replace('%20%', ' ').replace('%2c%', ',')
+                        ids.append(int(line.split(' ')[0][1:]))
                         if '%' not in name and '"' not in name and '\\' not in name:
                             names[name] += 1
-    return [n for n, _ in names.most_common(limit)]
+    ids = sorted(set(ids))
+    ids = ids[::max(1, len(ids) // limit)][:limit]
+    return [n for n, _ in names.most_common(limit)], ids
 
 
 def edits_from_osc(osc_dir):
@@ -188,8 +192,8 @@ def main():
         'relation_ids': [r['id'] for r in samples['r']],
         'roles': [r for r, _ in roles.most_common(30) if '"' not in r and "'" not in r],
         'bbox': [min(lats), min(lons), max(lats), max(lons)],
-        'area_names': area_names(args.pbf),
     }
+    vocab['area_names'], vocab['area_relation_ids'] = area_names(args.pbf)
     if args.osc_dir:
         vocab.update(history_vocab(edits_from_osc(args.osc_dir)))
     elif args.history:
