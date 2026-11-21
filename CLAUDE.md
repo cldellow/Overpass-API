@@ -26,8 +26,11 @@ This fork's `master` only adds fork-specific files (this file, the README); neve
   PRs still target this fork's `master`. A dependent PR targets its base branch and says so at
   the top.
 - Start a PR description with `Fixes cldellow/Overpass-API#N.`, one line per issue it fixes.
-  Exception: the tracking PRs (`all-changes`, `better-imports`) don't list issues. Their table links
-  each change's own PR, which carries the `Fixes` lines.
+  Exception: the tracking PRs (`all-changes`, `better-imports`) put all their issues on one line,
+  repeating the keyword for each (`Fixes cldellow/Overpass-API#3, fixes cldellow/Overpass-API#4.`;
+  GitHub only links the first issue of a bare list). Don't drop them: GitHub only honours `Fixes` in
+  PRs that target the default branch, so a stacked PR's own `Fixes` lines don't link its issues, and
+  the tracking PR's do.
 - Label every PR by kind: `query-perf` for query performance changes, `query-memory` for changes
   that lower a query's peak memory, `import-fix` for import changes, `docs` for documentation
   only. A change that lowers both runtime and memory gets both `query-perf` and `query-memory`.
