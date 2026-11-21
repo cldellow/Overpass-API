@@ -142,7 +142,7 @@ python3 bench/props/props.py --seeds 7 --show
   status is 1 if any check fails on the candidate but not the baseline, or any output differs.
 - **Reproducible:** a seed's data and queries depend only on the seed and the script (its hash
   is printed).
-- **Speed:** 60 seeds (about 5,000 queries per build) take under a minute on 4 cores.
+- **Speed:** 60 seeds (about 4,600 queries per build) take under a minute on 4 cores.
 
 ## A database with history
 
