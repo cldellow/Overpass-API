@@ -674,6 +674,26 @@ Timeless< Uint32_Index, Node_Skeleton > paired_items_range(
 }
 
 
+Timeless< Uint32_Index, Node_Skeleton > relation_and_way_node_members(
+    Request_Context& context,
+    const std::map< Uint31_Index, std::vector< Relation_Skeleton > >& relations,
+    const std::map< Uint31_Index, std::vector< Attic< Relation_Skeleton > > >& attic_relations,
+    const std::map< Uint31_Index, std::vector< Way_Skeleton > >& ways,
+    const std::map< Uint31_Index, std::vector< Attic< Way_Skeleton > > >& attic_ways)
+{
+  // Both id lists are sorted and free of duplicates.
+  std::vector< Node::Id_Type > rel_ids = relation_node_member_ids(relations, attic_relations);
+  std::vector< Node::Id_Type > way_ids = way_nd_ids(ways, attic_ways, 0);
+  context.get_health_guard().check();
+  std::vector< Node::Id_Type > ids;
+  ids.reserve(rel_ids.size() + way_ids.size());
+  std::set_union(rel_ids.begin(), rel_ids.end(), way_ids.begin(), way_ids.end(), std::back_inserter(ids));
+
+  return paired_items_range(context, ids,
+      relation_node_member_indices(relations, attic_relations).union_(way_nd_indices(ways, attic_ways)));
+}
+
+
 Timeless< Uint32_Index, Node_Skeleton > relation_node_members
     (Request_Context& context,
      const std::map< Uint31_Index, std::vector< Relation_Skeleton > >& relations,
@@ -1065,6 +1085,23 @@ void add_nw_member_objects(Request_Context& context, const Set& input_set, Set& 
 {
   Ranges< Uint32_Index > ranges_32(ranges_32_ ? *ranges_32_ : Ranges< Uint32_Index >::global());
   Ranges< Uint31_Index > ranges_31(ranges_31_ ? *ranges_31_ : Ranges< Uint31_Index >::global());
+
+  if (context.get_desired_timestamp() == NOW && !ranges_32_)
+  {
+    // Collect the relations' node members and the ways' nodes in one pass over the node blocks.
+    relation_way_members(context, input_set.relations, {}, ranges_31, {}, true)
+        .swap(into.ways, into.attic_ways);
+    std::map< Uint31_Index, std::vector< Way_Skeleton > > source_ways = input_set.ways;
+    sort_second(source_ways);
+    sort_second(into.ways);
+    indexed_set_union(source_ways, into.ways);
+    Timeless< Uint32_Index, Node_Skeleton > nodes = relation_and_way_node_members(
+        context, input_set.relations, input_set.attic_relations, source_ways, {});
+    nodes.current.swap(into.nodes);
+    sort_second(into.nodes);
+    return;
+  }
+
   Timeless< Uint32_Index, Node_Skeleton > rel_nodes
       = relation_node_members(context, input_set.relations, input_set.attic_relations, ranges_32, {}, true);
 

@@ -744,6 +744,18 @@ Ranges< Uint31_Index > relation_way_member_indices
 Ranges< Uint32_Index > calc_node_children_ranges(const std::vector< uint32 >& way_rel_idxs);
 
 
+/* The node members of the relations and the nodes of the ways, read in a single pass
+   over the node blocks. Equivalent to the union of relation_node_members(relations) and
+   way_members(ways) with global ranges, but blocks holding both kinds of node are read
+   and decompressed once instead of twice. */
+Timeless< Uint32_Index, Node_Skeleton > relation_and_way_node_members(
+    Request_Context& context,
+    const std::map< Uint31_Index, std::vector< Relation_Skeleton > >& relations,
+    const std::map< Uint31_Index, std::vector< Attic< Relation_Skeleton > > >& attic_relations,
+    const std::map< Uint31_Index, std::vector< Way_Skeleton > >& ways,
+    const std::map< Uint31_Index, std::vector< Attic< Way_Skeleton > > >& attic_ways);
+
+
 Ranges< Uint32_Index > relation_node_member_indices(
     const std::map< Uint31_Index, std::vector< Relation_Skeleton > >& current_rels,
     const std::map< Uint31_Index, std::vector< Attic< Relation_Skeleton > > >& attic_rels);
