@@ -29,7 +29,7 @@ uint64 eval_map(const std::map< Uint32_Index, std::vector< Node_Skeleton > >& no
   uint64 size(0);
   for (std::map< Uint32_Index, std::vector< Node_Skeleton > >::const_iterator
       it(nodes.begin()); it != nodes.end(); ++it)
-    size += it->second.size()*8 + 64;
+    size += it->second.size()*eval_object_size((const Node_Skeleton*)0) + eval_index_size;
   return size;
 }
 
@@ -39,7 +39,7 @@ uint64 eval_map(const std::map< Uint31_Index, std::vector< Way_Skeleton > >& way
   uint64 size(0);
   for (std::map< Uint31_Index, std::vector< Way_Skeleton > >::const_iterator
       it(ways.begin()); it != ways.end(); ++it)
-    size += it->second.size()*128 + 64;
+    size += it->second.size()*eval_object_size((const Way_Skeleton*)0) + eval_index_size;
   return size;
 }
 
@@ -49,7 +49,7 @@ uint64 eval_map(const std::map< Uint31_Index, std::vector< Relation_Skeleton > >
   uint64 size(0);
   for (std::map< Uint31_Index, std::vector< Relation_Skeleton > >::const_iterator
       it(relations.begin()); it != relations.end(); ++it)
-    size += it->second.size()*192 + 64;
+    size += it->second.size()*eval_object_size((const Relation_Skeleton*)0) + eval_index_size;
   return size;
 }
 
@@ -59,7 +59,7 @@ uint64 eval_map(const std::map< Uint32_Index, std::vector< Attic< Node_Skeleton 
   uint64 size(0);
   for (std::map< Uint32_Index, std::vector< Attic< Node_Skeleton > > >::const_iterator
       it(nodes.begin()); it != nodes.end(); ++it)
-    size += it->second.size()*16 + 64;
+    size += it->second.size()*eval_object_size((const Attic< Node_Skeleton >*)0) + eval_index_size;
   return size;
 }
 
@@ -69,7 +69,7 @@ uint64 eval_map(const std::map< Uint31_Index, std::vector< Attic< Way_Skeleton >
   uint64 size(0);
   for (std::map< Uint31_Index, std::vector< Attic< Way_Skeleton > > >::const_iterator
       it(ways.begin()); it != ways.end(); ++it)
-    size += it->second.size()*136 + 64;
+    size += it->second.size()*eval_object_size((const Attic< Way_Skeleton >*)0) + eval_index_size;
   return size;
 }
 
@@ -79,7 +79,7 @@ uint64 eval_map(const std::map< Uint31_Index, std::vector< Attic< Relation_Skele
   uint64 size(0);
   for (std::map< Uint31_Index, std::vector< Attic< Relation_Skeleton > > >::const_iterator
       it(relations.begin()); it != relations.end(); ++it)
-    size += it->second.size()*200 + 64;
+    size += it->second.size()*eval_object_size((const Attic< Relation_Skeleton >*)0) + eval_index_size;
   return size;
 }
 
@@ -89,7 +89,7 @@ uint64 eval_map(const std::map< Uint31_Index, std::vector< Area_Skeleton > >& ar
   uint64 size(0);
   for (std::map< Uint31_Index, std::vector< Area_Skeleton > >::const_iterator
       it(areas.begin()); it != areas.end(); ++it)
-    size += it->second.size()*128 + 64;
+    size += it->second.size()*eval_object_size((const Area_Skeleton*)0) + eval_index_size;
   return size;
 }
 
