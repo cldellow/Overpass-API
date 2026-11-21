@@ -253,23 +253,30 @@ void Around_Constraint::filter(Resource_Manager& rman, Set& into)
 }
 
 
-/* Checks the query's time and memory limits every few hundred candidates, so that an
+/* Checks the query's time and memory limits after every 64k units of work, so that an
    expensive around filter stops when the query runs out of time instead of running
-   to completion. health_check throws when a limit is exceeded. */
+   to completion. A unit is about one comparison of a candidate's point or segment with
+   a point or segment of the input. Counting candidates alone isn't enough: a single long
+   way tested against a large input can take seconds. health_check throws when a limit
+   is exceeded. */
 class Periodic_Health_Check
 {
 public:
   Periodic_Health_Check(Resource_Manager& rman_, const Statement& stmt_) : rman(rman_), stmt(stmt_) {}
-  void tick()
+  void tick(uint64 work = 1)
   {
-    if (++count % 256 == 0)
+    work_done += work;
+    if (work_done >= 64*1024)
+    {
+      work_done = 0;
       rman.health_check(stmt);
+    }
   }
 
 private:
   Resource_Manager& rman;
   const Statement& stmt;
-  uint32 count = 0;
+  uint64 work_done = 0;
 };
 
 
@@ -284,7 +291,7 @@ void filter_nodes_expensive(const Around_Statement& around, Periodic_Health_Chec
     for (typename std::vector< Node_Skeleton >::const_iterator iit = it->second.begin();
         iit != it->second.end(); ++iit)
     {
-      check.tick();
+      check.tick(around.comparisons_per_test());
       double lat(::lat(it->first.val(), iit->ll_lower));
       double lon(::lon(it->first.val(), iit->ll_lower));
       if (around.is_inside(lat, lon))
@@ -307,8 +314,8 @@ void filter_ways_expensive(const Around_Statement& around, Periodic_Health_Check
     for (typename std::vector< Way_Skeleton >::const_iterator iit = it->second.begin();
         iit != it->second.end(); ++iit)
     {
-      check.tick();
-      if (around.is_inside(way_geometries.get_geometry(*iit)))
+      check.tick(around.comparisons_per_test());
+      if (around.is_inside(way_geometries.get_geometry(*iit), &check))
 	local_into.push_back(*iit);
     }
     it->second.swap(local_into);
@@ -333,7 +340,7 @@ void filter_relations_expensive(const Around_Statement& around, Periodic_Health_
       for (std::vector< Relation_Entry >::const_iterator nit = iit->members.begin();
 	  nit != iit->members.end(); ++nit)
       {
-        check.tick();
+        check.tick(around.comparisons_per_test());
 	if (nit->type == Relation_Entry::NODE)
 	{
           const std::pair< Uint32_Index, const Node_Skeleton* >* second_nd =
@@ -355,7 +362,7 @@ void filter_relations_expensive(const Around_Statement& around, Periodic_Health_
               binary_search_for_pair_id(way_members_by_id, nit->ref32());
 	  if (!second_nd)
 	    continue;
-	  if (around.is_inside(way_geometries.get_geometry(*second_nd->second)))
+	  if (around.is_inside(way_geometries.get_geometry(*second_nd->second), &check))
 	  {
 	    local_into.push_back(*iit);
 	    break;
@@ -1131,7 +1138,7 @@ bool Around_Statement::is_inside
 }
 
 
-bool Around_Statement::is_inside(const std::vector< Quad_Coord >& way_geometry) const
+bool Around_Statement::is_inside(const std::vector< Quad_Coord >& way_geometry, Periodic_Health_Check* check) const
 {
   std::vector< Quad_Coord >::const_iterator nit = way_geometry.begin();
   if (nit == way_geometry.end())
@@ -1143,6 +1150,8 @@ bool Around_Statement::is_inside(const std::vector< Quad_Coord >& way_geometry) 
     double second_lat(::lat(it->ll_upper, it->ll_lower));
     double second_lon(::lon(it->ll_upper, it->ll_lower));
 
+    if (check)
+      check->tick(comparisons_per_test());
     if (is_inside(second_lat, second_lon))
       return true;
   }
@@ -1155,6 +1164,8 @@ bool Around_Statement::is_inside(const std::vector< Quad_Coord >& way_geometry) 
     double second_lat(::lat(nit->ll_upper, nit->ll_lower));
     double second_lon(::lon(nit->ll_upper, nit->ll_lower));
 
+    if (check)
+      check->tick(comparisons_per_test());
     if (is_inside(first_lat, first_lon, second_lat, second_lon))
       return true;
 

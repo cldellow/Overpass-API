@@ -157,6 +157,9 @@ bool Reach_Grid::any(const Box& box, F f) const
 }
 
 
+class Periodic_Health_Check;
+
+
 class Around_Statement : public Output_Statement
 {
   public:
@@ -192,7 +195,13 @@ class Around_Statement : public Output_Statement
 
     bool is_inside(double lat, double lon) const;
     bool is_inside(double first_lat, double first_lon, double second_lat, double second_lon) const;
-    bool is_inside(const std::vector< Quad_Coord >& way_geometry) const;
+    // With check, ticks it for every point and segment of the way tested.
+    bool is_inside(const std::vector< Quad_Coord >& way_geometry, Periodic_Health_Check* check = 0) const;
+    // About how many comparisons testing one point or segment against the input takes.
+    // The grid (Reach_Grid) narrows a test to nearby entries, so the input's size
+    // overstates it; the cap keeps the time-limit check from running on every test.
+    uint64 comparisons_per_test() const
+    { return std::min< uint64 >(simple_lat_lons.size() + simple_segments.size() + 1, 1024); }
 
     double get_radius() const { return radius; }
 
