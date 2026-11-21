@@ -20,6 +20,11 @@ python3 bench/compare.py --a BASELINE/install/bin --b CANDIDATE/install/bin \
   with `--vars`. They keep values that must not be committed, such as user ids from a licensed
   extract, out of the query files. `pick_vars.py --bin BIN --db DB --out VARS.json` chooses them
   from a database; keep that file with the database.
+- **Peak memory:** `--rss` adds each build's peak RSS, from one extra untimed run per query under
+  GNU time (`apt-get install time`). The timed runs are unchanged, and the baseline's RSS is cached
+  with its times. GNU time is needed because Python starts children with vfork or fork, and Linux
+  carries the parent's peak RSS into the child's `ru_maxrss`, so measuring from Python directly would
+  report the Python process's memory for small queries.
 - Output equality ignores lines that name the build (generator/version).
 - Exit status is 1 if any output differs.
 
@@ -87,6 +92,8 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
   matching.
 - **Lines naming the build** (generator/version) are ignored. Runs that hit the timeout or the memory
   limit are counted as skipped, not as differences.
+- **Finding memory-hungry queries:** with `--rss` as well as `--report`, each row also gets both builds'
+  peak RSS (`rss_a_kb`, `rss_b_kb`, `rss_b_over_a`). Every run then goes through GNU time.
 - **Finding slow or degenerate queries:** `--report FILE.csv` writes one row per query with its
   status, the CPU time on each build, the output size and the CPU time per KB of output. Sort it to
   find queries that time out, cost a lot for little output, or got slower on the build under test,
