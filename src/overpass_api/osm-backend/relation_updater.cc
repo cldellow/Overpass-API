@@ -33,6 +33,19 @@
 #include "tags_updater.h"
 
 
+namespace
+{
+  // Relations in a regional extract often have members outside it. The geometry of a relation
+  // is computed for each of its versions and intermediate states, so report a missing member
+  // only once per run: repeating it can produce tens of millions of lines and dominate the time.
+  bool first_report_of_missing_member(uint32 type, uint64 ref)
+  {
+    static std::set< std::pair< uint32, uint64 > > reported;
+    return reported.insert(std::make_pair(type, ref)).second;
+  }
+}
+
+
 Relation_Updater::Relation_Updater(Transaction& transaction_, Database_Meta_State::Mode meta_)
   : transaction(&transaction_),
     external_transaction(true),
@@ -444,7 +457,8 @@ void compute_geometry
         if (it2 != new_node_idx_by_id.end())
           member_idxs.push_back(it2->second.ll_upper);
         else
-          std::cerr<<"compute_geometry: Node "<<nit->ref.val()<<" used in relation "<<it->elem.id.val()<<" not found.\n";
+          if (first_report_of_missing_member(Relation_Entry::NODE, nit->ref.val()))
+            std::cerr<<"compute_geometry: Node "<<nit->ref.val()<<" used in relation "<<it->elem.id.val()<<" not found.\n";
       }
       else if (nit->type == Relation_Entry::WAY)
       {
@@ -453,7 +467,8 @@ void compute_geometry
         if (it2 != new_way_idx_by_id.end())
           member_idxs.push_back(it2->second.val());
         else
-          std::cerr<<"compute_geometry: Way "<<nit->ref.val()<<" used in relation "<<it->elem.id.val()<<" not found.\n";
+          if (first_report_of_missing_member(Relation_Entry::WAY, nit->ref.val()))
+            std::cerr<<"compute_geometry: Way "<<nit->ref.val()<<" used in relation "<<it->elem.id.val()<<" not found.\n";
       }
     }
 
@@ -517,7 +532,8 @@ void compute_idx_and_geometry
           node_idxs.push_back(Uint31_Index(it2->first.val()));
         }
         else
-          std::cerr<<"compute_idx_and_geometry: Node "<<mit->ref.val()<<" used in relation "<<skeleton.id.val()<<" not found.\n";
+          if (first_report_of_missing_member(Relation_Entry::NODE, mit->ref.val()))
+            std::cerr<<"compute_idx_and_geometry: Node "<<mit->ref.val()<<" used in relation "<<skeleton.id.val()<<" not found.\n";
         // Otherwise the node is not contained in our list - something has gone wrong seriously.
       }
       else if (mit->type == Relation_Entry::WAY)
@@ -537,7 +553,8 @@ void compute_idx_and_geometry
           way_idxs.push_back(it2->first);
         }
         else
-          std::cerr<<"compute_idx_and_geometry: Way "<<mit->ref.val()<<" used in relation "<<skeleton.id.val()<<" not found.\n";
+          if (first_report_of_missing_member(Relation_Entry::WAY, mit->ref.val()))
+            std::cerr<<"compute_idx_and_geometry: Way "<<mit->ref.val()<<" used in relation "<<skeleton.id.val()<<" not found.\n";
         // Otherwise the way is not contained in our list - something has gone wrong seriously.
       }
   }
