@@ -530,6 +530,43 @@ std::map< Id_Type, std::set< Index > > get_existing_idx_lists
 }
 
 
+/* Adds to result all attic versions stored in the database of the elements with the given ids.
+ * ids must be sorted and unique. Attic_Object is the type stored in the attic file,
+ * e.g. Node_Skeleton or Way_Delta. */
+template< typename Index, typename Attic_Object, typename Id_Type >
+void add_stored_attic_skeletons
+    (const std::vector< Id_Type >& ids, Transaction& transaction,
+     const File_Properties& attic_file_properties, const File_Properties& idx_list_file_properties,
+     std::map< Index, std::set< Attic< Attic_Object > > >& result)
+{
+  std::vector< std::pair< Id_Type, Uint31_Index > > positions
+      = get_existing_map_positions< Uint31_Index, Id_Type >(ids, transaction, attic_file_properties);
+  if (positions.empty())
+    return;
+
+  std::vector< Id_Type > ids_in_attic;
+  ids_in_attic.reserve(positions.size());
+  for (auto it = positions.begin(); it != positions.end(); ++it)
+    ids_in_attic.push_back(it->first);
+
+  std::map< Id_Type, std::set< Index > > idx_lists = get_existing_idx_lists< Index, Id_Type >(
+      ids_in_attic, positions, transaction, idx_list_file_properties);
+
+  std::vector< Index > req;
+  for (auto it = idx_lists.begin(); it != idx_lists.end(); ++it)
+    req.insert(req.end(), it->second.begin(), it->second.end());
+  std::sort(req.begin(), req.end());
+  req.erase(std::unique(req.begin(), req.end()), req.end());
+
+  Block_Backend< Index, Attic< Attic_Object > > db(transaction.data_index(&attic_file_properties));
+  for (auto it = db.discrete_begin(req.begin(), req.end()); !(it == db.discrete_end()); ++it)
+  {
+    if (std::binary_search(ids_in_attic.begin(), ids_in_attic.end(), it.object().id))
+      result[it.index()].insert(it.object());
+  }
+}
+
+
 /* Moves idx entries with only one idx to the return value and erases them from the list. */
 template< typename Index, typename Id_Type >
 std::vector< std::pair< Id_Type, Uint31_Index > > strip_single_idxs
