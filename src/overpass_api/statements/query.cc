@@ -929,6 +929,38 @@ void filter_elems_for_closed_ways(Set& arg)
 }
 
 
+// Restricts ids to the ids every constraint allows. Constraints whose id lists are expensive to
+// build are asked last and get the explicit ids the others allow, if any, so they can leave out
+// the rest.
+template< typename Id >
+void restrict_to_constraint_ids(
+    const std::vector< Query_Constraint* >& constraints, Resource_Manager& rman,
+    bool (Query_Constraint::*get_ids)(Resource_Manager&, std::vector< Id >&),
+    bool (Query_Constraint::*get_ids_within)(Resource_Manager&, const std::vector< Id >&, std::vector< Id >&),
+    Id_Constraint< Id >& ids, Answer_State& answer_state)
+{
+  for (int pass = 0; pass < 2; ++pass)
+  {
+    for (std::vector< Query_Constraint* >::const_iterator it = constraints.begin();
+        it != constraints.end() && answer_state < data_collected; ++it)
+    {
+      if ((*it)->narrows_by_known_ids() != (pass == 1))
+        continue;
+      std::vector< Id > constraint_ids;
+      bool restricts = (pass == 1 && !ids.invert)
+          ? ((*it)->*get_ids_within)(rman, ids.ids, constraint_ids)
+          : ((*it)->*get_ids)(rman, constraint_ids);
+      if (restricts)
+      {
+        ids.restrict_to(constraint_ids);
+        if (ids.empty())
+          answer_state = data_collected;
+      }
+    }
+  }
+}
+
+
 void Query_Statement::execute(Resource_Manager& rman)
 {
   Cpu_Timer cpu(rman, 1);
@@ -1018,47 +1050,17 @@ void Query_Statement::execute(Resource_Manager& rman)
     rman.health_check(*this);
 
     if ((type & QUERY_NODE) && check_keys_late == prefer_ranges)
-    {
-      for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
-          it != constraints.end() && node_answer_state < data_collected; ++it)
-      {
-        std::vector< Node::Id_Type > constraint_node_ids;
-        if ((*it)->get_node_ids(rman, constraint_node_ids))
-        {
-          node_ids.restrict_to(constraint_node_ids);
-          if (node_ids.empty())
-            node_answer_state = data_collected;
-        }
-      }
-    }
+      restrict_to_constraint_ids< Node::Id_Type >(constraints, rman,
+          &Query_Constraint::get_node_ids, &Query_Constraint::get_node_ids_within,
+          node_ids, node_answer_state);
     if ((type & QUERY_WAY) && check_keys_late == prefer_ranges)
-    {
-      for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
-          it != constraints.end() && way_answer_state < data_collected; ++it)
-      {
-        std::vector< Way::Id_Type > constraint_way_ids;
-        if ((*it)->get_way_ids(rman, constraint_way_ids))
-        {
-          way_ids.restrict_to(constraint_way_ids);
-          if (way_ids.empty())
-            way_answer_state = data_collected;
-        }
-      }
-    }
+      restrict_to_constraint_ids< Way::Id_Type >(constraints, rman,
+          &Query_Constraint::get_way_ids, &Query_Constraint::get_way_ids_within,
+          way_ids, way_answer_state);
     if ((type & QUERY_RELATION) && check_keys_late == prefer_ranges)
-    {
-      for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
-          it != constraints.end() && relation_answer_state < data_collected; ++it)
-      {
-        std::vector< Relation::Id_Type > constraint_relation_ids;
-        if ((*it)->get_relation_ids(rman, constraint_relation_ids))
-        {
-          relation_ids.restrict_to(constraint_relation_ids);
-          if (relation_ids.empty())
-            relation_answer_state = data_collected;
-        }
-      }
-    }
+      restrict_to_constraint_ids< Relation::Id_Type >(constraints, rman,
+          &Query_Constraint::get_relation_ids, &Query_Constraint::get_relation_ids_within,
+          relation_ids, relation_answer_state);
     if ((type & QUERY_AREA) && check_keys_late == prefer_ranges)
     {
       for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
