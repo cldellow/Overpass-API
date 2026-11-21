@@ -49,3 +49,16 @@ std::string escape_xml(const std::string& s)
   }
   return result;
 }
+
+
+std::ostream& operator<<(std::ostream& out, const Xml_Escaped& e)
+{
+  // escape_xml changes exactly the characters '&', '"', '<', '>' and those below 32.
+  for (std::string::size_type i = 0; i < e.s.size(); ++i)
+  {
+    unsigned char c = e.s[i];
+    if (c == '&' || c == '\"' || c == '<' || c == '>' || c < 32)
+      return out<<escape_xml(e.s);
+  }
+  return out.write(e.s.data(), e.s.size());
+}

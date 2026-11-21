@@ -86,7 +86,7 @@ void print_meta_json(const OSM_Element_Metadata_Skeleton< Id_Type >& meta,
 	",\n  \"changeset\": "<<meta.changeset;
   std::map< uint32, std::string >::const_iterator it = users.find(meta.user_id);
   if (it != users.end())
-    std::cout<<",\n  \"user\": \""<<escape_cstr(it->second)<<"\"";
+    std::cout<<",\n  \"user\": \""<<Json_Escaped(it->second)<<"\"";
   std::cout<<",\n  \"uid\": "<<meta.user_id;
 }
 
@@ -97,9 +97,9 @@ void print_tags(const std::vector< std::pair< std::string, std::string > >* tags
   {
     std::vector< std::pair< std::string, std::string > >::const_iterator it = tags->begin();
     std::cout<<",\n  \"tags\": {"
-           "\n    \""<<escape_cstr(it->first)<<"\": \""<<escape_cstr(it->second)<<"\"";
+           "\n    \""<<Json_Escaped(it->first)<<"\": \""<<Json_Escaped(it->second)<<"\"";
     for (++it; it != tags->end(); ++it)
-      std::cout<<",\n    \""<<escape_cstr(it->first)<<"\": \""<<escape_cstr(it->second)<<"\"";
+      std::cout<<",\n    \""<<Json_Escaped(it->first)<<"\": \""<<Json_Escaped(it->second)<<"\"";
     std::cout<<"\n  }";
   }
 }
@@ -242,7 +242,7 @@ void Output_JSON::print_item(const Relation_Skeleton& skel,
       std::cout <<"\n    {"
             "\n      \"type\": \""<<member_type_name(skel.members[i].type)<<
             "\",\n      \"ref\": "<<skel.members[i].ref.val()<<
-            ",\n      \"role\": \""<<escape_cstr(rit != roles->end() ? rit->second : "???") << "\"";
+            ",\n      \"role\": \""<<Json_Escaped(rit != roles->end() ? rit->second : "???") << "\"";
 
       if (skel.members[i].type == Relation_Entry::NODE &&
           geometry.has_faithful_relation_geometry() && geometry.relation_pos_is_valid(i))
