@@ -455,7 +455,9 @@ Node_Updater::Node_Updater(std::string db_dir_, Database_Meta_State::Mode meta_)
     partial_possible(meta_ == Database_Meta_State::only_data || meta_ == Database_Meta_State::keep_meta),
     db_dir(db_dir_), meta(meta_), keys(*osm_base_settings().NODE_KEYS)
 {
-  partial_possible = !file_exists
+  // Partial updates clear the new attic skeletons after each flush, but the way updater needs them
+  // to compute the geometry of older way versions. So never use them when keeping attic data.
+  partial_possible = partial_possible && !file_exists
       (db_dir +
        osm_base_settings().NODES->get_file_name_trunk() +
        osm_base_settings().NODES->get_data_suffix() +

@@ -44,10 +44,12 @@ Way_Updater::Way_Updater(Transaction& transaction_, Database_Meta_State::Mode me
 
 Way_Updater::Way_Updater(std::string db_dir_, Database_Meta_State::Mode meta_)
   : update_counter(0), transaction(0),
-    external_transaction(false), partial_possible(true), db_dir(db_dir_), meta(meta_),
-    keys(*osm_base_settings().WAY_KEYS)
+    external_transaction(false),
+    partial_possible(meta_ == Database_Meta_State::only_data || meta_ == Database_Meta_State::keep_meta),
+    db_dir(db_dir_), meta(meta_), keys(*osm_base_settings().WAY_KEYS)
 {
-  partial_possible = !file_exists
+  // As for nodes: the relation updater needs the new attic way skeletons, which partial updates clear.
+  partial_possible = partial_possible && !file_exists
       (db_dir +
        osm_base_settings().WAYS->get_file_name_trunk() +
        osm_base_settings().WAYS->get_data_suffix() +
