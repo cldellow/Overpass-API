@@ -31,6 +31,7 @@
 #include "../core/index_computations.h"
 #include "../data/collect_members.h"
 #include "../data/tilewise_geometry.h"
+#include <algorithm>
 #include "area_query.h"
 #include "coord_query.h"
 #include "make_area.h"
@@ -768,6 +769,19 @@ void decode_coords(const Area_Block& block, Decoded_Coords& coords)
 }
 
 
+Coords_Bounds::Coords_Bounds(const Decoded_Coords& coords)
+    : min_lat(0xffffffffu), max_lat(0), min_lon(0xffffffffu), max_lon(0)
+{
+  for (Decoded_Coords::const_iterator it = coords.begin(); it != coords.end(); ++it)
+  {
+    min_lat = std::min(min_lat, it->first);
+    max_lat = std::max(max_lat, it->first);
+    min_lon = std::min(min_lon, it->second);
+    max_lon = std::max(max_lon, it->second);
+  }
+}
+
+
 int intersects_inner(const Decoded_Coords& coords_a, const Decoded_Coords& coords_b)
 {
   for (std::vector< std::pair< uint32, uint32 > >::size_type i = 0; i < coords_a.size()-1; ++i)
@@ -933,6 +947,7 @@ void Area_Query_Statement::collect_ways
     // has_inner_points tests segment midpoints against the blocks decoded with ll_index 0.
     std::map< Area_Skeleton::Id_Type, std::vector< Coord_Query_Statement::Decoded_Area_Block > > decoded_zero;
     std::map< Area_Skeleton::Id_Type, std::vector< Decoded_Coords > > area_coords;
+    std::map< Area_Skeleton::Id_Type, std::vector< Coords_Bounds > > area_bounds;
     for (std::map< Area_Skeleton::Id_Type, std::vector< Area_Block > >::const_iterator it = areas.begin();
         it != areas.end(); ++it)
     {
@@ -943,6 +958,7 @@ void Area_Query_Statement::collect_ways
         blocks.push_back(Coord_Query_Statement::Decoded_Area_Block(0, *it2));
         coords.push_back(Decoded_Coords());
         decode_coords(*it2, coords.back());
+        area_bounds[it->first].push_back(Coords_Bounds(coords.back()));
       }
     }
 
@@ -952,6 +968,7 @@ void Area_Query_Statement::collect_ways
 	 sit != way_segments[Uint31_Index(current_idx)].end(); ++sit)
     {
       decode_coords(*sit, sit_coords);
+      Coords_Bounds sit_bounds(sit_coords);
       std::map< Area::Id_Type, int > area_status;
       for (std::map< Area_Skeleton::Id_Type, std::vector< Area_Block > >::const_iterator it = areas.begin();
 	   it != areas.end(); ++it)
@@ -966,7 +983,8 @@ void Area_Query_Statement::collect_ways
           // The endpoints are properly handled via the point-in-area test
           // Check additionally the middle of the segment to also get segments
           // that run through the area
-          int intersect = intersects_inner(sit_coords, area_coords[it->first][it2 - it->second.begin()]);
+          int intersect = sit_bounds.overlaps(area_bounds[it->first][it2 - it->second.begin()])
+              ? intersects_inner(sit_coords, area_coords[it->first][it2 - it->second.begin()]) : 0;
 	  if (intersect == Coord_Query_Statement::INTERSECT)
 	  {
 	    ways_inside[Way::Id_Type(sit->id)] = true;
