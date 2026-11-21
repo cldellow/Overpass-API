@@ -86,3 +86,7 @@ Use one git worktree and build directory per branch, so long runs keep their bin
 cd src && mkdir -p m4 && autoreconf -i && mkdir -p ../build && cd ../build
 ../src/configure --prefix="$PWD/install" CXXFLAGS="-O2 -g" --enable-lz4 && make -j"$(nproc)" install
 ```
+
+`autoreconf -i` also installs `src/ar-lib` and `src/compile`. `upstream/master`'s `src/.gitignore` doesn't
+list them (cldellow/Overpass-API#82), so they show up as untracked files. Never commit them: stage
+files by name rather than with `git add -A` or `git add .`, and check `git show --stat` before pushing.
