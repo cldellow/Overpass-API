@@ -207,6 +207,18 @@ private:
 };
 
 
+// eval_map charges eval_index_size bytes per index plus eval_object_size per object.
+// Keeping these in one place lets loops that only add objects keep the same total
+// up to date instead of walking the whole map.
+const uint64 eval_index_size = 64;
+inline uint64 eval_object_size(const Node_Skeleton*) { return 8; }
+inline uint64 eval_object_size(const Way_Skeleton*) { return 128; }
+inline uint64 eval_object_size(const Relation_Skeleton*) { return 192; }
+inline uint64 eval_object_size(const Attic< Node_Skeleton >*) { return 16; }
+inline uint64 eval_object_size(const Attic< Way_Skeleton >*) { return 136; }
+inline uint64 eval_object_size(const Attic< Relation_Skeleton >*) { return 200; }
+inline uint64 eval_object_size(const Area_Skeleton*) { return 128; }
+
 uint64 eval_map(const std::map< Uint32_Index, std::vector< Node_Skeleton > >& nodes);
 uint64 eval_map(const std::map< Uint31_Index, std::vector< Way_Skeleton > >& ways);
 uint64 eval_map(const std::map< Uint31_Index, std::vector< Relation_Skeleton > >& relations);
