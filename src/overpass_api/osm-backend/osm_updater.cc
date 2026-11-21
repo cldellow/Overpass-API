@@ -62,6 +62,8 @@ namespace
   const int IN_RELATIONS = 3;
   int modify_mode = 0;
   const int DELETE = 1;
+  // Set by visible="false" in history files (.osh): the element version is a deletion.
+  bool element_deleted = false;
   uint flush_limit = 4*1024*1024;
   OSM_Element_Metadata* meta;
 
@@ -170,6 +172,8 @@ namespace
 	meta->user_name = attr[i+1];
       if (meta && (!strcmp(attr[i], "uid")))
 	meta->user_id = atoi(attr[i+1]);
+      if (!strcmp(attr[i], "visible"))
+        element_deleted = !strcmp(attr[i+1], "false");
     }
     if (lat >= -90. && lat <= 90. && lon >= -180. && lon <= 180.)
       current_node = Node(id, lat, lon);
@@ -180,10 +184,11 @@ namespace
 
   inline void node_end()
   {
-    if (modify_mode == DELETE)
+    if (modify_mode == DELETE || element_deleted)
       node_updater->set_id_deleted(current_node.id, meta);
     else
       node_updater->set_node(current_node, meta);
+    element_deleted = false;
     if (osm_element_count >= flush_limit)
     {
       callback->node_elapsed(current_node.id);
@@ -234,6 +239,8 @@ namespace
 	meta->user_name = attr[i+1];
       if (meta && (!strcmp(attr[i], "uid")))
 	meta->user_id = atoi(attr[i+1]);
+      if (!strcmp(attr[i], "visible"))
+        element_deleted = !strcmp(attr[i+1], "false");
     }
     current_way = Way(id.val());
   }
@@ -241,10 +248,11 @@ namespace
 
   inline void way_end()
   {
-    if (modify_mode == DELETE)
+    if (modify_mode == DELETE || element_deleted)
       way_updater->set_id_deleted(current_way.id, meta);
     else
       way_updater->set_way(current_way, meta);
+    element_deleted = false;
     if (osm_element_count >= flush_limit)
     {
       callback->way_elapsed(current_way.id);
@@ -260,10 +268,11 @@ namespace
 
   inline void relation_end()
   {
-    if (modify_mode == DELETE)
+    if (modify_mode == DELETE || element_deleted)
       relation_updater->set_id_deleted(current_relation.id, meta);
     else
       relation_updater->set_relation(current_relation, meta);
+    element_deleted = false;
     if (osm_element_count >= flush_limit)
     {
       callback->relation_elapsed(current_relation.id);
@@ -331,6 +340,8 @@ namespace
 	meta->user_name = attr[i+1];
       if (meta && (!strcmp(attr[i], "uid")))
 	meta->user_id = atoi(attr[i+1]);
+      if (!strcmp(attr[i], "visible"))
+        element_deleted = !strcmp(attr[i+1], "false");
     }
     current_relation = Relation(id.val());
   }
