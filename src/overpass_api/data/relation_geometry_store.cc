@@ -48,13 +48,7 @@ Relation_Geometry_Store::Relation_Geometry_Store
       = relation_node_members(context, relations, {}, node_ranges, {}, true);
 
   // Order node ids by id.
-  for (std::map< Uint32_Index, std::vector< Node_Skeleton > >::iterator it = node_members.current.begin();
-      it != node_members.current.end(); ++it)
-  {
-    for (std::vector< Node_Skeleton >::const_iterator iit = it->second.begin();
-        iit != it->second.end(); ++iit)
-      nodes.push_back(Node(iit->id, it->first.val(), iit->ll_lower));
-  }
+  move_to_node_positions(node_members.current, nodes);
   sort(nodes.begin(), nodes.end(), Node_Comparator_By_Id());
 
   Ranges< Uint31_Index > way_ranges(south <= north
@@ -99,20 +93,14 @@ Relation_Geometry_Store::Relation_Geometry_Store
   auto nodes_by_idx = relation_node_members(context, {}, relations, node_ranges, {}, true);
 
   // Order node ids by id.
-  for (std::map< Uint32_Index, std::vector< Node_Skeleton > >::iterator it = nodes_by_idx.current.begin();
-      it != nodes_by_idx.current.end(); ++it)
-  {
-    for (std::vector< Node_Skeleton >::const_iterator iit = it->second.begin();
-        iit != it->second.end(); ++iit)
-      nodes.push_back(Node(iit->id, it->first.val(), iit->ll_lower));
-  }
-  for (std::map< Uint32_Index, std::vector< Attic< Node_Skeleton > > >::iterator it = nodes_by_idx.attic.begin();
-      it != nodes_by_idx.attic.end(); ++it)
-  {
-    for (std::vector< Attic< Node_Skeleton > >::const_iterator iit = it->second.begin();
-        iit != it->second.end(); ++iit)
-      nodes.push_back(Node(iit->id, it->first.val(), iit->ll_lower));
-  }
+  std::size_t count = 0;
+  for (auto it = nodes_by_idx.current.begin(); it != nodes_by_idx.current.end(); ++it)
+    count += it->second.size();
+  for (auto it = nodes_by_idx.attic.begin(); it != nodes_by_idx.attic.end(); ++it)
+    count += it->second.size();
+  nodes.reserve(count);
+  move_to_node_positions(nodes_by_idx.current, nodes);
+  move_to_node_positions(nodes_by_idx.attic, nodes);
   sort(nodes.begin(), nodes.end(), Node_Comparator_By_Id());
 
   Ranges< Uint31_Index > way_ranges(south <= north
@@ -161,7 +149,7 @@ std::vector< std::vector< Quad_Coord > > Relation_Geometry_Store::get_geometry
   {
     if (it->type == Relation_Entry::NODE)
     {
-      const Node* node = binary_search_for_id(nodes, it->ref);
+      const Node_Position* node = binary_search_for_id(nodes, it->ref);
       if (node == 0 || !matches_bbox(node->index, node->ll_lower_))
         result.push_back(std::vector< Quad_Coord >(1, Quad_Coord(0u, 0u)));
       else
