@@ -127,8 +127,7 @@ class Around_Constraint : public Query_Constraint
   public:
     Around_Constraint(Around_Statement& around_) : around(&around_), ranges_used(false) {}
 
-    Query_Filter_Strategy delivers_data(Resource_Manager& rman)
-    { return (around->get_radius() < 2000) ? prefer_ranges : ids_useful; }
+    Query_Filter_Strategy delivers_data(Resource_Manager& rman);
 
     bool get_ranges(Resource_Manager& rman, Ranges< Uint32_Index >& ranges);
     bool get_ranges(Resource_Manager& rman, Ranges< Uint31_Index >& ranges);
@@ -141,6 +140,29 @@ class Around_Constraint : public Query_Constraint
     Around_Statement* around;
     bool ranges_used;
 };
+
+
+/* Reading every object in the ranges and checking tags afterwards (prefer_ranges) only pays
+   off while the ranges are small. A small radius around a large input set, such as long
+   relations, can still cover a large area, so look at the area as well as the radius. Like
+   Bbox_Constraint, let the tag index select candidates (ids_useful) once the area exceeds
+   about one square degree: 65536 node index tiles of about 0.00275 by 0.0055 degrees. */
+Query_Filter_Strategy Around_Constraint::delivers_data(Resource_Manager& rman)
+{
+  if (around->get_radius() >= 2000)
+    return ids_useful;
+
+  const Set* input = rman.get_set(around->get_source_name());
+  Ranges< Uint32_Index > ranges = around->calc_ranges(input ? *input : Set(), rman);
+  uint64 tiles = 0;
+  for (auto it = ranges.begin(); it != ranges.end(); ++it)
+  {
+    tiles += uint64(it.upper_bound().val()) - it.lower_bound().val();
+    if (tiles > 65536)
+      return ids_useful;
+  }
+  return prefer_ranges;
+}
 
 
 bool Around_Constraint::get_ranges
@@ -223,8 +245,28 @@ void Around_Constraint::filter(Resource_Manager& rman, Set& into)
 }
 
 
+/* Checks the query's time and memory limits every few hundred candidates, so that an
+   expensive around filter stops when the query runs out of time instead of running
+   to completion. health_check throws when a limit is exceeded. */
+class Periodic_Health_Check
+{
+public:
+  Periodic_Health_Check(Resource_Manager& rman_, const Statement& stmt_) : rman(rman_), stmt(stmt_) {}
+  void tick()
+  {
+    if (++count % 256 == 0)
+      rman.health_check(stmt);
+  }
+
+private:
+  Resource_Manager& rman;
+  const Statement& stmt;
+  uint32 count = 0;
+};
+
+
 template< typename Node_Skeleton >
-void filter_nodes_expensive(const Around_Statement& around,
+void filter_nodes_expensive(const Around_Statement& around, Periodic_Health_Check& check,
                             std::map< Uint32_Index, std::vector< Node_Skeleton > >& nodes)
 {
   for (typename std::map< Uint32_Index, std::vector< Node_Skeleton > >::iterator it = nodes.begin();
@@ -234,6 +276,7 @@ void filter_nodes_expensive(const Around_Statement& around,
     for (typename std::vector< Node_Skeleton >::const_iterator iit = it->second.begin();
         iit != it->second.end(); ++iit)
     {
+      check.tick();
       double lat(::lat(it->first.val(), iit->ll_lower));
       double lon(::lon(it->first.val(), iit->ll_lower));
       if (around.is_inside(lat, lon))
@@ -245,7 +288,7 @@ void filter_nodes_expensive(const Around_Statement& around,
 
 
 template< typename Way_Skeleton >
-void filter_ways_expensive(const Around_Statement& around,
+void filter_ways_expensive(const Around_Statement& around, Periodic_Health_Check& check,
                            const Way_Geometry_Store& way_geometries,
                            std::map< Uint31_Index, std::vector< Way_Skeleton > >& ways)
 {
@@ -256,6 +299,7 @@ void filter_ways_expensive(const Around_Statement& around,
     for (typename std::vector< Way_Skeleton >::const_iterator iit = it->second.begin();
         iit != it->second.end(); ++iit)
     {
+      check.tick();
       if (around.is_inside(way_geometries.get_geometry(*iit)))
 	local_into.push_back(*iit);
     }
@@ -265,7 +309,7 @@ void filter_ways_expensive(const Around_Statement& around,
 
 
 template< typename Relation_Skeleton >
-void filter_relations_expensive(const Around_Statement& around,
+void filter_relations_expensive(const Around_Statement& around, Periodic_Health_Check& check,
                                 const std::vector< std::pair< Uint32_Index, const Node_Skeleton* > > node_members_by_id,
                                 const std::vector< std::pair< Uint31_Index, const Way_Skeleton* > > way_members_by_id,
                                 const Way_Geometry_Store& way_geometries,
@@ -281,6 +325,7 @@ void filter_relations_expensive(const Around_Statement& around,
       for (std::vector< Relation_Entry >::const_iterator nit = iit->members.begin();
 	  nit != iit->members.end(); ++nit)
       {
+        check.tick();
 	if (nit->type == Relation_Entry::NODE)
 	{
           const std::pair< Uint32_Index, const Node_Skeleton* >* second_nd =
@@ -317,11 +362,12 @@ void filter_relations_expensive(const Around_Statement& around,
 
 void Around_Constraint::filter(const Statement& query, Resource_Manager& rman, Set& into)
 {
+  Periodic_Health_Check check(rman, query);
   const Set* input = rman.get_set(around->get_source_name());
   around->calc_lat_lons(input ? *input : Set(), *around, rman);
 
-  filter_nodes_expensive(*around, into.nodes);
-  filter_ways_expensive(*around, Way_Geometry_Store(into.ways, query, rman), into.ways);
+  filter_nodes_expensive(*around, check, into.nodes);
+  filter_ways_expensive(*around, check, Way_Geometry_Store(into.ways, query, rman), into.ways);
 
   Request_Context context(&query, rman);
   {
@@ -346,15 +392,15 @@ void Around_Constraint::filter(const Statement& query, Resource_Manager& rman, S
         = order_by_id(way_members_.current, Order_By_Way_Id());
 
     // Retrieve all nodes referred by the ways.
-    filter_relations_expensive(*around, node_members_by_id, way_members_by_id,
+    filter_relations_expensive(*around, check, node_members_by_id, way_members_by_id,
         Way_Geometry_Store(way_members_.current, query, rman), into.relations);
   }
 
   if (!into.attic_nodes.empty())
-    filter_nodes_expensive(*around, into.attic_nodes);
+    filter_nodes_expensive(*around, check, into.attic_nodes);
 
   if (!into.attic_ways.empty())
-    filter_ways_expensive(*around, Way_Geometry_Store(into.attic_ways, query, rman), into.attic_ways);
+    filter_ways_expensive(*around, check, Way_Geometry_Store(into.attic_ways, query, rman), into.attic_ways);
 
   if (!into.attic_relations.empty())
   {
@@ -376,7 +422,7 @@ void Around_Constraint::filter(const Statement& query, Resource_Manager& rman, S
     std::vector< std::pair< Uint31_Index, const Way_Skeleton* > > way_members_by_id
         = order_attic_by_id(way_members_, Order_By_Way_Id());
 
-    filter_relations_expensive(*around, node_members_by_id, way_members_by_id,
+    filter_relations_expensive(*around, check, node_members_by_id, way_members_by_id,
         Way_Geometry_Store(way_members_, query, rman), into.attic_relations);
   }
 
@@ -535,9 +581,9 @@ Around_Statement::~Around_Statement()
 }
 
 
-std::vector< double > cartesian(double lat, double lon)
+Vec3 cartesian(double lat, double lon)
 {
-  std::vector< double > result(3);
+  Vec3 result;
 
   result[0] = sin(lat/90.0*acos(0));
   result[1] = cos(lat/90.0*acos(0))*sin(lon/90.0*acos(0));
@@ -547,7 +593,7 @@ std::vector< double > cartesian(double lat, double lon)
 }
 
 
-void rescale(double a, std::vector< double >& v)
+void rescale(double a, Vec3& v)
 {
   v[0] *= a;
   v[1] *= a;
@@ -555,9 +601,9 @@ void rescale(double a, std::vector< double >& v)
 }
 
 
-std::vector< double > sum(const std::vector< double >& v, const std::vector< double >& w)
+Vec3 sum(const Vec3& v, const Vec3& w)
 {
-  std::vector< double > result(3);
+  Vec3 result;
 
   result[0] = v[0] + w[0];
   result[1] = v[1] + w[1];
@@ -567,15 +613,15 @@ std::vector< double > sum(const std::vector< double >& v, const std::vector< dou
 }
 
 
-double scalar_prod(const std::vector< double >& v, const std::vector< double >& w)
+double scalar_prod(const Vec3& v, const Vec3& w)
 {
   return v[0]*w[0] + v[1]*w[1] + v[2]*w[2];
 }
 
 
-std::vector< double > cross_prod(const std::vector< double >& v, const std::vector< double >& w)
+Vec3 cross_prod(const Vec3& v, const Vec3& w)
 {
-  std::vector< double > result(3);
+  Vec3 result;
 
   result[0] = v[1]*w[2] - v[2]*w[1];
   result[1] = v[2]*w[0] - v[0]*w[2];
@@ -604,7 +650,7 @@ Prepared_Point::Prepared_Point
 }
 
 
-double great_circle_line_dist(const Prepared_Segment& segment, const std::vector< double >& cartesian)
+double great_circle_line_dist(const Prepared_Segment& segment, const Vec3& cartesian)
 {
   double scalar_prod_ = std::abs(scalar_prod(cartesian, segment.norm))
       /sqrt(scalar_prod(segment.norm, segment.norm));
@@ -619,7 +665,7 @@ double great_circle_line_dist(const Prepared_Segment& segment, const std::vector
 double great_circle_line_dist(double llat1, double llon1, double llat2, double llon2,
                               double plat, double plon)
 {
-  std::vector< double > norm = cross_prod(cartesian(llat1, llon1), cartesian(llat2, llon2));
+  Vec3 norm = cross_prod(cartesian(llat1, llon1), cartesian(llat2, llon2));
 
   double scalar_prod_ = std::abs(scalar_prod(cartesian(plat, plon), norm))
       /sqrt(scalar_prod(norm, norm));
@@ -634,11 +680,11 @@ double great_circle_line_dist(double llat1, double llon1, double llat2, double l
 bool intersect(const Prepared_Segment& segment_a,
                const Prepared_Segment& segment_b)
 {
-  std::vector< double > intersection_pt = cross_prod(segment_a.norm, segment_b.norm);
+  Vec3 intersection_pt = cross_prod(segment_a.norm, segment_b.norm);
   rescale(1.0/sqrt(scalar_prod(intersection_pt, intersection_pt)), intersection_pt);
 
-  std::vector< double > asum = sum(segment_a.first_cartesian, segment_a.second_cartesian);
-  std::vector< double > bsum = sum(segment_b.first_cartesian, segment_b.second_cartesian);
+  Vec3 asum = sum(segment_a.first_cartesian, segment_a.second_cartesian);
+  Vec3 bsum = sum(segment_b.first_cartesian, segment_b.second_cartesian);
 
   return (std::abs(scalar_prod(asum, intersection_pt)) >= scalar_prod(asum, segment_a.first_cartesian)
       && std::abs(scalar_prod(bsum, intersection_pt)) >= scalar_prod(bsum, segment_b.first_cartesian));
@@ -648,18 +694,18 @@ bool intersect(const Prepared_Segment& segment_a,
 bool intersect(double alat1, double alon1, double alat2, double alon2,
 	       double blat1, double blon1, double blat2, double blon2)
 {
-  std::vector< double > a1 = cartesian(alat1, alon1);
-  std::vector< double > a2 = cartesian(alat2, alon2);
-  std::vector< double > norm_a = cross_prod(a1, a2);
-  std::vector< double > b1 = cartesian(blat1, blon1);
-  std::vector< double > b2 = cartesian(blat2, blon2);
-  std::vector< double > norm_b = cross_prod(b1, b2);
+  Vec3 a1 = cartesian(alat1, alon1);
+  Vec3 a2 = cartesian(alat2, alon2);
+  Vec3 norm_a = cross_prod(a1, a2);
+  Vec3 b1 = cartesian(blat1, blon1);
+  Vec3 b2 = cartesian(blat2, blon2);
+  Vec3 norm_b = cross_prod(b1, b2);
 
-  std::vector< double > intersection_pt = cross_prod(norm_a, norm_b);
+  Vec3 intersection_pt = cross_prod(norm_a, norm_b);
   rescale(1.0/sqrt(scalar_prod(intersection_pt, intersection_pt)), intersection_pt);
 
-  std::vector< double > asum = sum(a1, a2);
-  std::vector< double > bsum = sum(b1, b2);
+  Vec3 asum = sum(a1, a2);
+  Vec3 bsum = sum(b1, b2);
 
   return (std::abs(scalar_prod(asum, intersection_pt)) >= scalar_prod(asum, a1)
       && std::abs(scalar_prod(bsum, intersection_pt)) >= scalar_prod(bsum, b1));
@@ -686,12 +732,156 @@ Ranges< Uint32_Index > Around_Statement::calc_ranges(const Set& input, Resource_
     return expand(calc_children(ranges(ways)), radius);
   }
   else
+  {
+    // The geometry of a relation is that of its direct node and way members (see
+    // calc_lat_lons), so take the ranges from their indexes. A relation's own index
+    // covers its whole extent, which for a long route or a boundary is a large area.
+    Ranges< Uint32_Index > member_node_ranges;
+    Ranges< Uint31_Index > member_way_ranges;
+    if (!input.relations.empty())
+    {
+      Request_Context context(this, rman);
+      member_node_ranges = ranges(relation_node_members(
+          context, input.relations, {}, Ranges< Uint32_Index >::global(), {}, true).current);
+      member_way_ranges = ranges(relation_way_members(
+          context, input.relations, {}, Ranges< Uint31_Index >::global(), {}, true).current);
+    }
     return expand(
-        ranges(input.nodes).union_(ranges(input.attic_nodes)).union_(
+        ranges(input.nodes).union_(ranges(input.attic_nodes)).union_(member_node_ranges).union_(
             calc_children(
                 ranges(input.ways).union_(ranges(input.attic_ways)).union_(
-                ranges(input.relations).union_(ranges(input.attic_relations))))),
+                member_way_ranges.union_(ranges(input.attic_relations))))),
         radius);
+  }
+}
+
+
+//-----------------------------------------------------------------------------
+
+/* Why reach boxes are enough. Let reach(X) be the bounding box of X's endpoints
+   widened by segment_reach(len(X), radius): the radius plus twice the most a
+   great-circle arc of that length can bulge out of its endpoints' bounding box, plus
+   one metre. A point has length 0. Every exact test only passes when the two objects'
+   reach boxes overlap:
+
+   - Point P near segment S (is_inside(lat, lon)): the test requires
+     great_circle_line_dist(S, P) <= radius, and P within sqrt(len(S)^2 + radius^2) of
+     both endpoints of S. The second condition keeps P's foot on S's great circle
+     within sqrt(len(S)^2 + radius^2) - len(S) <= radius beyond either endpoint. So P
+     is within about 2 * radius of the arc S, hence within the arc's bounding box,
+     which lies within S's endpoint box widened by the bulge, widened by 2 * radius.
+     Overlap needs only one of the two boxes to be widened by that much; each is
+     widened by radius, so together they cover it.
+   - Segment C near point Q (is_inside(segment), first loop): the same test with the
+     roles swapped.
+   - Segments S and C intersect (intersect()): the crossing point lies on both arcs,
+     so within each arc's bounding box, which lies within its endpoint box widened by
+     the bulge.
+
+   The widening uses a slightly larger distance than needed and the latitude closest
+   to the pole for the longitude scale, so the boxes are conservative. Boxes too
+   close to a pole, crossing the antimeridian or spanning many cells are never pruned. */
+
+double Reach_Grid::segment_reach(double length, double radius, double lat1, double lat2)
+{
+  // A great-circle arc of length L deviates in latitude from its endpoints' bounding
+  // box by at most about L^2 * tan(latitude) / (8 * R). Beyond 50 km, or near a pole,
+  // keep the much wider bound of the arc's own length.
+  double poleward = std::max(std::abs(lat1), std::abs(lat2));
+  if (length > 50000.0 || poleward >= 80.0)
+    return length + radius;
+  const double earth_radius = 10.0*1000*1000/acos(0);  // as in great_circle_dist
+  double bulge = length * length * tan(poleward/90.0*acos(0)) / (8.0 * earth_radius);
+  return radius + 2.0 * bulge + 1.0;
+}
+
+
+Reach_Grid::Box Reach_Grid::reach_box(double lat1, double lon1, double lat2, double lon2, double reach)
+{
+  Box box;
+  // great_circle_dist uses 10,000 km per quarter meridian, so 1 degree of latitude is
+  // 1e7/90 m. A point within distance d is within d/(1e7/90) degrees of latitude.
+  double margin_deg = (reach * 1.02 + 1.0) / (10.0*1000*1000/90.0);
+  box.south = std::min(lat1, lat2) - margin_deg;
+  box.north = std::max(lat1, lat2) + margin_deg;
+  double poleward = std::max(std::abs(box.south), std::abs(box.north));
+  double lon_margin_deg = poleward < 80.0 ? margin_deg / cos(poleward/90.0*acos(0)) : 360.0;
+  box.west = std::min(lon1, lon2) - lon_margin_deg;
+  box.east = std::max(lon1, lon2) + lon_margin_deg;
+  box.usable = poleward < 80.0 && margin_deg < 5.0 && std::abs(lon1 - lon2) < 180.0
+      && box.west >= -180.0 && box.east <= 180.0;
+  return box;
+}
+
+
+bool Reach_Grid::cell_range(const Box& box, int64& lat0, int64& lat1, int64& lon0, int64& lon1)
+{
+  if (!box.usable)
+    return false;
+  lat0 = (int64)floor(box.south / cell_size);
+  lat1 = (int64)floor(box.north / cell_size);
+  lon0 = (int64)floor(box.west / cell_size);
+  lon1 = (int64)floor(box.east / cell_size);
+  return (lat1 - lat0 + 1) * (lon1 - lon0 + 1) <= max_cells;
+}
+
+
+void Reach_Grid::clear()
+{
+  cells.clear();
+  always.clear();
+  filed.clear();
+  seen.clear();
+  lookup = 0;
+  total = 0;
+}
+
+
+void Reach_Grid::add(const Box& box, uint32 id)
+{
+  ++total;
+  int64 lat0, lat1, lon0, lon1;
+  if (!cell_range(box, lat0, lat1, lon0, lon1))
+  {
+    always.push_back(id);
+    return;
+  }
+  for (int64 i = lat0; i <= lat1; ++i)
+  {
+    for (int64 j = lon0; j <= lon1; ++j)
+      cells[key(i, j)].push_back(id);
+  }
+  filed.push_back(id);
+  if (seen.size() <= id)
+    seen.resize(id + 1, 0);
+}
+
+
+bool Reach_Grid::first_visit(uint32 id) const
+{
+  if (seen[id] == lookup)
+    return false;
+  seen[id] = lookup;
+  return true;
+}
+
+
+void Around_Statement::build_grids()
+{
+  point_grid.clear();
+  for (uint32 i = 0; i < simple_lat_lons.size(); ++i)
+  {
+    const Prepared_Point& p = simple_lat_lons[i];
+    point_grid.add(Reach_Grid::reach_box(p.lat, p.lon, p.lat, p.lon, radius), i);
+  }
+  segment_grid.clear();
+  for (uint32 i = 0; i < simple_segments.size(); ++i)
+  {
+    const Prepared_Segment& s = simple_segments[i];
+    double length = great_circle_dist(s.first_lat, s.first_lon, s.second_lat, s.second_lon);
+    segment_grid.add(Reach_Grid::reach_box(s.first_lat, s.first_lon, s.second_lat, s.second_lon,
+        Reach_Grid::segment_reach(length, radius, s.first_lat, s.second_lat)), i);
+  }
 }
 
 
@@ -833,11 +1023,13 @@ void Around_Statement::calc_lat_lons(const Set& input, Statement& query, Resourc
   if (points.size() == 1)
   {
     add_coord(points[0].lat, points[0].lon, radius, radius_lat_lons, simple_lat_lons);
+    build_grids();
     return;
   }
   else if (points.size() > 1)
   {
     add_way(points, radius, radius_lat_lons, simple_lat_lons, simple_segments);
+    build_grids();
     return;
   }
   Request_Context context(&query, rman);
@@ -867,6 +1059,7 @@ void Around_Statement::calc_lat_lons(const Set& input, Statement& query, Resourc
         = relation_way_members(context, input.attic_relations, Ranges< Uint31_Index >::global());
     add_ways(way_members, Way_Geometry_Store(way_members, query, rman));
   }
+  build_grids();
 }
 
 
@@ -885,10 +1078,10 @@ bool Around_Statement::is_inside(double lat, double lon) const
     }
   }
 
-  std::vector< double > coord_cartesian = cartesian(lat, lon);
-  for (std::vector< Prepared_Segment >::const_iterator
-      it = simple_segments.begin(); it != simple_segments.end(); ++it)
+  Vec3 coord_cartesian = cartesian(lat, lon);
+  return segment_grid.any(Reach_Grid::reach_box(lat, lon, lat, lon, radius), [&](uint32 id)
   {
+    const Prepared_Segment* it = &simple_segments[id];
     if (great_circle_line_dist(*it, coord_cartesian) <= radius)
     {
       double gcdist = great_circle_dist
@@ -898,37 +1091,34 @@ bool Around_Statement::is_inside(double lat, double lon) const
           great_circle_dist(lat, lon, it->second_lat, it->second_lon) <= limit)
 	return true;
     }
-  }
-
-  return false;
+    return false;
+  });
 }
 
 bool Around_Statement::is_inside
     (double first_lat, double first_lon, double second_lat, double second_lon) const
 {
   Prepared_Segment segment(first_lat, first_lon, second_lat, second_lon);
+  double length = great_circle_dist(first_lat, first_lon, second_lat, second_lon);
+  Reach_Grid::Box box = Reach_Grid::reach_box(first_lat, first_lon, second_lat, second_lon,
+      Reach_Grid::segment_reach(length, radius, first_lat, second_lat));
 
-  for (std::vector< Prepared_Point >::const_iterator cit = simple_lat_lons.begin();
-      cit != simple_lat_lons.end(); ++cit)
-  {
-    if (great_circle_line_dist(segment, cit->cartesian) <= radius)
-    {
-      double gcdist = great_circle_dist(first_lat, first_lon, second_lat, second_lon);
-      double limit = sqrt(gcdist*gcdist + radius*radius);
-      if (great_circle_dist(cit->lat, cit->lon, first_lat, first_lon) <= limit &&
-	  great_circle_dist(cit->lat, cit->lon, second_lat, second_lon) <= limit)
-        return true;
-    }
-  }
+  if (point_grid.any(box, [&](uint32 id)
+      {
+        const Prepared_Point* cit = &simple_lat_lons[id];
+        if (great_circle_line_dist(segment, cit->cartesian) <= radius)
+        {
+          double gcdist = great_circle_dist(first_lat, first_lon, second_lat, second_lon);
+          double limit = sqrt(gcdist*gcdist + radius*radius);
+          if (great_circle_dist(cit->lat, cit->lon, first_lat, first_lon) <= limit &&
+              great_circle_dist(cit->lat, cit->lon, second_lat, second_lon) <= limit)
+            return true;
+        }
+        return false;
+      }))
+    return true;
 
-  for (std::vector< Prepared_Segment >::const_iterator
-      cit = simple_segments.begin(); cit != simple_segments.end(); ++cit)
-  {
-    if (intersect(*cit, segment))
-      return true;
-  }
-
-  return false;
+  return segment_grid.any(box, [&](uint32 id) { return intersect(simple_segments[id], segment); });
 }
 
 

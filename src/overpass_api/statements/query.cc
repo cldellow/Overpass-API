@@ -905,9 +905,20 @@ void Query_Statement::apply_all_filters(
   set_progress(8);
   rman.health_check(*this);
 
+  // All filters only remove elements, so their order does not change the result.
+  // Metadata-only filters go first, so that geometry is built for fewer elements.
   for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
       it != constraints.end(); ++it)
-    (*it)->filter(*this, rman, into);
+  {
+    if ((*it)->filter_reads_only_metadata())
+      (*it)->filter(*this, rman, into);
+  }
+  for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
+      it != constraints.end(); ++it)
+  {
+    if (!(*it)->filter_reads_only_metadata())
+      (*it)->filter(*this, rman, into);
+  }
 }
 
 

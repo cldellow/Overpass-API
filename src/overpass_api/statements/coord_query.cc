@@ -33,6 +33,7 @@
 #include "../data/collect_items.h"
 #include "../data/tilewise_geometry.h"
 #include "coord_query.h"
+#include <algorithm>
 
 
 bool Coord_Query_Statement::is_used_ = false;
@@ -87,10 +88,36 @@ Coord_Query_Statement::Coord_Query_Statement
   the coordinates to the southern end of the block. If it is odd, the coordinate
   is inside the area, if not, they are not.
 */
-int Coord_Query_Statement::check_area_block
-    (uint32 ll_index, const Area_Block& area_block,
-     uint32 coord_lat, int32 coord_lon)
+Coord_Query_Statement::Decoded_Area_Block::Decoded_Area_Block(uint32 ll_index, const Area_Block& area_block)
+  : min_lon(0), max_lon(0)
 {
+  lat.reserve(area_block.coors.size());
+  lon.reserve(area_block.coors.size());
+  for (std::vector< uint64 >::const_iterator it = area_block.coors.begin(); it != area_block.coors.end(); ++it)
+  {
+    lat.push_back(::ilat(ll_index | (((*it)>>32)&0xff), (*it & 0xffffffff)));
+    lon.push_back(::ilon(ll_index | (((*it)>>32)&0xff), (*it & 0xffffffff)));
+  }
+  if (!lon.empty())
+  {
+    min_lon = *std::min_element(lon.begin(), lon.end());
+    max_lon = *std::max_element(lon.begin(), lon.end());
+  }
+}
+
+
+// The point-in-area test, shared by the raw and the decoded form of an area block.
+// vertex(i, lat, lon) yields the decoded coordinates of the i-th of the block's n vertices.
+template< typename Vertex >
+int check_area_block_vertices(std::vector< uint64 >::size_type n, Vertex vertex,
+    uint32 coord_lat, int32 coord_lon)
+{
+  const int HIT = Coord_Query_Statement::HIT;
+  const int TOGGLE_EAST = Coord_Query_Statement::TOGGLE_EAST;
+  const int TOGGLE_WEST = Coord_Query_Statement::TOGGLE_WEST;
+  if (n == 0)
+    return 0;
+
   // An area block is a chain of segments. We consider each
   // segment individually. This falls into different cases, determined by
   // the relative position of the intersection of the segment and a straight
@@ -105,15 +132,14 @@ int Coord_Query_Statement::check_area_block
   // only either the western or the eastern side. We are part of the area if in the
   // end the western or eastern side have an odd state.
   int state = 0;
-  std::vector< uint64 >::const_iterator it(area_block.coors.begin());
-  uint32 lat = ::ilat(ll_index | (((*it)>>32)&0xff), (*it & 0xffffffff));
-  int32 lon = ::ilon(ll_index | (((*it)>>32)&0xff), (*it & 0xffffffff));
-  while (++it != area_block.coors.end())
+  uint32 lat;
+  int32 lon;
+  vertex(0, lat, lon);
+  for (std::vector< uint64 >::size_type i = 1; i < n; ++i)
   {
     uint32 last_lat = lat;
     int32 last_lon = lon;
-    lon = ::ilon(ll_index | (((*it)>>32)&0xff), (*it & 0xffffffff));
-    lat = ::ilat(ll_index | (((*it)>>32)&0xff), (*it & 0xffffffff));
+    vertex(i, lat, lon);
 
     if (last_lon < lon)
     {
@@ -182,6 +208,37 @@ int Coord_Query_Statement::check_area_block
     // else: case (1)
   }
   return state;
+}
+
+
+
+int Coord_Query_Statement::check_area_block
+    (const Decoded_Area_Block& area_block, uint32 coord_lat, int32 coord_lon)
+{
+  // No segment can affect a coordinate outside the block's longitude range: every case
+  // except (1) needs coord_lon within a segment's longitude span. So the result is 0.
+  if (area_block.lat.empty() || coord_lon < area_block.min_lon || coord_lon > area_block.max_lon)
+    return 0;
+  return check_area_block_vertices(area_block.lat.size(),
+      [&area_block](std::vector< uint64 >::size_type i, uint32& lat, int32& lon)
+      {
+        lat = area_block.lat[i];
+        lon = area_block.lon[i];
+      }, coord_lat, coord_lon);
+}
+
+
+int Coord_Query_Statement::check_area_block
+    (uint32 ll_index, const Area_Block& area_block,
+     uint32 coord_lat, int32 coord_lon)
+{
+  return check_area_block_vertices(area_block.coors.size(),
+      [ll_index, &area_block](std::vector< uint64 >::size_type i, uint32& lat, int32& lon)
+      {
+        uint64 c = area_block.coors[i];
+        lat = ::ilat(ll_index | ((c>>32)&0xff), (c & 0xffffffff));
+        lon = ::ilon(ll_index | ((c>>32)&0xff), (c & 0xffffffff));
+      }, coord_lat, coord_lon);
 }
 
 

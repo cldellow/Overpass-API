@@ -20,6 +20,7 @@
 #include "../core/settings.h"
 #include "../frontend/basic_formats.h"
 #include "output_json.h"
+#include "fixed7.h"
 
 
 bool Output_JSON::write_http_headers()
@@ -86,7 +87,7 @@ void print_meta_json(const OSM_Element_Metadata_Skeleton< Id_Type >& meta,
 	",\n  \"changeset\": "<<meta.changeset;
   std::map< uint32, std::string >::const_iterator it = users.find(meta.user_id);
   if (it != users.end())
-    std::cout<<",\n  \"user\": \""<<escape_cstr(it->second)<<"\"";
+    std::cout<<",\n  \"user\": \""<<Json_Escaped(it->second)<<"\"";
   std::cout<<",\n  \"uid\": "<<meta.user_id;
 }
 
@@ -97,9 +98,9 @@ void print_tags(const std::vector< std::pair< std::string, std::string > >* tags
   {
     std::vector< std::pair< std::string, std::string > >::const_iterator it = tags->begin();
     std::cout<<",\n  \"tags\": {"
-           "\n    \""<<escape_cstr(it->first)<<"\": \""<<escape_cstr(it->second)<<"\"";
+           "\n    \""<<Json_Escaped(it->first)<<"\": \""<<Json_Escaped(it->second)<<"\"";
     for (++it; it != tags->end(); ++it)
-      std::cout<<",\n    \""<<escape_cstr(it->first)<<"\": \""<<escape_cstr(it->second)<<"\"";
+      std::cout<<",\n    \""<<Json_Escaped(it->first)<<"\": \""<<Json_Escaped(it->second)<<"\"";
     std::cout<<"\n  }";
   }
 }
@@ -124,8 +125,8 @@ void Output_JSON::print_item(const Node_Skeleton& skel,
     std::cout<<",\n  \"id\": "<<skel.id.val();
 
   if (mode.mode & (Output_Mode::COORDS | Output_Mode::GEOMETRY | Output_Mode::BOUNDS | Output_Mode::CENTER))
-    std::cout<<",\n  \"lat\": "<<std::fixed<<std::setprecision(7)<<geometry.center_lat()
-        <<",\n  \"lon\": "<<std::fixed<<std::setprecision(7)<<geometry.center_lon();
+    std::cout<<",\n  \"lat\": "<<Fixed7(geometry.center_lat())
+        <<",\n  \"lon\": "<<Fixed7(geometry.center_lon());
   if (meta)
     print_meta_json(*meta, *users);
 
@@ -138,15 +139,15 @@ void print_bounds(const Opaque_Geometry& geometry, Output_Mode mode)
 {
   if ((mode.mode & Output_Mode::BOUNDS) && geometry.has_bbox())
     std::cout<<",\n  \"bounds\": {\n"
-        "    \"minlat\": "<<std::fixed<<std::setprecision(7)<<geometry.south()<<",\n"
-        "    \"minlon\": "<<std::fixed<<std::setprecision(7)<<geometry.west()<<",\n"
-        "    \"maxlat\": "<<std::fixed<<std::setprecision(7)<<geometry.north()<<",\n"
-        "    \"maxlon\": "<<std::fixed<<std::setprecision(7)<<geometry.east()<<"\n"
+        "    \"minlat\": "<<Fixed7(geometry.south())<<",\n"
+        "    \"minlon\": "<<Fixed7(geometry.west())<<",\n"
+        "    \"maxlat\": "<<Fixed7(geometry.north())<<",\n"
+        "    \"maxlon\": "<<Fixed7(geometry.east())<<"\n"
         "  }";
   else if ((mode.mode & Output_Mode::CENTER) && geometry.has_center())
     std::cout<<",\n  \"center\": {\n"
-        "    \"lat\": "<<std::fixed<<std::setprecision(7)<<geometry.center_lat()<<",\n"
-        "    \"lon\": "<<std::fixed<<std::setprecision(7)<<geometry.center_lon()<<"\n"
+        "    \"lat\": "<<Fixed7(geometry.center_lat())<<",\n"
+        "    \"lon\": "<<Fixed7(geometry.center_lon())<<"\n"
         "  }";
 }
 
@@ -190,10 +191,8 @@ void Output_JSON::print_item(const Way_Skeleton& skel,
     for (uint i = 0; i < geometry.way_size(); ++i)
     {
       if (geometry.way_pos_is_valid(i))
-        std::cout<<"\n    { \"lat\": "<<std::fixed<<std::setprecision(7)
-            <<geometry.way_pos_lat(i)
-            <<", \"lon\": "<<std::fixed<<std::setprecision(7)
-            <<geometry.way_pos_lon(i)<<" }";
+        std::cout<<"\n    { \"lat\": "<<Fixed7(geometry.way_pos_lat(i))
+            <<", \"lon\": "<<Fixed7(geometry.way_pos_lon(i))<<" }";
       else
         std::cout<<"\n    null";
 
@@ -242,12 +241,12 @@ void Output_JSON::print_item(const Relation_Skeleton& skel,
       std::cout <<"\n    {"
             "\n      \"type\": \""<<member_type_name(skel.members[i].type)<<
             "\",\n      \"ref\": "<<skel.members[i].ref.val()<<
-            ",\n      \"role\": \""<<escape_cstr(rit != roles->end() ? rit->second : "???") << "\"";
+            ",\n      \"role\": \""<<Json_Escaped(rit != roles->end() ? rit->second : "???") << "\"";
 
       if (skel.members[i].type == Relation_Entry::NODE &&
           geometry.has_faithful_relation_geometry() && geometry.relation_pos_is_valid(i))
-        std::cout<<",\n      \"lat\": "<<std::fixed<<std::setprecision(7)<<geometry.relation_pos_lat(i)
-            <<",\n      \"lon\": "<<std::fixed<<std::setprecision(7)<<geometry.relation_pos_lon(i);
+        std::cout<<",\n      \"lat\": "<<Fixed7(geometry.relation_pos_lat(i))
+            <<",\n      \"lon\": "<<Fixed7(geometry.relation_pos_lon(i));
 
       if (skel.members[i].type == Relation_Entry::WAY && geometry.has_faithful_relation_geometry())
       {
@@ -256,10 +255,8 @@ void Output_JSON::print_item(const Relation_Skeleton& skel,
         {
           if (geometry.relation_pos_is_valid(i, j))
           {
-            std::cout<<"\n         { \"lat\": "<<std::fixed<<std::setprecision(7)
-                <<geometry.relation_pos_lat(i, j)
-                <<", \"lon\": "<<std::fixed<<std::setprecision(7)
-                <<geometry.relation_pos_lon(i, j)<<" }";
+            std::cout<<"\n         { \"lat\": "<<Fixed7(geometry.relation_pos_lat(i, j))
+                <<", \"lon\": "<<Fixed7(geometry.relation_pos_lon(i, j))<<" }";
           }
           else
             std::cout<<"\n         null";
@@ -314,8 +311,8 @@ void print_geometry(const Opaque_Geometry& geometry, const std::string& indent)
     const std::vector< Point_Double >* line = geometry.get_line_geometry();
     for (std::vector< Point_Double >::const_iterator it = line->begin(); it != line->end(); ++it)
       std::cout<<(it == line->begin() ? "" : ",")<<"\n"<<indent<<"    ["
-          <<std::fixed<<std::setprecision(7)<<it->lon<<", "
-          <<std::fixed<<std::setprecision(7)<<it->lat<<"]";
+          <<Fixed7(it->lon)<<", "
+          <<Fixed7(it->lat)<<"]";
 
     std::cout<<"\n"<<indent<<"  ]\n"<<indent<<"}";
   }
@@ -332,8 +329,8 @@ void print_geometry(const Opaque_Geometry& geometry, const std::string& indent)
       std::cout<<(iti == linestrings->begin() ? "" : ",")<<"\n"<<indent<<"    [";
       for (std::vector< Point_Double >::const_iterator it = iti->begin(); it != iti->end(); ++it)
         std::cout<<(it == iti->begin() ? "" : ",")<<"\n"<<indent<<"      ["
-            <<std::fixed<<std::setprecision(7)<<it->lon<<", "
-            <<std::fixed<<std::setprecision(7)<<it->lat<<"]";
+            <<Fixed7(it->lon)<<", "
+            <<Fixed7(it->lat)<<"]";
       std::cout<<"\n"<<indent<<"    ]";
     }
 
@@ -343,8 +340,8 @@ void print_geometry(const Opaque_Geometry& geometry, const std::string& indent)
     std::cout<<"{"
         "\n"<<indent<<"  \"type\": \"Point\","
         "\n"<<indent<<"  \"coordinates\": [ "
-        <<std::fixed<<std::setprecision(7)<<geometry.center_lon()<<", "
-        <<std::fixed<<std::setprecision(7)<<geometry.center_lat()<<" ]"
+        <<Fixed7(geometry.center_lon())<<", "
+        <<Fixed7(geometry.center_lat())<<" ]"
     "\n"<<indent<<"}";
 }
 
@@ -361,27 +358,27 @@ void print_geometry(const Opaque_Geometry& geometry, Output_Mode mode)
         "\n    \"type\": \"Polygon\","
         "\n    \"coordinates\": ["
         "\n      ["
-            <<std::fixed<<std::setprecision(7)<<geometry.west()<<", "
-            <<std::fixed<<std::setprecision(7)<<geometry.south()<<"]"
+            <<Fixed7(geometry.west())<<", "
+            <<Fixed7(geometry.south())<<"]"
         ",\n      ["
-            <<std::fixed<<std::setprecision(7)<<geometry.east()<<", "
-            <<std::fixed<<std::setprecision(7)<<geometry.south()<<"]"
+            <<Fixed7(geometry.east())<<", "
+            <<Fixed7(geometry.south())<<"]"
         ",\n      ["
-            <<std::fixed<<std::setprecision(7)<<geometry.east()<<", "
-            <<std::fixed<<std::setprecision(7)<<geometry.north()<<"]"
+            <<Fixed7(geometry.east())<<", "
+            <<Fixed7(geometry.north())<<"]"
         ",\n      ["
-            <<std::fixed<<std::setprecision(7)<<geometry.west()<<", "
-            <<std::fixed<<std::setprecision(7)<<geometry.north()<<"]"
+            <<Fixed7(geometry.west())<<", "
+            <<Fixed7(geometry.north())<<"]"
         ",\n      ["
-            <<std::fixed<<std::setprecision(7)<<geometry.west()<<", "
-            <<std::fixed<<std::setprecision(7)<<geometry.south()<<"]"
+            <<Fixed7(geometry.west())<<", "
+            <<Fixed7(geometry.south())<<"]"
         "\n    ]\n  }";
   else if ((mode.mode & Output_Mode::CENTER) && geometry.has_center())
     std::cout<<",\n  \"geometry\": {"
         "\n    \"type\": \"Point\","
         "\n    \"coordinates\": [ "
-        <<std::fixed<<std::setprecision(7)<<geometry.center_lon()<<", "
-        <<std::fixed<<std::setprecision(7)<<geometry.center_lat()<<" ]"
+        <<Fixed7(geometry.center_lon())<<", "
+        <<Fixed7(geometry.center_lat())<<" ]"
         "\n  }";
 }
 
