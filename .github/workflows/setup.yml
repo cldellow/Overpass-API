@@ -1,0 +1,225 @@
+# Shared setup for fuzz.yml and timing.yml (a reusable workflow; not run on its own):
+#
+# - prepare: resolves the candidate and the baseline (upstream/master at the candidate's merge
+#   base), and builds or restores osm3s_query for both and the importer's binaries. Binaries are
+#   cached by runner architecture and commit (props.yml caches x86 binaries by commit alone).
+# - database: restores the Nova Scotia database with the standard area rules and its fuzz
+#   vocabulary, or builds them. The extract comes from Hiker Atlas's public mirror, imported by a
+#   pinned better-imports commit (same on-disk layout as upstream). Uncompressed maps are almost
+#   all zero, and Overpass writes the zeros out, so after the import every file gets holes
+#   punched (fallocate --dig-holes), and the database is cached as one sparse-aware archive
+#   (tar -S, zstd). Callers unpack it with `zstd -dc db.tar.zst | tar -S -xf -`. actions/cache's
+#   own tar would write the holes back out as zeros. The key covers the runner architecture, the
+#   extract's ETag, the import commit and both compression methods.
+#
+# Cache scope: caches saved by a pull_request run are visible only to that PR; those saved on
+# master are visible to every PR.
+
+name: setup
+
+on:
+  workflow_call:
+    inputs:
+      candidate:
+        description: Branch, tag or commit to test
+        type: string
+        required: true
+      runner:
+        description: Runner label for the builds and the database (callers use the same label)
+        type: string
+        default: ubuntu-24.04-arm
+      import_ref:
+        description: better-imports commit that builds the database
+        type: string
+        default: cc998517d5e1b02c4a59f184f85a05abce8f88b9
+      compression:
+        description: update_database --compression-method
+        type: string
+        default: lz4
+      map_compression:
+        description: update_database --map-compression-method
+        type: string
+        default: 'no'
+    outputs:
+      cand_sha:
+        description: Candidate commit
+        value: ${{ jobs.prepare.outputs.cand_sha }}
+      base_sha:
+        description: Baseline commit (upstream/master at the merge base)
+        value: ${{ jobs.prepare.outputs.base_sha }}
+      db_key:
+        description: Cache key of the database archive (db.tar.zst)
+        value: ${{ jobs.prepare.outputs.db_key }}
+
+env:
+  UPSTREAM: https://github.com/fossgis/Overpass-API
+  EXTRACT_URL: https://public.hikeratlas.com/pbfs/raw/nova-scotia.osm.pbf
+  COMPRESSION: ${{ inputs.compression }}
+  MAP_COMPRESSION: ${{ inputs.map_compression }}
+
+jobs:
+  prepare:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    outputs:
+      base_sha: ${{ steps.base.outputs.sha }}
+      cand_sha: ${{ steps.cand.outputs.sha }}
+      imp_sha: ${{ steps.imp.outputs.sha }}
+      db_key: ${{ steps.dbkey.outputs.key }}
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.candidate }}
+          path: cand
+          fetch-depth: 0
+
+      - name: Record the candidate commit
+        id: cand
+        working-directory: cand
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Find the baseline (upstream/master at the merge base)
+        id: base
+        working-directory: cand
+        run: |
+          git fetch --quiet "$UPSTREAM" master
+          base=$(git merge-base HEAD FETCH_HEAD)
+          git worktree add --quiet ../base "$base"
+          echo "candidate $(git rev-parse HEAD), baseline $base (upstream/master is $(git rev-parse FETCH_HEAD))"
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the importer
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.import_ref }}
+          path: imp
+
+      - name: Record the importer commit
+        id: imp
+        working-directory: imp
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Compute the database cache key
+        id: dbkey
+        env:
+          IMP_SHA: ${{ steps.imp.outputs.sha }}
+          ARCH: ${{ runner.arch }}
+        run: |
+          etag=$(curl -fsSI "$EXTRACT_URL" | tr -d '\r' | awk 'tolower($1) == "etag:" {print $2}' | tr -cd 'A-Za-z0-9-')
+          [ -n "$etag" ] || { echo "no ETag for $EXTRACT_URL"; exit 1; }
+          key="fuzz-db-nova-scotia-areas-$ARCH-$etag-$IMP_SHA-$COMPRESSION-$MAP_COMPRESSION-v3"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "database cache key: $key"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q autoconf automake libtool g++ make libexpat1-dev zlib1g-dev liblz4-dev
+
+      - name: Cache the baseline binaries
+        id: cache-base
+        uses: actions/cache@v6
+        with:
+          path: base-bin
+          key: fuzz-bin-${{ runner.arch }}-${{ steps.base.outputs.sha }}-v1
+
+      - name: Cache the candidate binaries
+        id: cache-cand
+        uses: actions/cache@v6
+        with:
+          path: cand-bin
+          key: fuzz-bin-${{ runner.arch }}-${{ steps.cand.outputs.sha }}-v1
+
+      - name: Cache the importer binaries
+        id: cache-imp
+        uses: actions/cache@v6
+        with:
+          path: imp-bin
+          key: fuzz-imp-bin-${{ runner.arch }}-${{ steps.imp.outputs.sha }}-v1
+
+      - name: Build
+        env:
+          BASE_CACHED: ${{ steps.cache-base.outputs.cache-hit }}
+          CAND_CACHED: ${{ steps.cache-cand.outputs.cache-hit }}
+          IMP_CACHED: ${{ steps.cache-imp.outputs.cache-hit }}
+        run: |
+          build() {  # build SRC_CHECKOUT OUT_BIN TARGET...
+            local src=$1 out=$2; shift 2
+            (cd "$src/src" && mkdir -p m4 && autoreconf -i > /dev/null 2>&1)
+            mkdir -p "$src/build"
+            (cd "$src/build" && ../src/configure CXXFLAGS="-O2" --enable-lz4 > /dev/null \
+              && make -j"$(nproc)" "$@" > make.log 2>&1) || { tail -50 "$src/build/make.log"; exit 1; }
+            mkdir -p "$out"
+            for t in "$@"; do cp "$src/build/$t" "$out/"; done
+          }
+          [ "$BASE_CACHED" = true ] || build base base-bin bin/osm3s_query
+          [ "$CAND_CACHED" = true ] || build cand cand-bin bin/osm3s_query
+          [ "$IMP_CACHED" = true ] || build imp imp-bin bin/update_database bin/osm3s_query
+          ls -l base-bin cand-bin imp-bin
+
+  database:
+    needs: prepare
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 300
+    steps:
+      - name: Look up the database archive
+        id: restore
+        uses: actions/cache/restore@v6
+        with:
+          path: db.tar.zst
+          key: ${{ needs.prepare.outputs.db_key }}
+          lookup-only: true
+
+      - name: Restore the importer binaries
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: imp-bin
+          key: fuzz-imp-bin-${{ runner.arch }}-${{ needs.prepare.outputs.imp_sha }}-v1
+          fail-on-cache-miss: true
+
+      - name: Check out the importer (area rules)
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.imp_sha }}
+          path: imp
+          sparse-checkout: src/rules
+
+      - name: Check out bench-tools
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: bench-tools
+          path: tools
+
+      - name: Build the database and the vocabulary
+        if: steps.restore.outputs.cache-hit != 'true'
+        run: |
+          set -o pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q osmium-tool
+          curl -fsS -o extract.osm.pbf "$EXTRACT_URL"
+          ls -l extract.osm.pbf
+          echo "before the import:"; df -h .
+          mkdir db
+          time (osmium cat extract.osm.pbf -o - -f osm \
+            | imp-bin/update_database --db-dir="$PWD/db/" --meta \
+                --compression-method="$COMPRESSION" --map-compression-method="$MAP_COMPRESSION")
+          time imp-bin/osm3s_query --db-dir="$PWD/db/" --rules < imp/src/rules/areas.osm3s
+          python3 tools/bench/fuzz_vocab.py extract.osm.pbf vocab.json
+          for f in nodes.bin.idx nodes.map.idx; do printf '%s method ' "$f"; od -An -tu2 -j6 -N2 "db/$f"; done
+          echo "after the import:"; du -sh --apparent-size db; du -sh db; df -h .
+          # Overpass writes the maps' zeros out: punch holes so tar -S can store them as holes.
+          for f in db/*; do fallocate --dig-holes "$f"; done
+          echo "after punching holes:"; du -sh db
+          tar -S -cf - db vocab.json | zstd -T0 -3 -q -o db.tar.zst
+          ls -l db.tar.zst
+
+      - name: Save the database archive
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: db.tar.zst
+          key: ${{ needs.prepare.outputs.db_key }}
