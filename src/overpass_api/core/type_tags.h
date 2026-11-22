@@ -319,6 +319,61 @@ void generate_ids_by_coarse
 }
 
 
+// As generate_ids_by_coarse, but only for the elements with ids in [lower_id_bound, upper_id_bound),
+// so that a chunk of output needs the ids of that chunk only.
+template< class TIndex, class TObject >
+void generate_ids_by_coarse
+  (std::map< uint32, std::vector< typename TObject::Id_Type > >& ids_by_coarse,
+   const std::map< TIndex, std::vector< TObject > >& items,
+   typename TObject::Id_Type lower_id_bound, typename TObject::Id_Type upper_id_bound)
+{
+  for (typename std::map< TIndex, std::vector< TObject > >::const_iterator
+    it(items.begin()); it != items.end(); ++it)
+  {
+    for (typename std::vector< TObject >::const_iterator it2(it->second.begin());
+        it2 != it->second.end(); ++it2)
+    {
+      if (!(it2->id < lower_id_bound) && it2->id < upper_id_bound)
+        ids_by_coarse[it->first.val() & 0x7fffff00].push_back(it2->id);
+    }
+  }
+
+  for (typename std::map< uint32, std::vector< typename TObject::Id_Type > >::iterator
+      it = ids_by_coarse.begin(); it != ids_by_coarse.end(); ++it)
+  {
+    std::sort(it->second.begin(), it->second.end());
+    it->second.erase(std::unique(it->second.begin(), it->second.end()), it->second.end());
+  }
+}
+
+
+template< class TIndex, class TObject >
+void generate_ids_by_coarse
+  (std::map< uint32, std::vector< Attic< typename TObject::Id_Type > > >& ids_by_coarse,
+   const std::map< TIndex, std::vector< TObject > >& items,
+   typename TObject::Id_Type lower_id_bound, typename TObject::Id_Type upper_id_bound)
+{
+  for (typename std::map< TIndex, std::vector< TObject > >::const_iterator
+    it(items.begin()); it != items.end(); ++it)
+  {
+    for (typename std::vector< TObject >::const_iterator it2(it->second.begin());
+        it2 != it->second.end(); ++it2)
+    {
+      if (!(it2->id < lower_id_bound) && it2->id < upper_id_bound)
+        ids_by_coarse[it->first.val() & 0x7fffff00].push_back
+            (Attic< typename TObject::Id_Type >(it2->id, it2->timestamp));
+    }
+  }
+
+  for (typename std::map< uint32, std::vector< Attic< typename TObject::Id_Type > > >::iterator
+      it = ids_by_coarse.begin(); it != ids_by_coarse.end(); ++it)
+  {
+    std::sort(it->second.begin(), it->second.end());
+    it->second.erase(std::unique(it->second.begin(), it->second.end()), it->second.end());
+  }
+}
+
+
 struct Tag_Index_Global_Until756
 {
   std::string key;
