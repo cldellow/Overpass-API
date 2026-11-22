@@ -37,7 +37,7 @@ inline uint64 timestamp_of(const Relation_Skeleton& skel) { return NOW; }
 
 template < class Index, class Object, class Iterator, class Predicate >
 void reconstruct_items(
-    Iterator& it, Iterator end, Index index,
+    Iterator& it, const Iterator& end, Index index,
     const Predicate& predicate,
     std::vector< Object >& result,
     std::vector< std::pair< typename Object::Id_Type, uint64 > >& timestamp_by_id,
@@ -95,8 +95,8 @@ private:
 
 template < class Index, class Object, class Attic_Iterator, class Current_Iterator, class Predicate >
 void reconstruct_items(Health_Guard& health_guard,
-    Current_Iterator& current_it, Current_Iterator current_end,
-    Attic_Iterator& attic_it, Attic_Iterator attic_end, Index& idx,
+    Current_Iterator& current_it, const Current_Iterator& current_end,
+    Attic_Iterator& attic_it, const Attic_Iterator& attic_end, Index& idx,
     const Predicate& predicate,
     std::vector< Object >& result, std::vector< Attic< Object > >& attic_result,
     std::vector< std::pair< typename Object::Id_Type, uint64 > >& timestamp_by_id,
