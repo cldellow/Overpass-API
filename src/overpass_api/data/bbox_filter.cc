@@ -45,8 +45,9 @@ void filter_by_bbox(const Bbox_Double& bbox, std::map< Index, std::vector< Coord
 
   for (typename std::map< Index, std::vector< Coord > >::iterator it = nodes.begin(); it != nodes.end(); ++it)
   {
-    std::vector< Coord > local_into;
-    for (typename std::vector< Coord >::const_iterator iit = it->second.begin();
+    // Compact in place, keeping the order, and drop the slack left by growing the vector.
+    typename std::vector< Coord >::iterator out = it->second.begin();
+    for (typename std::vector< Coord >::iterator iit = it->second.begin();
         iit != it->second.end(); ++iit)
     {
       uint32 lat(::ilat(it->first.val(), iit->ll_lower));
@@ -54,9 +55,14 @@ void filter_by_bbox(const Bbox_Double& bbox, std::map< Index, std::vector< Coord
       if ((lat >= south) && (lat <= north) &&
           (((lon >= west) && (lon <= east))
             || ((east < west) && ((lon >= west) || (lon <= east)))))
-	local_into.push_back(*iit);
+      {
+        if (out != iit)
+          *out = *iit;
+        ++out;
+      }
     }
-    it->second.swap(local_into);
+    it->second.erase(out, it->second.end());
+    it->second.shrink_to_fit();
   }
 }
 
