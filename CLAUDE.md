@@ -57,6 +57,16 @@ Databases with history, built from a full-history extract, need a `better-import
   timed runs can drift by up to about 20%.
 - **Correctness:** run `bench/fuzz.py` against the baseline. Run a build against itself first to check
   that outputs are deterministic.
+- **Property tests:** also run `bench/props/props.py` against the baseline, with
+  `--history-import-bin` pointing at a `better-imports` build. The `props` workflow runs it on every
+  PR into `master`; trigger it by hand for PRs into other branches. A run with new failures or
+  output differences blocks the PR until explained. Failures shared with the baseline don't count.
+- **Mutation coverage:** when a change joins `all-changes`, add a mutant for it to
+  `bench/props/mutants-all-changes.json` (on `bench-tools`): one exact text replacement that puts a
+  plausible bug in the logic the change adds. Check it with
+  `bench/props/mutate.py --only COMMIT`. If it isn't caught, add a check to `props.py`, or record in
+  the mutant's `note` why it can't be caught (equivalent, or needs data beyond the synthetic sets).
+  When an `all-changes` commit changes, update its mutant.
 - **Pruning or skipping changes** also need long-limit re-runs of queries that time out on
   the baseline, and a mutation test where practical. Before trusting a clean mutation result,
   confirm the mutant differs from the change on at least one query.
