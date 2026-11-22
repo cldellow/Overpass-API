@@ -378,7 +378,7 @@ def generate(seed):
 
 
 # Tag values and user names that need escaping in XML, JSON or CSV output.
-SPECIAL_VALUES = ['A & W', '<b>bold</b>', 'say "hi"', "it's", 'line1\nline2', 'tab\there',
+SPECIAL_VALUES = ['A & W', '<b>bold</b>', 'say "hi"', "it's", 'a > b', '1 < 2', '-->', '"quoted"', 'x&y', 'line1\nline2', 'tab\there',
                   'back\\slash', 'Caf\u00e9 Rendez-vous', '\u6771\u4eac', '\U0001f341 maple',
                   ' leading and trailing ', 'semi;colon,comma', 'x' * 300, '\u00a0nbsp', '']
 SPECIAL_USERS = [(21, 'dave & co'), (22, '\u00d6laf \u00d8sterg\u00e5rd'), (23, '<script>')]
@@ -884,18 +884,22 @@ def run_checks(args, db, data, checks, seed, prefix=''):
         rc, out, err = run_query(args.bin, db, query)
         cand_problems = verify(parse(out), must, must_not, exact) if rc == 0 else [
             f'exit status {rc}: {err.decode(errors="replace").strip()[-300:]}']
-        base_out, base_problems, differs = None, None, False
+        base_out, base_problems, differs, fixed = None, None, False, False
         if args.baseline:
             brc, base_out, berr = run_query(args.baseline, db, query)
             base_problems = verify(parse(base_out), must, must_not, exact) if brc == 0 else [
                 f'exit status {brc}']
             differs = (brc, base_out) != (rc, out)
+        # A difference where the candidate gets an exact answer right and the baseline doesn't
+        # is a fix, not a regression.
+        fixed = differs and exact and not cand_problems and bool(base_problems)
+        differs = differs and not fixed
         failed = bool(cand_problems) or differs
         where = None
         if failed:
             where = describe_failure(args.out_dir, seed, f'{prefix}{k}', data, query, out, base_out,
                                      (must, must_not, exact), cand_problems)
-        results.append((name, query, cand_problems, base_problems, differs, where))
+        results.append((name, query, cand_problems, base_problems, differs, fixed, where))
     return results
 
 
@@ -935,16 +939,18 @@ def run_output_checks(args, db, data, out_checks, seed, start, prefix=''):
         rc, out, err = run_raw(args.bin, db, query)
         cand_problems = check(data, out) if rc == 0 else [
             f'exit status {rc}: {err.decode(errors="replace").strip()[-300:]}']
-        base_out, base_problems, differs = None, None, False
+        base_out, base_problems, differs, fixed = None, None, False, False
         if args.baseline:
             brc, base_out, berr = run_raw(args.baseline, db, query)
             base_problems = check(data, base_out) if brc == 0 else [f'exit status {brc}']
             differs = (brc, strip_generator(base_out)) != (rc, strip_generator(out))
+        fixed = differs and check is not no_verify and not cand_problems and bool(base_problems)
+        differs = differs and not fixed
         where = None
         if cand_problems or differs:
             where = describe_failure(args.out_dir, seed, f'{prefix}{k}', data, query, out, base_out,
                                      (set(), set(), False), cand_problems, raw=True)
-        results.append((name, query.strip().replace('\n', ' '), cand_problems, base_problems, differs, where))
+        results.append((name, query.strip().replace('\n', ' '), cand_problems, base_problems, differs, fixed, where))
     return results
 
 
@@ -1007,8 +1013,10 @@ def main():
             futures = [pool.submit(run_seed, seed, args, tmp) for seed in seeds]
             for fut in concurrent.futures.as_completed(futures):
                 seed, scale, results = fut.result()
-                for name, query, cand, base, differs, where in results:
-                    st = stats.setdefault(name, [0, 0, 0, 0])
+                for name, query, cand, base, differs, fixed, where in results:
+                    st = stats.setdefault(name, [0, 0, 0, 0, 0])
+                    if fixed:
+                        st[4] += 1
                     st[0] += 1
                     if cand:
                         st[1] += 1
@@ -1032,9 +1040,10 @@ def main():
         shutil.rmtree(tmp, ignore_errors=True)
 
     print()
-    print(f'{"check":<20} {"runs":>6} {"fail":>6} {"baseline too":>12} {"differ":>6}')
-    for name, (n, f, fb, d) in sorted(stats.items()):
-        print(f'{name:<20} {n:>6} {f:>6} {fb if args.baseline else "-":>12} {d if args.baseline else "-":>6}')
+    print(f'{"check":<20} {"runs":>6} {"fail":>6} {"baseline too":>12} {"differ":>6} {"fixed":>6}')
+    for name, (n, f, fb, d, fx) in sorted(stats.items()):
+        b = args.baseline
+        print(f'{name:<20} {n:>6} {f:>6} {fb if b else "-":>12} {d if b else "-":>6} {fx if b else "-":>6}')
     print(f'{len(seeds)} seeds in {time.time() - start:.1f}s; '
           + ('no new failures' if not new_failures else f'{new_failures} new failures'))
     return 1 if new_failures else 0

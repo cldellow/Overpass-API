@@ -295,6 +295,16 @@ def gen_history_checks(h, seed):
         add('user_touched', f'{d}way(user_touched:"{name}");',
             {('way', i) for i in ways if any(v['user'] == name for v in h.versions[('way', i)])},
             exact=True)
+        rels = h.alive('relation', date)
+
+        def touched(kind, alive):
+            return {(kind, i) for i in alive if any(v['uid'] == uid for v in h.versions[(kind, i)])}
+        add('nwr uid_touched', f'{d}nwr(uid_touched:{uid});',
+            touched('node', nodes) | touched('way', ways) | touched('relation', rels), exact=True)
+        # A set with relations but no nodes, filtered by the touched criterion.
+        if rels:
+            add('rel set uid_touched', f'{d}rel(id:{",".join(map(str, sorted(rels)))})->.a; rel.a(uid_touched:{uid});',
+                touched('relation', rels), exact=True)
     return checks
 
 

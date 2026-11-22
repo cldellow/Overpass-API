@@ -153,19 +153,53 @@ python3 bench/props/props.py --seeds 7 --show
   moved then, but not for a node's tag edit), and `uid_touched`/`user_touched` (any version by
   the user, also one after a `[date:]`, which is what upstream does). `[diff:]` and `[adiff:]`
   outputs are compared with the baseline only.
+- **Fixes:** where a check has an exact expected answer and the candidate gets it right while
+  the baseline doesn't, a difference in output is counted as fixed (the last column), not as a
+  failure. A branch that fixes an upstream bug shows up there.
 - **Failures on the baseline too** are counted separately and don't fail the run: they're
   upstream behaviour, not a regression. Expect some in the `poly ways` and `area ways` rows:
   upstream misses ways that cross a polygon edge when `uint32` latitudes wrap around in
   `ordered_intersects_inner`, and `way(area)` drops a way that touches the area's border if it
   also crosses the interior. With history, `date rel >` fails occasionally: at a past date,
   `relation; >;` also returns nodes of a member way's current version when they're in another
-  index tile.
+  index tile. And `rel set uid_touched` always fails on upstream, which filters a set's relations
+  by the touched criterion only when the set also holds nodes (fixed on this fork; see
+  "Fixes" above).
 - **Failures** are printed with their seed and query, and with `--out-dir` written to
   `OUT_DIR/<seed>-<check>/{data.osm,query.ql,candidate.out,baseline.out,problems.txt}`. The exit
   status is 1 if any check fails on the candidate but not the baseline, or any output differs.
 - **Reproducible:** a seed's data and queries depend only on the seed and the script (its hash
   is printed).
-- **Speed:** 60 seeds (about 5,200 queries per build) take about two and a half minutes on 4 cores.
+- **Speed:** 60 seeds (about 5,400 queries per build) take about two and a half minutes on 4 cores;
+  with history (about 17,000 more), about six and a half.
+
+### Does a passing run mean anything? (`mutate.py`)
+
+`props/mutate.py` breaks each change on purpose and checks that `props.py` notices. Each mutant
+in `props/mutants-all-changes.json` is one exact text replacement in the `all-changes` sources,
+a plausible bug in the logic one commit added (an off-by-one, a dropped case, a wrong index).
+For each, the script applies it, rebuilds `osm3s_query`, runs `props.py` against the baseline
+and restores the file.
+
+```bash
+python3 bench/props/mutate.py --src ALL_CHANGES --build ALL_CHANGES/build \
+    --baseline UPSTREAM/build/bin --history-import-bin BETTER_IMPORTS/build/bin \
+    --mutants bench/props/mutants-all-changes.json --seeds 1-40
+```
+
+- **Use a dedicated checkout:** the source files and the build are modified while it runs (each
+  file is restored afterwards, also on an error), and the build is rebuilt from the restored
+  sources at the end. Don't run anything else against that build meanwhile.
+- **Caught** means the mutant's summary table differs from the unmutated tree's: more failures,
+  more output differences, or fewer fixes. Comparing with the unmutated run, not only with the
+  baseline, also catches a mutant that undoes a bug fix, whose output matches the baseline again.
+- **Reading the result:** a mutant that isn't caught marks a change whose correctness the
+  checks don't cover, or an equivalent mutant (one that can't change any result; the JSON's
+  `note` says so where that's expected).
+- **Keeping it current:** a mutant whose text no longer matches is reported as not applicable.
+  When a commit in `all-changes` changes, update its mutant.
+- **Time:** a rebuild plus a `props.py` run per mutant, so a few minutes each.
+
 
 ## A database with history
 
