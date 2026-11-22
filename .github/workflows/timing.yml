@@ -64,7 +64,7 @@ concurrency:
 env:
   REPS: ${{ inputs.reps || '5' }}
   MODE: ${{ inputs.mode || 'compare' }}
-  TOOLS_REF: ${{ inputs.tools_ref || 'compare-json' }}  # TEMPORARY until #123 is merged
+  TOOLS_REF: ${{ inputs.tools_ref || 'bench-tools' }}
   # Middling queries for the A/A control: a bbox, out geom on highways, and an area query.
   CONTROL_QUERIES: queries/q03_bbox_all_nodes.ql queries/q10_out_geom_highways.ql queries-areas/a2_highways_halifax.ql
 
