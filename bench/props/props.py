@@ -918,6 +918,14 @@ def run_seed(seed, args, tmp):
     import_db(args.import_bin, data, db)
     results = run_checks(args, db, data, checks, seed)
     results += run_output_checks(args, db, data, gen_output_checks(data, seed), seed, len(checks))
+    import consistency
+    results += run_pairs(args, db, db, data, consistency.gen_consistency_checks(data, seed), seed, 'c')
+    moved = consistency.shifted(data)
+    sdb = os.path.join(tmp, f'sdb-{seed}')
+    import_db(args.import_bin, moved, sdb)
+    results += run_pairs(args, db, sdb, data, [(n, a, b, 'equal', ign) for n, a, b, ign in consistency.gen_translation_checks(data, seed)],
+                         seed, 's')
+    shutil.rmtree(sdb, ignore_errors=True)
     shutil.rmtree(db, ignore_errors=True)
     if args.history_import_bin:
         import history
@@ -930,6 +938,55 @@ def run_seed(seed, args, tmp):
                                      len(hchecks), prefix='h')
         shutil.rmtree(hdb, ignore_errors=True)
     return seed, data.scale, results
+
+
+def pair_problems(a, b, relation):
+    """Problems with two result sets that must be equal, or a subset of b."""
+    only_a, only_b = sorted(a - b), sorted(b - a)
+    fmt = lambda xs: ' '.join(f'{t}/{i}' for t, i in xs[:10])
+    if relation == 'subset':
+        return [f'in the first but not the second: {fmt(only_a)}'] if only_a else []
+    problems = []
+    if only_a:
+        problems.append(f'only in the first: {fmt(only_a)}')
+    if only_b:
+        problems.append(f'only in the second: {fmt(only_b)}')
+    return problems
+
+
+def run_pairs(args, db_a, db_b, data, pairs, seed, prefix):
+    """Consistency checks: query a on db_a and query b on db_b must agree."""
+    results = []
+    for k, pair in enumerate(pairs):
+        name, qa, qb, relation = pair[:4]
+        ignore = pair[4] if len(pair) > 4 else set()
+        outs = {}
+        for who, bindir in (('cand', args.bin), ('base', args.baseline)):
+            if not bindir:
+                continue
+            ra, oa, ea = run_query(bindir, db_a, qa)
+            rb, ob, eb = run_query(bindir, db_b, qb)
+            if ra or rb:
+                problems = [f'exit status {ra}/{rb}: {(ea or eb).decode(errors="replace").strip()[-300:]}']
+            else:
+                problems = pair_problems(parse(oa) - ignore, parse(ob) - ignore, relation)
+            outs[who] = ((ra, oa), (rb, ob), problems)
+        cand_problems = outs['cand'][2]
+        base_problems, differs, fixed = None, False, False
+        if 'base' in outs:
+            base_problems = outs['base'][2]
+            differs = outs['base'][:2] != outs['cand'][:2]
+            fixed = differs and not cand_problems and bool(base_problems)
+            differs = differs and not fixed
+        where = None
+        both = f'{qa}\n--- {relation} ---\n{qb}'
+        if cand_problems or differs:
+            base_out = (outs['base'][0][1] + b'\n---\n' + outs['base'][1][1]) if 'base' in outs else None
+            where = describe_failure(args.out_dir, seed, f'{prefix}{k}', data, both,
+                                     outs['cand'][0][1] + b'\n---\n' + outs['cand'][1][1], base_out,
+                                     (set(), set(), False), cand_problems, raw=True)
+        results.append((name, f'{qa}  [{relation}]  {qb}', cand_problems, base_problems, differs, fixed, where))
+    return results
 
 
 def run_output_checks(args, db, data, out_checks, seed, start, prefix=''):
