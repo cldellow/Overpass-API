@@ -219,6 +219,24 @@ void collect_attic_tags
 }
 
 
+// Whether the sorted ids contain id. cursor is where the previous lookup ended: the tag entries of
+// one tag come in ascending id order, so the search gallops forward from there, and starts over
+// only when id isn't greater than the id before the cursor.
+template< class Id_Type >
+bool contains_from_cursor(const std::vector< Id_Type >& ids,
+    typename std::vector< Id_Type >::const_iterator& cursor, const Id_Type& id)
+{
+  if (cursor != ids.begin() && !(*(cursor - 1) < id))
+    cursor = ids.begin();
+  typename std::vector< Id_Type >::size_type remaining = ids.end() - cursor;
+  typename std::vector< Id_Type >::size_type bound = 1;
+  while (bound < remaining && cursor[bound] < id)
+    bound *= 2;
+  cursor = std::lower_bound(cursor + bound/2, cursor + std::min(bound, remaining), id);
+  return cursor != ids.end() && !(id < *cursor);
+}
+
+
 template< class Id_Type >
 void collect_tags
   (std::map< Id_Type, std::vector< std::pair< std::string, std::string > > >& tags_by_id,
@@ -226,13 +244,14 @@ void collect_tags
    typename Block_Backend< Tag_Index_Local, Id_Type >::Range_Iterator& tag_it,
    const std::vector< Id_Type >& ids, uint32 coarse_index)
 {
+  typename std::vector< Id_Type >::const_iterator cursor = ids.begin();
   while ((!(tag_it == items_db.range_end())) &&
       (((tag_it.index().index) & 0x7fffff00) < coarse_index))
     ++tag_it;
   while ((!(tag_it == items_db.range_end())) &&
       (((tag_it.index().index) & 0x7fffff00) == coarse_index))
   {
-    if ((monobound_binary_search(ids, tag_it.object())))
+    if (contains_from_cursor(ids, cursor, tag_it.object()))
       tags_by_id[tag_it.object()].push_back
           (std::make_pair(tag_it.index().key, tag_it.index().value));
     ++tag_it;
@@ -249,6 +268,8 @@ void collect_tags_framed
    uint32 coarse_index,
    Id_Type lower_id_bound, Id_Type upper_id_bound)
 {
+  const std::vector< Id_Type >& ids = ids_by_coarse[coarse_index];
+  typename std::vector< Id_Type >::const_iterator cursor = ids.begin();
   while ((!(tag_it == items_db.range_end())) &&
       (((tag_it.index().index) & 0x7fffff00) < coarse_index))
     ++tag_it;
@@ -257,7 +278,7 @@ void collect_tags_framed
   {
     if (!(tag_it.object() < lower_id_bound) &&
       (tag_it.object() < upper_id_bound) &&
-      (monobound_binary_search(ids_by_coarse[coarse_index], tag_it.object())))
+      contains_from_cursor(ids, cursor, tag_it.object()))
       tags_by_id[tag_it.object()].push_back
           (std::make_pair(tag_it.index().key, tag_it.index().value));
     ++tag_it;
