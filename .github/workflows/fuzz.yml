@@ -3,9 +3,14 @@
 #
 # - The baseline is upstream/master at the candidate's merge base, as in props.yml.
 # - The database is the Nova Scotia extract with the standard area rules run, imported by
-#   better-imports (same on-disk layout as upstream) with lz4 data and maps. It's cached, keyed
-#   by the extract's ETag, the import ref and the compression methods, and built on a miss
-#   (about an hour). Plain and area queries both run on it.
+#   better-imports (same on-disk layout as upstream) with lz4 data and uncompressed maps. It's
+#   cached, keyed by the extract's ETag, the import ref and the compression methods, and built on
+#   a miss (about an hour). Plain and area queries both run on it.
+# - Uncompressed maps are one 4-byte slot per possible id, almost all zero (about 0.55 of 11.5 GB
+#   is data). Overpass writes the zeros out, so after the import the maps get holes punched
+#   (fallocate --dig-holes), and the database is cached as one sparse-aware archive (tar -S,
+#   zstd) and unpacked the same way, so each runner holds about 1 GB, not 12. actions/cache's own
+#   tar would write the holes back out as zeros.
 # - Each shard keeps fuzz.py's baseline cache in the Actions cache, so later runs with the same
 #   baseline, seed and database only run the candidate.
 # - Pull requests and manual runs use seed 1 by default, so the baseline cache is reused across
@@ -46,7 +51,7 @@ on:
       map_compression:
         description: update_database --map-compression-method
         required: true
-        default: lz4
+        default: 'no'
   schedule:
     - cron: '41 7 * * 1'   # weekly, all-changes
 
@@ -62,7 +67,7 @@ env:
   EXTRACT_URL: https://public.hikeratlas.com/pbfs/raw/nova-scotia.osm.pbf
   IMPORT_REF: ${{ inputs.import_ref || 'cc998517d5e1b02c4a59f184f85a05abce8f88b9' }}
   COMPRESSION: ${{ inputs.compression || 'lz4' }}
-  MAP_COMPRESSION: ${{ inputs.map_compression || 'lz4' }}
+  MAP_COMPRESSION: ${{ inputs.map_compression || 'no' }}
   QUERIES_PER_SHARD: ${{ inputs.queries_per_shard || '200' }}
 
 jobs:
@@ -131,7 +136,7 @@ jobs:
         run: |
           etag=$(curl -fsSI "$EXTRACT_URL" | tr -d '\r' | awk 'tolower($1) == "etag:" {print $2}' | tr -cd 'A-Za-z0-9-')
           [ -n "$etag" ] || { echo "no ETag for $EXTRACT_URL"; exit 1; }
-          key="fuzz-db-nova-scotia-areas-$etag-$IMP_SHA-$COMPRESSION-$MAP_COMPRESSION-v1"
+          key="fuzz-db-nova-scotia-areas-$etag-$IMP_SHA-$COMPRESSION-$MAP_COMPRESSION-v2"
           echo "key=$key" >> "$GITHUB_OUTPUT"
           echo "database cache key: $key"
 
@@ -187,14 +192,13 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 300
     steps:
-      - name: Restore the database
+      - name: Restore the database archive
         id: restore
         uses: actions/cache/restore@v6
         with:
-          path: |
-            db
-            vocab.json
+          path: db.tar.zst
           key: ${{ needs.prepare.outputs.db_key }}
+          lookup-only: true
 
       - name: Restore the importer binaries
         if: steps.restore.outputs.cache-hit != 'true'
@@ -227,22 +231,26 @@ jobs:
           sudo apt-get install -y -q osmium-tool
           curl -fsS -o extract.osm.pbf "$EXTRACT_URL"
           ls -l extract.osm.pbf
+          echo "before the import:"; df -h .
           mkdir db
           time (osmium cat extract.osm.pbf -o - -f osm \
             | imp-bin/update_database --db-dir="$PWD/db/" --meta \
                 --compression-method="$COMPRESSION" --map-compression-method="$MAP_COMPRESSION")
           time imp-bin/osm3s_query --db-dir="$PWD/db/" --rules < imp/src/rules/areas.osm3s
           python3 tools/bench/fuzz_vocab.py extract.osm.pbf vocab.json
-          du -sh db vocab.json
           for f in nodes.bin.idx nodes.map.idx; do printf '%s method ' "$f"; od -An -tu2 -j6 -N2 "db/$f"; done
+          echo "after the import:"; du -sh --apparent-size db; du -sh db; df -h .
+          # Overpass writes the maps' zeros out: punch holes so tar -S can store them as holes.
+          for f in db/*; do fallocate --dig-holes "$f"; done
+          echo "after punching holes:"; du -sh db
+          tar -S -cf - db vocab.json | zstd -T0 -3 -q -o db.tar.zst
+          ls -l db.tar.zst
 
-      - name: Save the database
+      - name: Save the database archive
         if: steps.restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
-          path: |
-            db
-            vocab.json
+          path: db.tar.zst
           key: ${{ needs.prepare.outputs.db_key }}
 
   fuzz:
@@ -275,14 +283,18 @@ jobs:
           key: fuzz-bin-${{ runner.arch }}-${{ needs.prepare.outputs.cand_sha }}-v1
           fail-on-cache-miss: true
 
-      - name: Restore the database
+      - name: Restore the database archive
         uses: actions/cache/restore@v6
         with:
-          path: |
-            db
-            vocab.json
+          path: db.tar.zst
           key: ${{ needs.prepare.outputs.db_key }}
           fail-on-cache-miss: true
+
+      - name: Unpack the database (sparse)
+        run: |
+          zstd -dc db.tar.zst | tar -S -xf -
+          rm db.tar.zst
+          du -sh --apparent-size db; du -sh db; df -h .
 
       # fuzz.py keys its entries by the baseline binary, the database and each query, so a
       # restored cache can only help. Each run saves a new entry; restore-keys picks the latest.
