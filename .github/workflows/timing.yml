@@ -46,9 +46,9 @@ on:
         options: [ubuntu-24.04-arm, ubuntu-24.04]
         default: ubuntu-24.04-arm
       tolerance:
-        description: Flag a runner whose A/A control ratio is off by more than this (0.05 = 5%)
+        description: Flag a runner whose A/A control ratio is off by more than this (0.02 = 2%)
         required: true
-        default: '0.05'
+        default: '0.02'
       tools_ref:
         description: bench-tools ref to take compare.py from
         required: true
@@ -203,7 +203,7 @@ jobs:
           BASE_SHA: ${{ needs.setup.outputs.base_sha }}
           RUNNER: ${{ needs.refs.outputs.runner }}
           EXPECTED: ${{ needs.refs.outputs.indexes }}
-          TOLERANCE: ${{ inputs.tolerance || '0.05' }}
+          TOLERANCE: ${{ inputs.tolerance || '0.02' }}
         run: |
           python3 - <<'EOF'
           import glob, json, os, statistics
