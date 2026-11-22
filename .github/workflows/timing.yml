@@ -21,6 +21,11 @@ name: timing
 on:
   pull_request:
     branches: [master]
+    # Only PRs that change code (or this workflow) need it; docs and other workflow PRs skip it.
+    paths:
+      - 'src/**'
+      - '.github/workflows/timing.yml'
+      - '.github/workflows/setup.yml'
   workflow_dispatch:
     inputs:
       ref:

@@ -20,6 +20,11 @@ name: fuzz
 on:
   pull_request:
     branches: [master]
+    # Only PRs that change code (or this workflow) need it; docs and other workflow PRs skip it.
+    paths:
+      - 'src/**'
+      - '.github/workflows/fuzz.yml'
+      - '.github/workflows/setup.yml'
   workflow_dispatch:
     inputs:
       ref:
