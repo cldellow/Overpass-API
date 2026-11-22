@@ -337,6 +337,9 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
 
     filter_items_by_timestamp(timestamp_by_id, result[index]);
     filter_items_by_timestamp(timestamp_by_id, attic_result[index]);
+    // Count elements, not only indexes, so the size check above runs every 128K or so elements:
+    // a whole extract can have fewer way or relation indexes than that.
+    count += result[index].size() + attic_result[index].size();
 
     //check_for_duplicated_objects< Relation_Skeleton >(timestamp_by_id, rman);
   }
@@ -422,6 +425,9 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
 
     filter_items_by_timestamp(timestamp_by_id, result[index]);
     filter_items_by_timestamp(timestamp_by_id, attic_result[index]);
+    // Count elements, not only indexes, so the size check above runs every 128K or so elements:
+    // a whole extract can have fewer way or relation indexes than that.
+    count += result[index].size() + attic_result[index].size();
 
     //check_for_duplicated_objects< Way_Skeleton >(timestamp_by_id, rman);
   }
