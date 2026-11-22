@@ -52,7 +52,7 @@ jobs:
           echo "seeds=${INPUT_SEEDS:-1-60}" >> "$GITHUB_OUTPUT"
 
       - name: Check out the candidate
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.refs.outputs.candidate }}
           path: cand
@@ -69,13 +69,13 @@ jobs:
           echo "sha=$base" >> "$GITHUB_OUTPUT"
 
       - name: Check out bench-tools
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: bench-tools
           path: tools
 
       - name: Check out better-imports
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: better-imports
           path: imp
@@ -94,14 +94,14 @@ jobs:
       # objects, so a cached build directory would be rebuilt anyway.
       - name: Cache the baseline binaries
         id: cache-base
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: base-bin
           key: overpass-bin-${{ steps.base.outputs.sha }}-v1
 
       - name: Cache the better-imports binaries
         id: cache-imp
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: imp-bin
           key: overpass-bin-${{ steps.imp.outputs.sha }}-v1
@@ -154,7 +154,7 @@ jobs:
 
       - name: Upload failures
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: props-failures
           path: failures/
