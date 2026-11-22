@@ -155,6 +155,17 @@ python3 bench/props/props.py --seeds 7 --show
   at extreme coordinates (0, one unit either side of 0, next to the poles and the antimeridian),
   and tag values and user names that need escaping (`&`, `<`, quotes, newlines, tabs, non-ASCII
   text, a 300-character value, an empty value).
+- **Consistency:** pairs of queries that must agree, so no expected answer is needed and bugs
+  the baseline shares are caught too (counted in its column): a box or a rectangular polygon
+  against the union of its two halves (split on a tile boundary where possible); a polygon
+  against itself reversed and starting at another vertex; the same filters in different orders;
+  `[bbox:]` against an inline bbox; `around` a point against `around` a node at that point;
+  `way(bn)` of the nodes in a box within `way(bbox)`; a way within `way(around.s:0)` of itself.
+  And translation: each seed is also imported shifted by an offset that isn't a multiple of the
+  tile size, and bbox, `poly:`, area and `is_in` queries must return the same elements on both.
+  Region comparisons leave out elements that come within one unit of the boundary without being
+  clearly inside, since the geometry tests round crossing points from one end of a segment:
+  for those, upstream's result can depend on vertex order and on where tiles cut the segments.
 - **History:** with `--history-import-bin BETTER_IMPORTS/build/bin`, each seed also gets a history
   database: the seed's data as version 1 in 2019, then three rounds of edits in 2020-2022 (nodes
   moved, some by a single unit; tags changed; nodes and ways deleted and created; way node lists
@@ -179,14 +190,17 @@ python3 bench/props/props.py --seeds 7 --show
   `relation; >;` also returns nodes of a member way's current version when they're in another
   index tile. And `rel set uid_touched` always fails on upstream, which filters a set's relations
   by the touched criterion only when the set also holds nodes (fixed on this fork; see
-  "Fixes" above).
+  "Fixes" above). The consistency rows `poly reversed ways`, `split poly ways`, `shifted poly
+  ways` and `shifted area ways` fail occasionally on upstream (mostly the `uint32` wraparound;
+  a few are a way through a polygon vertex that is lost after shifting), and `shifted is_in`:
+  `is_in` returns a closed multipolygon member way for some points kilometres outside it.
 - **Failures** are printed with their seed and query, and with `--out-dir` written to
   `OUT_DIR/<seed>-<check>/{data.osm,query.ql,candidate.out,baseline.out,problems.txt}`. The exit
   status is 1 if any check fails on the candidate but not the baseline, or any output differs.
 - **Reproducible:** a seed's data and queries depend only on the seed and the script (its hash
   is printed).
-- **Speed:** 60 seeds (about 5,400 queries per build) take about two and a half minutes on 4 cores;
-  with history (about 17,000 more), about six and a half.
+- **Speed:** 60 seeds run about 9,200 checks on current data and 17,000 with history (a
+  consistency check runs two queries), in about seven minutes on 4 cores.
 
 ### Does a passing run mean anything? (`mutate.py`)
 
