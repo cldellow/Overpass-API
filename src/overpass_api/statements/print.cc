@@ -438,11 +438,25 @@ public:
 };
 
 
+// Number of elements in a set, so that the id-sorted references below can be reserved exactly:
+// grown by doubling, they reach up to about twice their size, plus the old copy while they grow.
+template< class Index, class Object >
+std::size_t count_items(const std::map< Index, std::vector< Object > >& items)
+{
+  std::size_t count = 0;
+  for (typename std::map< Index, std::vector< Object > >::const_iterator
+      it(items.begin()); it != items.end(); ++it)
+    count += it->second.size();
+  return count;
+}
+
+
 template< class Index, class Object >
 std::vector< std::pair< const Object*, uint32 > > collect_items_by_id(
     const std::map< Index, std::vector< Object > >& items)
 {
   std::vector< std::pair< const Object*, uint32 > > items_by_id;
+  items_by_id.reserve(count_items(items));
 
   for (typename std::map< Index, std::vector< Object > >::const_iterator
     it(items.begin()); it != items.end(); ++it)
@@ -464,6 +478,7 @@ std::vector< Maybe_Attic_Ref< Index, Object > > collect_items_by_id(
     const std::map< Index, std::vector< Attic< Object > > >& attic_items)
 {
   std::vector< Maybe_Attic_Ref< Index, Object > > items_by_id;
+  items_by_id.reserve(count_items(items) + count_items(attic_items));
   for (typename std::map< Index, std::vector< Object > >::const_iterator
       it(items.begin()); it != items.end(); ++it)
   {
