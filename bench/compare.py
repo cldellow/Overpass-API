@@ -19,6 +19,10 @@ licensed extract; bench/pick_vars.py writes such a file from a database.
 Usage:
   compare.py --a OLD/bin --b NEW/bin --db DB_DIR [--reps 7] [--no-cache] [--vars FILE] QUERY.ql [QUERY.ql ...]
 
+With --json FILE, the raw measurements are also written to FILE: per query, every run's CPU
+time for each build, the output digests and size, and peak RSS with --rss. Use it to combine
+runs from several machines (e.g. the timing workflow).
+
 Exit status is 1 if any query's output differs between the builds.
 """
 import argparse
@@ -98,6 +102,8 @@ def main():
     parser.add_argument('--rss', action='store_true',
                         help='also report peak memory (RSS) of each build, from one extra untimed run '
                              'per query under GNU time; the baseline\'s is cached with its times')
+    parser.add_argument('--json', metavar='FILE',
+                        help='also write the raw measurements (every run\'s CPU time per build) to FILE')
     parser.add_argument('queries', nargs='+')
     args = parser.parse_args()
     if args.vars:
@@ -118,8 +124,10 @@ def main():
     total_a = total_b = 0.0
     differing = []
     reused = 0
+    records = []
     for query in args.queries:
         key = f'{baseline_sha}|{db_key}|{query_sha(query)}'
+        a_cached = False
         if args.no_cache:
             run_query(args.a, args.db, query)
             run_query(args.b, args.db, query)
@@ -137,6 +145,7 @@ def main():
             if key in cache:
                 a = cache[key]
                 reused += 1
+                a_cached = True
             else:
                 a = measure(args.a, args.db, query, args.reps)
                 cache[key] = a
@@ -159,11 +168,21 @@ def main():
         if not same:
             differing.append(query)
         name = os.path.splitext(os.path.basename(query))[0]
+        records.append({'query': query, 'name': name, 'same': same, 'a_cached': a_cached,
+                        'alternating': args.no_cache, 'size': b['size'],
+                        'a_times': a['times'], 'b_times': b['times'],
+                        'a_digests': a['digests'], 'b_digests': b['digests'],
+                        'a_rss_kb': a.get('rss'), 'b_rss_kb': b.get('rss')})
         spread = lambda xs: f'{min(xs)*1000:6.1f}-{max(xs)*1000:6.1f}ms'
         print(f'{name:28} {med_a*1000:7.1f}ms {med_b*1000:7.1f}ms {med_b/med_a:6.2f}  '
               f'{spread(a["times"]):>15} {spread(b["times"]):>15}{rss_cols}  '
               f'{"same" if same else "DIFFERENT"} ({b["size"]} bytes)', flush=True)
     print(f'{"TOTAL (sum of medians)":28} {total_a*1000:7.1f}ms {total_b*1000:7.1f}ms {total_b/total_a:6.2f}')
+    if args.json:
+        with open(args.json, 'w') as f:
+            json.dump({'reps': args.reps, 'db': db_key, 'baseline_sha': baseline_sha,
+                       'candidate_sha': file_sha(os.path.join(args.b, 'osm3s_query')),
+                       'queries': records}, f, indent=1)
     if not args.no_cache:
         os.makedirs(os.path.dirname(args.cache), exist_ok=True)
         with open(args.cache, 'w') as f:
