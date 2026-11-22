@@ -81,16 +81,33 @@ Databases with history, built from a full-history extract, need a `better-import
 
 ## Confidential data
 
-Some test data, such as a Geofabrik full-history extract (`.osh.pbf`), is licensed on condition
-that it isn't shared and that its personal data isn't disclosed. For such data and anything
-derived from it (databases, diffs, fuzz vocabularies, query outputs):
+Some test data, such as a Geofabrik full-history extract (`.osh.pbf`), carries this condition:
+"You must ensure that derived databases and works based on these files are only accessible to
+OpenStreetMap contributors." For such data and anything derived from it (databases, diffs, fuzz
+vocabularies, `--vars` files, query outputs, fuzz failures and reports):
 
-- Never upload, commit, publish or link it, or its download URL, anywhere: not in issues, PRs,
-  comments, commit messages, branches or artifacts. Keep it on the session machine.
+- Plaintext stays on the session machine or inside a running CI job. Never upload, commit, publish
+  or link it, or its Geofabrik download URL, anywhere else, except encrypted (below).
 - Never put user names, user ids or changeset ids from it in anything written, including queries
   cited in issues and PRs. Report results in aggregate, and use placeholders (e.g. `(uid:N)`)
   where a query's shape matters.
 - Committed tools may read such data, but must not embed values from it.
+
+### In CI
+
+Workflows may process it on GitHub's public runners:
+
+- **Encrypted at rest:** copies encrypted with `age` to `AGE_PUBLIC_KEY` may be stored publicly (R2,
+  the Actions cache) and named in workflows. Anything a job saves or uploads is encrypted the same way.
+- **The key:** `AGE_PRIVATE_KEY` lives only in secrets. Write it to `$RUNNER_TEMP` with `umask 077`,
+  never print it, and delete it after use.
+- **Trusted runs only:** guard `pull_request` jobs with
+  `github.event.pull_request.head.repo.full_name == github.repository`, never use
+  `pull_request_target`, and pin third-party actions by commit SHA.
+- **Logs: aggregates only:** counts, verdicts, timings, seeds and query indexes. Never query text,
+  raw error messages or outputs.
+- **Leak check:** before anything leaves a job, scan it and the job's output for the vocabulary's
+  user names and uids, and fail without printing matches.
 
 ## Building
 
