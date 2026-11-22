@@ -1,0 +1,89 @@
+# TEMPORARY (not for merging): checks whether the database built on ARM and the one built on x86
+# by setup.yml are interchangeable, to decide whether its cache key needs the architecture.
+# Run from a throwaway PR, which can read the caches the calibration runs saved on master.
+
+name: dbcheck
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/dbcheck.yml'
+
+permissions:
+  contents: read
+
+env:
+  # setup.yml's key, with the architecture spliced in: ETag of the extract, better-imports commit,
+  # compression methods.
+  KEY_TAIL: e6c697eb7a5b6f8144110d6fa7366a31-12-cc998517d5e1b02c4a59f184f85a05abce8f88b9-lz4-no-v3
+  BASE_SHA: 8edf11b0419c39df4cd074bb83b6854392e57b13
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Restore the ARM-built database
+        uses: actions/cache/restore@v6
+        with:
+          path: db.tar.zst
+          key: fuzz-db-nova-scotia-areas-ARM64-${{ env.KEY_TAIL }}
+          fail-on-cache-miss: true
+      - run: mv db.tar.zst arm.tar.zst
+
+      - name: Restore the x86-built database
+        uses: actions/cache/restore@v6
+        with:
+          path: db.tar.zst
+          key: fuzz-db-nova-scotia-areas-X64-${{ env.KEY_TAIL }}
+          fail-on-cache-miss: true
+      - run: mv db.tar.zst x86.tar.zst
+
+      - name: Unpack both
+        run: |
+          for a in arm x86; do mkdir "$a"; (cd "$a" && zstd -dc "../$a.tar.zst" | tar -S -xf -); done
+          du -sh arm/db x86/db
+
+      - name: Compare file contents
+        id: cmp
+        run: |
+          (cd arm/db && sha256sum -- * | sort -k2) > arm.sha
+          (cd x86/db && sha256sum -- * | sort -k2) > x86.sha
+          echo "files: $(wc -l < arm.sha) ARM, $(wc -l < x86.sha) x86"
+          if diff arm.sha x86.sha > sha.diff; then
+            echo "All database files are byte-identical."
+            echo "identical=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Files that differ:"; grep '^[<>]' sha.diff | awk '{print $1, $3}' | sort -k2 | head -60
+            echo "identical=false" >> "$GITHUB_OUTPUT"
+          fi
+          cmp arm/vocab.json x86/vocab.json && echo "vocab.json identical" || echo "vocab.json differs"
+
+      - name: Restore the baseline binaries for this architecture
+        uses: actions/cache/restore@v6
+        with:
+          path: base-bin
+          key: fuzz-bin-${{ runner.arch }}-${{ env.BASE_SHA }}-v1
+          fail-on-cache-miss: true
+
+      - name: Check out bench-tools
+        uses: actions/checkout@v7
+        with:
+          ref: bench-tools
+          path: tools
+
+      # Even with identical files this is cheap, and it checks the queries end to end.
+      - name: Fuzz the same build against both databases
+        run: |
+          set -o pipefail
+          for features in "" "areas,complete"; do
+            echo "=== features: ${features:-none}"
+            python3 tools/bench/fuzz.py --a base-bin --b base-bin --db arm/db --db-b x86/db \
+              --vocab arm/vocab.json --seed 7 --count 1000 --jobs "$(nproc)" --features "$features" \
+              --no-cache --out-dir "failures-${features:-plain}" | tail -4
+          done
