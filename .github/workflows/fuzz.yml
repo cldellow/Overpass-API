@@ -1,0 +1,400 @@
+# Differential fuzzing (bench/fuzz.py on the bench-tools branch) of a change against
+# upstream/master, sharded across ARM runners. See issue #113 and bench/README.md on bench-tools.
+#
+# - The baseline is upstream/master at the candidate's merge base, as in props.yml.
+# - The database is the Nova Scotia extract with the standard area rules run, imported by
+#   better-imports (same on-disk layout as upstream) with lz4 data and maps. It's cached, keyed
+#   by the extract's ETag, the import ref and the compression methods, and built on a miss
+#   (about an hour). Plain and area queries both run on it.
+# - Each shard keeps fuzz.py's baseline cache in the Actions cache, so later runs with the same
+#   baseline, seed and database only run the candidate.
+# - Pull requests and manual runs use seed 1 by default, so the baseline cache is reused across
+#   pushes. The weekly run uses the date as its seed, to explore new queries, and keeps the
+#   database cache from being evicted.
+# - Cache scope: a cache saved by a pull_request run is visible only to that PR; one saved on
+#   master is visible to every PR. So the database should first be built by a run on master
+#   (the weekly run, or a manual run with the default inputs). Until then, each PR's first run
+#   builds its own copy.
+
+name: fuzz
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to test
+        required: true
+        default: all-changes
+      seed:
+        description: Seed for the generated queries
+        required: true
+        default: '1'
+      queries_per_shard:
+        description: Queries per shard (10 shards per feature set)
+        required: true
+        default: '200'
+      import_ref:
+        description: better-imports commit that builds the database
+        required: true
+        default: cc998517d5e1b02c4a59f184f85a05abce8f88b9
+      compression:
+        description: update_database --compression-method
+        required: true
+        default: lz4
+      map_compression:
+        description: update_database --map-compression-method
+        required: true
+        default: lz4
+  schedule:
+    - cron: '41 7 * * 1'   # weekly, all-changes
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.event.pull_request.number || inputs.ref || 'scheduled' }}
+  cancel-in-progress: true
+
+env:
+  UPSTREAM: https://github.com/fossgis/Overpass-API
+  EXTRACT_URL: https://public.hikeratlas.com/pbfs/raw/nova-scotia.osm.pbf
+  IMPORT_REF: ${{ inputs.import_ref || 'cc998517d5e1b02c4a59f184f85a05abce8f88b9' }}
+  COMPRESSION: ${{ inputs.compression || 'lz4' }}
+  MAP_COMPRESSION: ${{ inputs.map_compression || 'lz4' }}
+  QUERIES_PER_SHARD: ${{ inputs.queries_per_shard || '200' }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    outputs:
+      candidate: ${{ steps.refs.outputs.candidate }}
+      seed: ${{ steps.refs.outputs.seed }}
+      base_sha: ${{ steps.base.outputs.sha }}
+      cand_sha: ${{ steps.cand.outputs.sha }}
+      imp_sha: ${{ steps.imp.outputs.sha }}
+      db_key: ${{ steps.dbkey.outputs.key }}
+    steps:
+      - name: Choose what to test
+        id: refs
+        env:
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_SEED: ${{ inputs.seed }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ -n "$PR_SHA" ]; then cand="$PR_SHA"; else cand="${INPUT_REF:-all-changes}"; fi
+          if [ "$EVENT" = schedule ]; then seed=$(date -u +%Y%m%d); else seed="${INPUT_SEED:-1}"; fi
+          echo "candidate=$cand" >> "$GITHUB_OUTPUT"
+          echo "seed=$seed" >> "$GITHUB_OUTPUT"
+          echo "candidate $cand, seed $seed"
+
+      - name: Check out the candidate
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.refs.outputs.candidate }}
+          path: cand
+          fetch-depth: 0
+
+      - name: Record the candidate commit
+        id: cand
+        working-directory: cand
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Find the baseline (upstream/master at the merge base)
+        id: base
+        working-directory: cand
+        run: |
+          git fetch --quiet "$UPSTREAM" master
+          base=$(git merge-base HEAD FETCH_HEAD)
+          git worktree add --quiet ../base "$base"
+          echo "candidate $(git rev-parse HEAD), baseline $base (upstream/master is $(git rev-parse FETCH_HEAD))"
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the importer
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.IMPORT_REF }}
+          path: imp
+
+      - name: Record the importer commit
+        id: imp
+        working-directory: imp
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Compute the database cache key
+        id: dbkey
+        env:
+          IMP_SHA: ${{ steps.imp.outputs.sha }}
+        run: |
+          etag=$(curl -fsSI "$EXTRACT_URL" | tr -d '\r' | awk 'tolower($1) == "etag:" {print $2}' | tr -cd 'A-Za-z0-9-')
+          [ -n "$etag" ] || { echo "no ETag for $EXTRACT_URL"; exit 1; }
+          key="fuzz-db-nova-scotia-areas-$etag-$IMP_SHA-$COMPRESSION-$MAP_COMPRESSION-v1"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "database cache key: $key"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q autoconf automake libtool g++ make libexpat1-dev zlib1g-dev liblz4-dev
+
+      # Keys include the architecture: props.yml caches x86 binaries by commit alone.
+      - name: Cache the baseline binaries
+        id: cache-base
+        uses: actions/cache@v6
+        with:
+          path: base-bin
+          key: fuzz-bin-${{ runner.arch }}-${{ steps.base.outputs.sha }}-v1
+
+      - name: Cache the candidate binaries
+        id: cache-cand
+        uses: actions/cache@v6
+        with:
+          path: cand-bin
+          key: fuzz-bin-${{ runner.arch }}-${{ steps.cand.outputs.sha }}-v1
+
+      - name: Cache the importer binaries
+        id: cache-imp
+        uses: actions/cache@v6
+        with:
+          path: imp-bin
+          key: fuzz-imp-bin-${{ runner.arch }}-${{ steps.imp.outputs.sha }}-v1
+
+      - name: Build
+        env:
+          BASE_CACHED: ${{ steps.cache-base.outputs.cache-hit }}
+          CAND_CACHED: ${{ steps.cache-cand.outputs.cache-hit }}
+          IMP_CACHED: ${{ steps.cache-imp.outputs.cache-hit }}
+        run: |
+          build() {  # build SRC_CHECKOUT OUT_BIN TARGET...
+            local src=$1 out=$2; shift 2
+            (cd "$src/src" && mkdir -p m4 && autoreconf -i > /dev/null 2>&1)
+            mkdir -p "$src/build"
+            (cd "$src/build" && ../src/configure CXXFLAGS="-O2" --enable-lz4 > /dev/null \
+              && make -j"$(nproc)" "$@" > make.log 2>&1) || { tail -50 "$src/build/make.log"; exit 1; }
+            mkdir -p "$out"
+            for t in "$@"; do cp "$src/build/$t" "$out/"; done
+          }
+          [ "$BASE_CACHED" = true ] || build base base-bin bin/osm3s_query
+          [ "$CAND_CACHED" = true ] || build cand cand-bin bin/osm3s_query
+          [ "$IMP_CACHED" = true ] || build imp imp-bin bin/update_database bin/osm3s_query
+          ls -l base-bin cand-bin imp-bin
+
+  database:
+    needs: prepare
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    steps:
+      - name: Restore the database
+        id: restore
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            db
+            vocab.json
+          key: ${{ needs.prepare.outputs.db_key }}
+
+      - name: Restore the importer binaries
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: imp-bin
+          key: fuzz-imp-bin-${{ runner.arch }}-${{ needs.prepare.outputs.imp_sha }}-v1
+          fail-on-cache-miss: true
+
+      - name: Check out the importer (area rules)
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.imp_sha }}
+          path: imp
+          sparse-checkout: src/rules
+
+      - name: Check out bench-tools
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: bench-tools
+          path: tools
+
+      - name: Build the database and the vocabulary
+        if: steps.restore.outputs.cache-hit != 'true'
+        run: |
+          set -o pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q osmium-tool
+          curl -fsS -o extract.osm.pbf "$EXTRACT_URL"
+          ls -l extract.osm.pbf
+          mkdir db
+          time (osmium cat extract.osm.pbf -o - -f osm \
+            | imp-bin/update_database --db-dir="$PWD/db/" --meta \
+                --compression-method="$COMPRESSION" --map-compression-method="$MAP_COMPRESSION")
+          time imp-bin/osm3s_query --db-dir="$PWD/db/" --rules < imp/src/rules/areas.osm3s
+          python3 tools/bench/fuzz_vocab.py extract.osm.pbf vocab.json
+          du -sh db vocab.json
+          for f in nodes.bin.idx nodes.map.idx; do printf '%s method ' "$f"; od -An -tu2 -j6 -N2 "db/$f"; done
+
+      - name: Save the database
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            db
+            vocab.json
+          key: ${{ needs.prepare.outputs.db_key }}
+
+  fuzz:
+    needs: [prepare, database]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        set: [plain, areas]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - name: Check out bench-tools
+        uses: actions/checkout@v7
+        with:
+          ref: bench-tools
+          path: tools
+
+      - name: Restore the baseline binaries
+        uses: actions/cache/restore@v6
+        with:
+          path: base-bin
+          key: fuzz-bin-${{ runner.arch }}-${{ needs.prepare.outputs.base_sha }}-v1
+          fail-on-cache-miss: true
+
+      - name: Restore the candidate binaries
+        uses: actions/cache/restore@v6
+        with:
+          path: cand-bin
+          key: fuzz-bin-${{ runner.arch }}-${{ needs.prepare.outputs.cand_sha }}-v1
+          fail-on-cache-miss: true
+
+      - name: Restore the database
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            db
+            vocab.json
+          key: ${{ needs.prepare.outputs.db_key }}
+          fail-on-cache-miss: true
+
+      # fuzz.py keys its entries by the baseline binary, the database and each query, so a
+      # restored cache can only help. Each run saves a new entry; restore-keys picks the latest.
+      - name: Restore the baseline outcome cache
+        uses: actions/cache/restore@v6
+        with:
+          path: fuzz-cache
+          key: fuzz-outcomes-${{ runner.arch }}-${{ needs.prepare.outputs.base_sha }}-${{ matrix.set }}-${{ matrix.shard }}-${{ needs.prepare.outputs.seed }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-outcomes-${{ runner.arch }}-${{ needs.prepare.outputs.base_sha }}-${{ matrix.set }}-${{ matrix.shard }}-${{ needs.prepare.outputs.seed }}-
+
+      - name: Fuzz
+        id: fuzz
+        env:
+          SEED: ${{ needs.prepare.outputs.seed }}
+          SHARD: ${{ matrix.shard }}
+          SET: ${{ matrix.set }}
+        run: |
+          case "$SET" in
+            plain) features= ;;
+            areas) features=areas,complete ;;
+          esac
+          start=$((SHARD * QUERIES_PER_SHARD))
+          set +e
+          python3 tools/bench/fuzz.py --a base-bin --b cand-bin --db db --vocab vocab.json \
+            --seed "$SEED" --start "$start" --count "$QUERIES_PER_SHARD" --jobs "$(nproc)" \
+            --features "$features" --cache-dir fuzz-cache --out-dir failures 2>&1 | tee fuzz.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          python3 - "$SET" "$SHARD" "$status" <<'EOF'
+          import ast, json, re, sys
+          text = open('fuzz.txt').read()
+          verdicts = re.search(r'^verdicts: (\{.*\})$', text, re.M)
+          reused = re.search(r'^baseline: (\d+) of (\d+) outcomes reused', text, re.M)
+          json.dump({'set': sys.argv[1], 'shard': int(sys.argv[2]), 'exit': int(sys.argv[3]),
+                     'verdicts': ast.literal_eval(verdicts.group(1)) if verdicts else None,
+                     'reused': int(reused.group(1)) if reused else None},
+                    open('result.json', 'w'))
+          EOF
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Save the baseline outcome cache
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: fuzz-cache
+          key: fuzz-outcomes-${{ runner.arch }}-${{ needs.prepare.outputs.base_sha }}-${{ matrix.set }}-${{ matrix.shard }}-${{ needs.prepare.outputs.seed }}-${{ github.run_id }}
+
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-result-${{ matrix.set }}-${{ matrix.shard }}
+          path: result.json
+          if-no-files-found: ignore
+
+      - name: Upload differences
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-failures-${{ matrix.set }}-${{ matrix.shard }}
+          path: failures/
+          if-no-files-found: ignore
+
+      - name: Fail on differences
+        if: steps.fuzz.outputs.status != '0'
+        run: |
+          echo "fuzz.py exited ${{ steps.fuzz.outputs.status }}"
+          exit 1
+
+  summary:
+    needs: [prepare, fuzz]
+    if: always()
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Collect the shard results
+        uses: actions/download-artifact@v7
+        with:
+          pattern: fuzz-result-*
+          path: results
+          merge-multiple: false
+
+      - name: Summarise
+        env:
+          CANDIDATE: ${{ needs.prepare.outputs.candidate }}
+          CAND_SHA: ${{ needs.prepare.outputs.cand_sha }}
+          BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          SEED: ${{ needs.prepare.outputs.seed }}
+        run: |
+          python3 - <<'EOF'
+          import collections, glob, json, os
+          rows = [json.load(open(p)) for p in sorted(glob.glob('results/*/result.json'))]
+          total = collections.Counter()
+          by_set = collections.defaultdict(collections.Counter)
+          reused = queries = 0
+          bad = []
+          for r in rows:
+              for k, v in (r['verdicts'] or {}).items():
+                  total[k] += v
+                  by_set[r['set']][k] += v
+              reused += r['reused'] or 0
+              queries += sum((r['verdicts'] or {}).values())
+              if r['exit'] != 0 or r['verdicts'] is None:
+                  bad.append(f"{r['set']} shard {r['shard']} (exit {r['exit']})")
+          lines = [f"### fuzz.py: {os.environ['CANDIDATE']} ({os.environ['CAND_SHA'][:12]}) against upstream/master at {os.environ['BASE_SHA'][:12]}, seed {os.environ['SEED']}", '',
+                   f"{len(rows)} of 20 shards reported. Verdicts: {dict(total)}. Baseline outcomes reused from the cache: {reused} of {queries}.", '']
+          for s, c in sorted(by_set.items()):
+              lines.append(f"- **{s}:** {dict(c)}")
+          if bad:
+              lines += ['', 'Shards with differences or errors (see their fuzz-failures artifacts): ' + ', '.join(bad)]
+          open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write('\n'.join(lines) + '\n')
+          print('\n'.join(lines))
+          if bad or len(rows) < 20:
+              raise SystemExit(1)
+          EOF
