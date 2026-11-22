@@ -248,6 +248,15 @@ void check_for_duplicated_objects(
 }
 
 
+// The size eval_map counts for the entry of m at idx, or 0 if m has none.
+template< typename Index, typename Object >
+uint64 eval_entry(const std::map< Index, std::vector< Object > >& m, const Index& idx)
+{
+  auto it = m.find(idx);
+  return it == m.end() ? 0 : eval_index_size + it->second.size()*eval_object_size((const Object*)0);
+}
+
+
 template < class Index, class Object, class Current_Iterator, class Attic_Iterator, class Predicate >
 bool collect_items_by_timestamp(Health_Guard&& health_guard,
                    Current_Iterator current_begin, Current_Iterator current_end,
@@ -257,6 +266,10 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
                    std::map< Index, std::vector< Attic< Object > > >& attic_result)
 {
   uint32 count = 0;
+  // The sizes eval_map would report for result and attic_result, kept up to date per index
+  // instead of recounted: recounting walks the whole maps.
+  uint64 result_size = eval_map(result);
+  uint64 attic_size = eval_map(attic_result);
   while (!(current_begin == current_end) || !(attic_begin == attic_end))
   {
     std::vector< std::pair< typename Object::Id_Type, uint64 > > timestamp_by_id;
@@ -265,8 +278,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
     if (++count >= 128*1024)
     {
       count = 0;
-      health_guard.check(0, eval_map(result));
-      health_guard.check(0, eval_map(attic_result));
+      health_guard.check(0, result_size);
+      health_guard.check(0, attic_size);
     }
     Index index =
         (attic_begin == attic_end ||
@@ -278,6 +291,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
       return true;
     }
 
+    uint64 result_before = eval_entry(result, index);
+    uint64 attic_before = eval_entry(attic_result, index);
     reconstruct_items(
         current_begin, current_end, index, predicate, result[index], timestamp_by_id, timestamp, count);
     reconstruct_items(
@@ -287,6 +302,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
 
     filter_items_by_timestamp(timestamp_by_id, result[index]);
     filter_items_by_timestamp(timestamp_by_id, attic_result[index]);
+    result_size += eval_entry(result, index) - result_before;
+    attic_size += eval_entry(attic_result, index) - attic_before;
 
     //check_for_duplicated_objects< Object >(timestamp_by_id, rman);
   }
@@ -303,6 +320,10 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
                    std::map< Index, std::vector< Attic< Relation_Skeleton > > >& attic_result)
 {
   uint32 count = 0;
+  // The sizes eval_map would report for result and attic_result, kept up to date per index
+  // instead of recounted: recounting walks the whole maps.
+  uint64 result_size = eval_map(result);
+  uint64 attic_size = eval_map(attic_result);
   while (!(current_begin == current_end) || !(attic_begin == attic_end))
   {
     std::vector< std::pair< Relation_Skeleton::Id_Type, uint64 > > timestamp_by_id;
@@ -311,8 +332,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
     if (++count >= 128*1024)
     {
       count = 0;
-      health_guard.check(0, eval_map(result));
-      health_guard.check(0, eval_map(attic_result));
+      health_guard.check(0, result_size);
+      health_guard.check(0, attic_size);
     }
     Index index =
         (attic_begin == attic_end ||
@@ -324,6 +345,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
       return true;
     }
 
+    uint64 result_before = eval_entry(result, index);
+    uint64 attic_before = eval_entry(attic_result, index);
     reconstruct_items(health_guard, current_begin, current_end, attic_begin, attic_end, index,
                       predicate, result[index], attic_result[index], timestamp_by_id, timestamp);
 
@@ -331,6 +354,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
 
     filter_items_by_timestamp(timestamp_by_id, result[index]);
     filter_items_by_timestamp(timestamp_by_id, attic_result[index]);
+    result_size += eval_entry(result, index) - result_before;
+    attic_size += eval_entry(attic_result, index) - attic_before;
 
     //check_for_duplicated_objects< Relation_Skeleton >(timestamp_by_id, rman);
   }
@@ -388,6 +413,10 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
                    std::map< Index, std::vector< Attic< Way_Skeleton > > >& attic_result)
 {
   uint32 count = 0;
+  // The sizes eval_map would report for result and attic_result, kept up to date per index
+  // instead of recounted: recounting walks the whole maps.
+  uint64 result_size = eval_map(result);
+  uint64 attic_size = eval_map(attic_result);
   while (!(current_begin == current_end) || !(attic_begin == attic_end))
   {
     std::vector< std::pair< Way_Skeleton::Id_Type, uint64 > > timestamp_by_id;
@@ -396,8 +425,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
     if (++count >= 128*1024)
     {
       count = 0;
-      health_guard.check(0, eval_map(result));
-      health_guard.check(0, eval_map(attic_result));
+      health_guard.check(0, result_size);
+      health_guard.check(0, attic_size);
     }
     Index index =
         (attic_begin == attic_end ||
@@ -409,6 +438,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
       return true;
     }
 
+    uint64 result_before = eval_entry(result, index);
+    uint64 attic_before = eval_entry(attic_result, index);
     reconstruct_items(health_guard, current_begin, current_end, attic_begin, attic_end, index,
                       predicate, result[index], attic_result[index], timestamp_by_id, timestamp);
 
@@ -416,6 +447,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
 
     filter_items_by_timestamp(timestamp_by_id, result[index]);
     filter_items_by_timestamp(timestamp_by_id, attic_result[index]);
+    result_size += eval_entry(result, index) - result_before;
+    attic_size += eval_entry(attic_result, index) - attic_before;
 
     //check_for_duplicated_objects< Way_Skeleton >(timestamp_by_id, rman);
   }
