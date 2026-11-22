@@ -437,7 +437,8 @@ public:
   Items_By_Id(const std::map< Index, std::vector< Object > >& items)
   {
     refs.reserve(count_items(items));
-    add_entries(current, items);
+    add_entries(items);
+    current_count = entries.size();
     sort_refs();
   }
 
@@ -445,23 +446,20 @@ public:
       const std::map< Index, std::vector< Attic< Object > > >& attic_items)
   {
     refs.reserve(count_items(items) + count_items(attic_items));
-    add_entries(current, items);
-    add_entries(attic, attic_items);
+    add_entries(items);
+    current_count = entries.size();
+    add_entries(attic_items);
     sort_refs();
   }
 
   std::size_t size() const { return refs.size(); }
   const Object& obj(std::size_t i) const { return get(refs[i]); }
-  Index idx(std::size_t i) const
-  {
-    return refs[i].entry < current.size() ? current[refs[i].entry].first
-        : attic[refs[i].entry - current.size()].first;
-  }
+  Index idx(std::size_t i) const { return entries[refs[i].entry].idx; }
   // NOW for a current element.
   uint64 timestamp(std::size_t i) const
   {
-    return refs[i].entry < current.size() ? NOW
-        : attic[refs[i].entry - current.size()].second[refs[i].pos].timestamp;
+    return refs[i].entry < current_count ? NOW
+        : static_cast< const Attic< Object >& >(get(refs[i])).timestamp;
   }
 
 private:
@@ -472,28 +470,39 @@ private:
     uint32 pos;
   };
 
-  std::vector< std::pair< Index, const Object* > > current;
-  std::vector< std::pair< Index, const Attic< Object >* > > attic;
+  // The address of the Object part of the vector's first element, and the size of its elements:
+  // that of Object for current elements, of Attic< Object > for attic elements. Looking up both
+  // kinds the same way keeps the sort's comparisons free of branches.
+  struct Entry
+  {
+    Entry(const char* first_, uint32 size_, Index idx_) : first(first_), size(size_), idx(idx_) {}
+    const char* first;
+    uint32 size;
+    Index idx;
+  };
+
+  std::vector< Entry > entries;
+  std::size_t current_count;
   std::vector< Ref > refs;
 
   const Object& get(const Ref& ref) const
   {
-    return ref.entry < current.size() ? current[ref.entry].second[ref.pos]
-        : attic[ref.entry - current.size()].second[ref.pos];
+    const Entry& entry = entries[ref.entry];
+    return *reinterpret_cast< const Object* >(entry.first + std::size_t(ref.pos) * entry.size);
   }
 
   // Appends the references in the order of the set, as before, so that equal ids keep their order.
   template< class Elem >
-  void add_entries(std::vector< std::pair< Index, const Elem* > >& entries,
-      const std::map< Index, std::vector< Elem > >& items)
+  void add_entries(const std::map< Index, std::vector< Elem > >& items)
   {
     for (typename std::map< Index, std::vector< Elem > >::const_iterator
         it(items.begin()); it != items.end(); ++it)
     {
       if (it->second.empty())
         continue;
-      uint32 entry = current.size() + attic.size();
-      entries.push_back(std::make_pair(it->first, &it->second.front()));
+      uint32 entry = entries.size();
+      const Object& first = it->second.front();
+      entries.push_back(Entry(reinterpret_cast< const char* >(&first), sizeof(Elem), it->first));
       for (uint32 pos = 0; pos < it->second.size(); ++pos)
         refs.push_back(Ref(entry, pos));
     }
