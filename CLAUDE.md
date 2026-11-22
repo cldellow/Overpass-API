@@ -54,7 +54,9 @@ Databases with history, built from a full-history extract, need a `better-import
 
 - **Performance:** run `bench/compare.py`. Don't re-time the baseline; it is cached. Use
   `--no-cache` (alternating runs) when the expected difference is under about 25%: separately
-  timed runs can drift by up to about 20%.
+  timed runs can drift by up to about 20%. Under about 10%, use `--paired --reps 25` and judge by
+  its confidence interval and sign test, not by medians and spreads. Don't call a change noise, or
+  drop it, without a paired measurement: medians misjudged real 4–9% gains as noise.
 - **Correctness:** run `bench/fuzz.py` against the baseline. Run a build against itself first to check
   that outputs are deterministic.
 - **Property tests:** also run `bench/props/props.py` against the baseline, with
