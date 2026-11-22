@@ -305,8 +305,11 @@ void Tag_Store< Index, Object >::prefetch_chunk(const std::map< Index, std::vect
 {
   tags_by_id.clear();
 
-  //generate std::set of relevant coarse indices
-  generate_ids_by_coarse(ids_by_coarse, elems);
+  // The coarse indices and ids of the whole set, needed for every chunk. elems is the same set on
+  // every call, so they are generated once: generating them again appended every id a second
+  // time before deduplicating, which cost time and twice their memory on each chunk.
+  if (ids_by_coarse.empty())
+    generate_ids_by_coarse(ids_by_coarse, elems);
 
   Block_Backend< Tag_Index_Local, typename Object::Id_Type > items_db
       (transaction->data_index(current_local_tags_file_properties< Object >()));
@@ -355,8 +358,10 @@ template< typename Index, typename Object >
 void Tag_Store< Index, Object >::prefetch_chunk(const std::map< Index, std::vector< Attic< Object > > >& attic_items,
     typename Object::Id_Type lower_id_bound, typename Object::Id_Type upper_id_bound)
 {
-  //generate std::set of relevant coarse indices
-  generate_ids_by_coarse(attic_ids_by_coarse, attic_items);
+  // As for current elements: only this chunk's tags are needed, and the ids once.
+  tags_by_id.clear();
+  if (attic_ids_by_coarse.empty())
+    generate_ids_by_coarse(attic_ids_by_coarse, attic_items);
 
   Block_Backend< Tag_Index_Local, typename Object::Id_Type > current_tags_db
       (transaction->data_index(current_local_tags_file_properties< Object >()));
