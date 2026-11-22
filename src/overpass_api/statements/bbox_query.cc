@@ -274,6 +274,9 @@ void Bbox_Query_Statement::execute(Resource_Manager& rman)
       filter_attic_elements(rman, rman.get_desired_timestamp(), chunk.nodes, chunk.attic_nodes);
       move_into(into.nodes, chunk.nodes);
       move_into(into.attic_nodes, chunk.attic_nodes);
+      // into is not on the runtime stack, so count it here: a result over [maxsize:] then fails
+      // as soon as it is, not after the whole result is built.
+      rman.health_check(*this, 0, eval_map(into.nodes) + eval_map(into.attic_nodes));
     }
   }
 
