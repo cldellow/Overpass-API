@@ -1,0 +1,161 @@
+# Property tests (bench/props/props.py on the bench-tools branch) for a change against
+# upstream/master: synthetic databases, checked against answers computed from the data and,
+# byte for byte, against upstream's output on the same database. See bench/README.md on
+# bench-tools.
+#
+# The baseline is upstream/master at the candidate's merge base, so newer upstream commits
+# don't show up as differences. Databases are imported by the baseline's update_database; the
+# history database by better-imports' (upstream/master imports full history incorrectly).
+
+name: props
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to test
+        required: true
+        default: all-changes
+      seeds:
+        description: Seeds (e.g. 1-60)
+        required: true
+        default: 1-60
+  schedule:
+    - cron: '23 9 * * *'   # daily, all-changes
+
+permissions:
+  contents: read
+
+concurrency:
+  group: props-${{ github.event.pull_request.number || inputs.ref || 'scheduled' }}
+  cancel-in-progress: true
+
+env:
+  UPSTREAM: https://github.com/fossgis/Overpass-API
+
+jobs:
+  props:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Choose what to test
+        id: refs
+        env:
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_SEEDS: ${{ inputs.seeds }}
+        run: |
+          if [ -n "$PR_SHA" ]; then cand="$PR_SHA"; else cand="${INPUT_REF:-all-changes}"; fi
+          echo "candidate=$cand" >> "$GITHUB_OUTPUT"
+          echo "seeds=${INPUT_SEEDS:-1-60}" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.refs.outputs.candidate }}
+          path: cand
+          fetch-depth: 0
+
+      - name: Find the baseline (upstream/master at the merge base)
+        id: base
+        working-directory: cand
+        run: |
+          git fetch --quiet "$UPSTREAM" master
+          base=$(git merge-base HEAD FETCH_HEAD)
+          git worktree add --quiet ../base "$base"
+          echo "candidate $(git rev-parse HEAD), baseline $base (upstream/master is $(git rev-parse FETCH_HEAD))"
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Check out bench-tools
+        uses: actions/checkout@v4
+        with:
+          ref: bench-tools
+          path: tools
+
+      - name: Check out better-imports
+        uses: actions/checkout@v4
+        with:
+          ref: better-imports
+          path: imp
+
+      - name: Record the better-imports commit
+        id: imp
+        working-directory: imp
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q autoconf automake libtool g++ make libexpat1-dev zlib1g-dev liblz4-dev
+
+      # Only the binaries are cached: a fresh checkout makes every source newer than cached
+      # objects, so a cached build directory would be rebuilt anyway.
+      - name: Cache the baseline binaries
+        id: cache-base
+        uses: actions/cache@v4
+        with:
+          path: base-bin
+          key: overpass-bin-${{ steps.base.outputs.sha }}-v1
+
+      - name: Cache the better-imports binaries
+        id: cache-imp
+        uses: actions/cache@v4
+        with:
+          path: imp-bin
+          key: overpass-bin-${{ steps.imp.outputs.sha }}-v1
+
+      - name: Build
+        env:
+          BASE_CACHED: ${{ steps.cache-base.outputs.cache-hit }}
+          IMP_CACHED: ${{ steps.cache-imp.outputs.cache-hit }}
+        run: |
+          build() {  # build SRC_CHECKOUT OUT_BIN TARGET...
+            local src=$1 out=$2; shift 2
+            (cd "$src/src" && mkdir -p m4 && autoreconf -i > /dev/null 2>&1)
+            mkdir -p "$src/build"
+            (cd "$src/build" && ../src/configure CXXFLAGS="-O2" --enable-lz4 > /dev/null \
+              && make -j"$(nproc)" "$@" > make.log 2>&1) || { tail -50 "$src/build/make.log"; exit 1; }
+            mkdir -p "$out"
+            for t in "$@"; do cp "$src/build/$t" "$out/"; done
+          }
+          [ "$BASE_CACHED" = true ] || build base base-bin bin/osm3s_query bin/update_database
+          [ "$IMP_CACHED" = true ] || build imp imp-bin bin/update_database
+          build cand cand-bin bin/osm3s_query
+          ls -l base-bin imp-bin cand-bin
+
+      - name: Run the property tests
+        run: |
+          set -o pipefail
+          python3 tools/bench/props/props.py --bin cand-bin --baseline base-bin --import-bin base-bin \
+            --history-import-bin imp-bin --seeds "${{ steps.refs.outputs.seeds }}" --jobs "$(nproc)" \
+            --out-dir failures | tee props.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          [ -f props.txt ] || exit 0
+          {
+            echo "### props.py: ${{ steps.refs.outputs.candidate }} against upstream/master at ${{ steps.base.outputs.sha }}"
+            echo
+            echo '```'
+            sed -n '/^check /,$p' props.txt
+            echo '```'
+            if grep -q '^FAIL' props.txt; then
+              echo
+              echo 'New failures (first 30):'
+              echo
+              echo '```'
+              grep -A3 '^FAIL' props.txt | head -120
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: props-failures
+          path: failures/
+          if-no-files-found: ignore
