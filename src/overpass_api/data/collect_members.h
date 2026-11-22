@@ -355,44 +355,53 @@ void filter_attic_elements
     for (typename std::map< Index, std::vector< Skeleton > >::iterator it = current.begin();
          it != current.end(); ++it)
     {
-      std::vector< Skeleton > result;
       std::map< typename Skeleton::Id_Type, std::pair< uint64, uint64 > >& entry
           = timestamp_by_id_by_idx[it->first];
 
-      for (typename std::vector< Skeleton >::const_iterator it2 = it->second.begin();
+      // Compact in place, keeping the order, and drop the slack left by growing the vector.
+      typename std::vector< Skeleton >::iterator out = it->second.begin();
+      for (typename std::vector< Skeleton >::iterator it2 = it->second.begin();
            it2 != it->second.end(); ++it2)
       {
         if (entry[it2->id].first > 0)
         {
           if (entry[it2->id].second == NOW)
-            result.push_back(*it2);
+          {
+            if (out != it2)
+              *out = std::move(*it2);
+            ++out;
+          }
           else
             attic[it->first].push_back(Attic< Skeleton >(*it2, entry[it2->id].second));
         }
       }
-
-      result.swap(it->second);
+      it->second.erase(out, it->second.end());
+      it->second.shrink_to_fit();
     }
 
     // Filter attic: only keep elements that have already existed at timestamp
     for (typename std::map< Index, std::vector< Attic< Skeleton > > >::iterator it = attic.begin();
          it != attic.end(); ++it)
     {
-      std::vector< Attic< Skeleton > > result;
       std::map< typename Skeleton::Id_Type, std::pair< uint64, uint64 > >& entry
           = timestamp_by_id_by_idx[it->first];
 
-      for (typename std::vector< Attic< Skeleton > >::const_iterator it2 = it->second.begin();
+      // Compact in place, as above.
+      typename std::vector< Attic< Skeleton > >::iterator out = it->second.begin();
+      for (typename std::vector< Attic< Skeleton > >::iterator it2 = it->second.begin();
            it2 != it->second.end(); ++it2)
       {
-        if (entry[it2->id].first > 0)
+        const std::pair< uint64, uint64 >& timestamps = entry[it2->id];
+        if (timestamps.first > 0)
         {
-          result.push_back(*it2);
-          result.back().timestamp = entry[it2->id].second;
+          if (out != it2)
+            *out = std::move(*it2);
+          out->timestamp = timestamps.second;
+          ++out;
         }
       }
-
-      result.swap(it->second);
+      it->second.erase(out, it->second.end());
+      it->second.shrink_to_fit();
     }
   }
 }
