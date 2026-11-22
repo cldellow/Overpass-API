@@ -1,0 +1,301 @@
+# CPU timing of a change against upstream/master (bench/compare.py on the bench-tools branch),
+# repeated on several runners. See issue #113.
+#
+# - Every runner times the whole benchmark suite (bench/queries, bench/queries-areas and
+#   bench/queries-tools: plain, area and client-tool-shaped queries) with compare.py --no-cache,
+#   alternating the baseline (A) and the candidate (B), and writes the raw times (--json).
+# - The summary combines runners by taking, per query, the median over runners of each runner's
+#   B/A ratio (median B time / median A time), and shows the spread between runners. Ratios from
+#   one runner are comparable; absolute times from different runners aren't.
+# - Control: in compare mode each runner also times the baseline against itself on a few
+#   queries. A runner whose control ratio is off by more than the tolerance is flagged.
+# - Calibration (mode calibrate): every query A against A on every runner, to measure each
+#   query's noise floor. Rerun it after a runner image change or when queries are added.
+# - Runners: ARM by default. Production runs on x86, so confirm numbers meant for upstream with
+#   runner ubuntu-24.04.
+# - setup.yml builds or restores the binaries and the database (plain queries run on the area
+#   database too).
+
+name: timing
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to time
+        required: true
+        default: all-changes
+      mode:
+        description: compare (baseline against the candidate) or calibrate (baseline against itself)
+        type: choice
+        options: [compare, calibrate]
+        default: compare
+      runners:
+        description: Number of runners
+        required: true
+        default: '5'
+      reps:
+        description: Timed runs per query per build on each runner (after one warm-up)
+        required: true
+        default: '5'
+      runner:
+        description: Runner type
+        type: choice
+        options: [ubuntu-24.04-arm, ubuntu-24.04]
+        default: ubuntu-24.04-arm
+      tolerance:
+        description: Flag a runner whose A/A control ratio is off by more than this (0.05 = 5%)
+        required: true
+        default: '0.05'
+      tools_ref:
+        description: bench-tools ref to take compare.py from
+        required: true
+        default: bench-tools
+
+permissions:
+  contents: read
+
+concurrency:
+  group: timing-${{ github.event.pull_request.number || format('{0}-{1}-{2}', inputs.ref, inputs.mode, inputs.runner) }}
+  cancel-in-progress: true
+
+env:
+  REPS: ${{ inputs.reps || '5' }}
+  MODE: ${{ inputs.mode || 'compare' }}
+  TOOLS_REF: ${{ inputs.tools_ref || 'bench-tools' }}
+  # Middling queries for the A/A control: a bbox, out geom on highways, and an area query.
+  CONTROL_QUERIES: queries/q03_bbox_all_nodes.ql queries/q10_out_geom_highways.ql queries-areas/a2_highways_halifax.ql
+
+jobs:
+  refs:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      candidate: ${{ steps.refs.outputs.candidate }}
+      runner: ${{ steps.refs.outputs.runner }}
+      indexes: ${{ steps.refs.outputs.indexes }}
+    steps:
+      - name: Choose what to time
+        id: refs
+        env:
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_RUNNERS: ${{ inputs.runners }}
+          INPUT_RUNNER: ${{ inputs.runner }}
+        run: |
+          if [ -n "$PR_SHA" ]; then cand="$PR_SHA"; else cand="${INPUT_REF:-all-changes}"; fi
+          n="${INPUT_RUNNERS:-5}"
+          case "$n" in ''|*[!0-9]*) echo "runners must be a number"; exit 1;; esac
+          [ "$n" -ge 1 ] && [ "$n" -le 20 ] || { echo "runners must be 1 to 20"; exit 1; }
+          echo "candidate=$cand" >> "$GITHUB_OUTPUT"
+          echo "runner=${INPUT_RUNNER:-ubuntu-24.04-arm}" >> "$GITHUB_OUTPUT"
+          echo "indexes=$(python3 -c "import json; print(json.dumps(list(range($n))))")" >> "$GITHUB_OUTPUT"
+          echo "candidate $cand, $n runners of ${INPUT_RUNNER:-ubuntu-24.04-arm}, mode $MODE"
+
+  setup:
+    needs: refs
+    uses: ./.github/workflows/setup.yml
+    with:
+      candidate: ${{ needs.refs.outputs.candidate }}
+      runner: ${{ needs.refs.outputs.runner }}
+
+  time:
+    needs: [refs, setup]
+    runs-on: ${{ needs.refs.outputs.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        index: ${{ fromJSON(needs.refs.outputs.indexes) }}
+    steps:
+      - name: Check out bench-tools
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TOOLS_REF }}
+          path: tools
+
+      - name: Restore the baseline binaries
+        uses: actions/cache/restore@v6
+        with:
+          path: base-bin
+          key: fuzz-bin-${{ runner.arch }}-${{ needs.setup.outputs.base_sha }}-v1
+          fail-on-cache-miss: true
+
+      - name: Restore the candidate binaries
+        uses: actions/cache/restore@v6
+        with:
+          path: cand-bin
+          key: fuzz-bin-${{ runner.arch }}-${{ needs.setup.outputs.cand_sha }}-v1
+          fail-on-cache-miss: true
+
+      - name: Restore the database archive
+        uses: actions/cache/restore@v6
+        with:
+          path: db.tar.zst
+          key: ${{ needs.setup.outputs.db_key }}
+          fail-on-cache-miss: true
+
+      - name: Unpack the database (sparse)
+        run: |
+          zstd -dc db.tar.zst | tar -S -xf -
+          rm db.tar.zst
+          du -sh --apparent-size db; du -sh db
+
+      - name: Time
+        id: time
+        env:
+          INDEX: ${{ matrix.index }}
+        run: |
+          mkdir out
+          python3 - > out/meta.json <<'EOF'
+          import json, os, platform, subprocess
+          cpu = subprocess.run(['lscpu'], capture_output=True, text=True).stdout
+          model = next((l.split(':', 1)[1].strip() for l in cpu.split('\n') if l.startswith('Model name')), '')
+          print(json.dumps({'index': int(os.environ['INDEX']), 'mode': os.environ['MODE'],
+                            'machine': platform.machine(), 'cpu': model, 'nproc': os.cpu_count()}))
+          EOF
+          cat out/meta.json
+          cd tools/bench
+          queries=$(ls queries/*.ql queries-areas/*.ql queries-tools/*.ql)
+          if [ "$MODE" = calibrate ]; then b=base-bin; else b=cand-bin; fi
+          set +e
+          python3 compare.py --a ../../base-bin --b "../../$b" --db ../../db --no-cache --reps "$REPS" \
+            --json ../../out/result.json $queries | tee ../../out/compare.txt
+          status=${PIPESTATUS[0]}
+          if [ "$MODE" = compare ]; then
+            # shellcheck disable=SC2086
+            python3 compare.py --a ../../base-bin --b ../../base-bin --db ../../db --no-cache --reps "$REPS" \
+              --json ../../out/control.json $CONTROL_QUERIES | tee ../../out/control.txt
+          fi
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the measurements
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: timing-${{ matrix.index }}
+          path: out/
+          if-no-files-found: ignore
+
+      - name: Fail on differing outputs or errors
+        if: steps.time.outputs.status != '0'
+        run: |
+          echo "compare.py exited ${{ steps.time.outputs.status }}"
+          exit 1
+
+  summary:
+    needs: [refs, setup, time]
+    if: always()
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Collect the measurements
+        uses: actions/download-artifact@v7
+        with:
+          pattern: timing-*
+          path: runs
+
+      - name: Summarise
+        env:
+          CANDIDATE: ${{ needs.refs.outputs.candidate }}
+          CAND_SHA: ${{ needs.setup.outputs.cand_sha }}
+          BASE_SHA: ${{ needs.setup.outputs.base_sha }}
+          RUNNER: ${{ needs.refs.outputs.runner }}
+          EXPECTED: ${{ needs.refs.outputs.indexes }}
+          TOLERANCE: ${{ inputs.tolerance || '0.05' }}
+        run: |
+          python3 - <<'EOF'
+          import glob, json, os, statistics
+          med = statistics.median
+          runs = []
+          for d in sorted(glob.glob('runs/timing-*')):
+              try:
+                  meta = json.load(open(f'{d}/meta.json'))
+                  result = json.load(open(f'{d}/result.json'))
+              except (OSError, ValueError):
+                  continue
+              control = json.load(open(f'{d}/control.json')) if os.path.exists(f'{d}/control.json') else None
+              runs.append((meta, result, control))
+          expected = len(json.loads(os.environ['EXPECTED']))
+          mode = os.environ['MODE']
+          tol = float(os.environ['TOLERANCE'])
+
+          def ratios(result):
+              return {q['name']: med(q['b_times']) / med(q['a_times'])
+                      for q in result['queries'] if med(q['a_times']) > 0}
+
+          def total(result):
+              a = sum(med(q['a_times']) for q in result['queries'])
+              b = sum(med(q['b_times']) for q in result['queries'])
+              return b / a if a else float('nan')
+
+          per_runner = [ratios(r) for _, r, _ in runs]
+          names = [q['name'] for q in runs[0][1]['queries']] if runs else []
+          a_ms = {q['name']: [] for q in (runs[0][1]['queries'] if runs else [])}
+          differing = set()
+          for _, r, _ in runs:
+              for q in r['queries']:
+                  a_ms[q['name']].append(med(q['a_times']) * 1000)
+                  if not q['same']:
+                      differing.add(q['name'])
+          cpus = sorted({m['cpu'] for m, _, _ in runs})
+          lines = [f"### compare.py ({mode}): {os.environ['CANDIDATE']} ({os.environ['CAND_SHA'][:12]}) against "
+                   f"upstream/master at {os.environ['BASE_SHA'][:12]}",
+                   '', f"{len(runs)} of {expected} runners reported ({os.environ['RUNNER']}; CPUs: {', '.join(cpus) or '?'}), "
+                   f"{os.environ['REPS']} alternating runs per query per build each.", '']
+          if mode == 'compare':
+              lines += ['| Query | A (median ms) | B/A (median over runners) | Runner range | Outputs |', '|---|---:|---:|---:|---|']
+          else:
+              lines += ['| Query | A (median ms) | A/A (median over runners) | Runner range | Max deviation |', '|---|---:|---:|---:|---:|']
+          floors = []
+          for n in names:
+              rs = [pr[n] for pr in per_runner if n in pr]
+              if not rs:
+                  continue
+              rng = f'{min(rs):.3f}-{max(rs):.3f}'
+              if mode == 'compare':
+                  lines.append(f"| {n} | {med(a_ms[n]):.1f} | {med(rs):.3f} | {rng} | {'DIFFERENT' if n in differing else 'same'} |")
+              else:
+                  dev = max(abs(r - 1) for r in rs)
+                  floors.append(dev)
+                  lines.append(f"| {n} | {med(a_ms[n]):.1f} | {med(rs):.3f} | {rng} | {dev:.1%} |")
+          totals = [total(r) for _, r, _ in runs]
+          if totals:
+              lines.append(f"| **Total (sum of medians)** | | **{med(totals):.3f}** | {min(totals):.3f}-{max(totals):.3f} | |")
+          bad = []
+          if mode == 'compare':
+              lines += ['', f'A/A control per runner (median over {os.environ.get("CONTROL_QUERIES", "").count(".ql")} queries; flagged beyond ±{tol:.0%}):', '']
+              for (m, _, c) in runs:
+                  if not c:
+                      lines.append(f"- runner {m['index']}: no control")
+                      bad.append(f"runner {m['index']} (no control)")
+                      continue
+                  cr = med(list(ratios(c).values()))
+                  flag = abs(cr - 1) > tol
+                  lines.append(f"- runner {m['index']}: {cr:.3f}{' **flagged**' if flag else ''}")
+                  if flag:
+                      bad.append(f"runner {m['index']} (control {cr:.3f})")
+          else:
+              if floors:
+                  lines += ['', f"Noise floor: median over queries of the max deviation {med(floors):.1%}, worst query {max(floors):.1%}."]
+          if differing:
+              lines += ['', 'Outputs differ for: ' + ', '.join(sorted(differing))]
+          if bad:
+              lines += ['', 'Suspect runners, whose ratios should be discounted: ' + ', '.join(bad)]
+          text = '\n'.join(lines) + '\n'
+          open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write(text)
+          print(text)
+          json.dump({'mode': mode, 'runs': [{'meta': m, 'ratios': pr, 'total': t} for (m, _, _), pr, t in zip(runs, per_runner, totals)]},
+                    open('combined.json', 'w'), indent=1)
+          if len(runs) < expected or differing:
+              raise SystemExit(1)
+          EOF
+
+      - name: Upload the combined summary
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: timing-summary
+          path: combined.json
+          if-no-files-found: ignore
