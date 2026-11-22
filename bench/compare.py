@@ -12,12 +12,19 @@ baseline binary, the database or a query invalidates its entry.
 With --no-cache, each query runs --reps times per build, alternating A and B so that
 background noise affects both builds alike. Use that when the difference is small.
 
+With --paired (which implies --no-cache), each repetition is a pair of runs, A then B or B
+then A in turn, and each query also gets paired statistics: the mean of the per-pair B/A
+ratios with a 95% confidence interval, in how many pairs B was faster, and a two-sided sign
+test. Medians with min-max spreads can't settle differences of a few percent, because single
+runs have outliers; the pairs can. Use 25 or more pairs (--reps 25) for differences under
+about 10%.
+
 A query may contain placeholders such as {{UID}}, filled in from the JSON object in
 --vars. Use them for values that must not be committed, such as user ids from a
 licensed extract; bench/pick_vars.py writes such a file from a database.
 
 Usage:
-  compare.py --a OLD/bin --b NEW/bin --db DB_DIR [--reps 7] [--no-cache] [--vars FILE] QUERY.ql [QUERY.ql ...]
+  compare.py --a OLD/bin --b NEW/bin --db DB_DIR [--reps 7] [--no-cache | --paired] [--vars FILE] QUERY.ql [QUERY.ql ...]
 
 With --json FILE, the raw measurements are also written to FILE: per query, every run's CPU
 time for each build, the output digests and size, and peak RSS with --rss. Use it to combine
@@ -28,6 +35,7 @@ Exit status is 1 if any query's output differs between the builds.
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import resource
@@ -88,6 +96,20 @@ def measure(bindir, db, query, reps):
     return {'times': times, 'digests': sorted(digests), 'size': size}
 
 
+def paired_stats(a_times, b_times):
+    """The per-pair B/A ratios' geometric mean with a 95% confidence interval, the number of
+    pairs where B was faster, and a two-sided sign test's p-value."""
+    logs = [math.log(b / a) for a, b in zip(a_times, b_times) if a > 0 and b > 0]
+    n = len(logs)
+    if n < 2:
+        return None
+    mean = statistics.mean(logs)
+    half = 1.96 * statistics.stdev(logs) / math.sqrt(n)
+    wins = sum(1 for x in logs if x < 0)
+    tail = sum(math.comb(n, j) for j in range(0, min(wins, n - wins) + 1)) / 2 ** n
+    return math.exp(mean), math.exp(mean - half), math.exp(mean + half), wins, n, min(1.0, 2 * tail)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--a', required=True, help='bin directory of the baseline build')
@@ -98,6 +120,10 @@ def main():
                         help='baseline result cache (default ~/.cache/overpass-bench/baseline.json)')
     parser.add_argument('--no-cache', action='store_true',
                         help='time both builds, alternating runs, and ignore the cache')
+    parser.add_argument('--paired', action='store_true',
+                        help='alternate the order within each pair of runs and report paired statistics '
+                             '(per-pair B/A ratio with a 95%% confidence interval, and a sign test); '
+                             'implies --no-cache')
     parser.add_argument('--vars', help='JSON file with values for {{NAME}} placeholders in queries')
     parser.add_argument('--rss', action='store_true',
                         help='also report peak memory (RSS) of each build, from one extra untimed run '
@@ -106,6 +132,8 @@ def main():
                         help='also write the raw measurements (every run\'s CPU time per build) to FILE')
     parser.add_argument('queries', nargs='+')
     args = parser.parse_args()
+    if args.paired:
+        args.no_cache = True
     if args.vars:
         with open(args.vars) as f:
             QUERY_VARS.update(json.load(f))
@@ -133,8 +161,11 @@ def main():
             run_query(args.b, args.db, query)
             a = {'times': [], 'digests': set(), 'size': 0}
             b = {'times': [], 'digests': set(), 'size': 0}
-            for _ in range(args.reps):
-                for result, bindir in ((a, args.a), (b, args.b)):
+            for rep in range(args.reps):
+                order = ((a, args.a), (b, args.b))
+                if args.paired and rep % 2 == 1:
+                    order = order[::-1]
+                for result, bindir in order:
                     seconds, digest, size, _ = run_query(bindir, args.db, query)
                     result['times'].append(seconds)
                     result['digests'].add(digest)
@@ -169,7 +200,7 @@ def main():
             differing.append(query)
         name = os.path.splitext(os.path.basename(query))[0]
         records.append({'query': query, 'name': name, 'same': same, 'a_cached': a_cached,
-                        'alternating': args.no_cache, 'size': b['size'],
+                        'alternating': args.no_cache, 'paired': args.paired, 'size': b['size'],
                         'a_times': a['times'], 'b_times': b['times'],
                         'a_digests': a['digests'], 'b_digests': b['digests'],
                         'a_rss_kb': a.get('rss'), 'b_rss_kb': b.get('rss')})
@@ -177,6 +208,14 @@ def main():
         print(f'{name:28} {med_a*1000:7.1f}ms {med_b*1000:7.1f}ms {med_b/med_a:6.2f}  '
               f'{spread(a["times"]):>15} {spread(b["times"]):>15}{rss_cols}  '
               f'{"same" if same else "DIFFERENT"} ({b["size"]} bytes)', flush=True)
+        if args.paired:
+            stats = paired_stats(a['times'], b['times'])
+            if stats:
+                ratio, lo, hi, wins, n, p = stats
+                records[-1]['paired_stats'] = {'ratio': ratio, 'ci_low': lo, 'ci_high': hi,
+                                         'b_faster': wins, 'pairs': n, 'sign_test_p': p}
+                print(f'{"":28} paired B/A {ratio:.3f} (95% CI {lo:.3f}-{hi:.3f}), '
+                      f'B faster in {wins} of {n} pairs, sign test p={p:.4f}', flush=True)
     print(f'{"TOTAL (sum of medians)":28} {total_a*1000:7.1f}ms {total_b*1000:7.1f}ms {total_b/total_a:6.2f}')
     if args.json:
         with open(args.json, 'w') as f:

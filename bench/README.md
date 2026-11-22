@@ -16,6 +16,16 @@ python3 bench/compare.py --a BASELINE/install/bin --b CANDIDATE/install/bin \
 - **Close comparisons:** with `--no-cache`, runs alternate between the two builds after one untimed
   warm-up each, so background noise affects both alike. Use this when the difference is small.
   Cached runs time the builds separately.
+- **Small differences:** `--paired` (which implies `--no-cache`) treats each repetition as a pair
+  of runs, A then B or B then A in turn, and adds a line per query: the mean per-pair B/A ratio
+  with a 95% confidence interval, in how many pairs B was faster, and a two-sided sign test. A
+  median with a min–max spread can't settle a difference of a few percent, because single runs
+  have outliers; 25 pairs (`--reps 25`) can. With `--json`, each query's record also gets
+  `paired_stats`.
+
+  ```bash
+  python3 bench/compare.py --a BASE/install/bin --b NEW/install/bin --db DB --paired --reps 25 QUERY.ql
+  ```
 - **Placeholders:** a query may contain `{{NAME}}` placeholders, filled from the JSON file given
   with `--vars`. They keep values that must not be committed, such as user ids from a licensed
   extract, out of the query files. `pick_vars.py --bin BIN --db DB --out VARS.json` chooses them
