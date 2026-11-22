@@ -420,15 +420,20 @@ void filter_attic_elements
       // Filter current: only keep elements that have already existed at timestamp
       if (cit != current.end())
       {
-        std::vector< Skeleton > result;
-        for (typename std::vector< Skeleton >::const_iterator it2 = cit->second.begin();
+        // Compact in place, keeping the order, and drop the slack left by growing the vector.
+        typename std::vector< Skeleton >::iterator out = cit->second.begin();
+        for (typename std::vector< Skeleton >::iterator it2 = cit->second.begin();
              it2 != cit->second.end(); ++it2)
         {
           const std::pair< uint64, uint64 >* timestamps = find_timestamps(entry, it2->id);
           if (timestamps && timestamps->first > 0)
           {
             if (timestamps->second == NOW)
-              result.push_back(*it2);
+            {
+              if (out != it2)
+                *out = std::move(*it2);
+              ++out;
+            }
             else
             {
               if (ait == attic.end())
@@ -437,24 +442,29 @@ void filter_attic_elements
             }
           }
         }
-        result.swap(cit->second);
+        cit->second.erase(out, cit->second.end());
+        cit->second.shrink_to_fit();
       }
 
       // Filter attic: only keep elements that have already existed at timestamp
       if (ait != attic.end())
       {
-        std::vector< Attic< Skeleton > > result;
-        for (typename std::vector< Attic< Skeleton > >::const_iterator it2 = ait->second.begin();
+        // Compact in place, as above.
+        typename std::vector< Attic< Skeleton > >::iterator out = ait->second.begin();
+        for (typename std::vector< Attic< Skeleton > >::iterator it2 = ait->second.begin();
              it2 != ait->second.end(); ++it2)
         {
           const std::pair< uint64, uint64 >* timestamps = find_timestamps(entry, it2->id);
           if (timestamps && timestamps->first > 0)
           {
-            result.push_back(*it2);
-            result.back().timestamp = timestamps->second;
+            if (out != it2)
+              *out = std::move(*it2);
+            out->timestamp = timestamps->second;
+            ++out;
           }
         }
-        result.swap(ait->second);
+        ait->second.erase(out, ait->second.end());
+        ait->second.shrink_to_fit();
       }
     }
   }
