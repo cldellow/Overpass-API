@@ -9,8 +9,10 @@
 #   all zero, and Overpass writes the zeros out, so after the import every file gets holes
 #   punched (fallocate --dig-holes), and the database is cached as one sparse-aware archive
 #   (tar -S, zstd). Callers unpack it with `zstd -dc db.tar.zst | tar -S -xf -`. actions/cache's
-#   own tar would write the holes back out as zeros. The key covers the runner architecture, the
-#   extract's ETag, the import commit and both compression methods.
+#   own tar would write the holes back out as zeros. The key covers the extract's ETag, the import
+#   commit and both compression methods, but not the runner architecture: databases built on ARM
+#   and x86 give identical query results on both (checked in #131; only padding bytes inside
+#   compressed blocks differ), so one archive serves both.
 #
 # Cache scope: caches saved by a pull_request run are visible only to that PR; those saved on
 # master are visible to every PR.
@@ -104,11 +106,10 @@ jobs:
         id: dbkey
         env:
           IMP_SHA: ${{ steps.imp.outputs.sha }}
-          ARCH: ${{ runner.arch }}
         run: |
           etag=$(curl -fsSI "$EXTRACT_URL" | tr -d '\r' | awk 'tolower($1) == "etag:" {print $2}' | tr -cd 'A-Za-z0-9-')
           [ -n "$etag" ] || { echo "no ETag for $EXTRACT_URL"; exit 1; }
-          key="fuzz-db-nova-scotia-areas-$ARCH-$etag-$IMP_SHA-$COMPRESSION-$MAP_COMPRESSION-v3"
+          key="fuzz-db-nova-scotia-areas-$etag-$IMP_SHA-$COMPRESSION-$MAP_COMPRESSION-v4"
           echo "key=$key" >> "$GITHUB_OUTPUT"
           echo "database cache key: $key"
 
