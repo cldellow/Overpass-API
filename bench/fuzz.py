@@ -15,6 +15,14 @@ on its own, whatever --jobs is:
 Differences are written to --out-dir as <seed>-<index>/{query.ql,a.out,b.out}. Exit status is 1
 if any query's output differs. Use the same build as --a and --b to check that the outputs are
 deterministic before blaming a change.
+
+The baseline's (--a's) outcomes are cached in --cache-dir, keyed by a hash of its osm3s_query
+binary, a fingerprint of the database's data files, --timeout and the query text, so later runs
+against the same baseline only run --b. Timeouts and memory-limit failures are never cached. When
+a query differs and its baseline came from the cache, the baseline is run again to write a.out; if
+its fresh outcome doesn't match the cached one, the entry is replaced and counted as stale.
+--no-cache runs both builds every time; --clear-cache empties the cache first. Cache entries from
+a database derived from licensed data stay on this machine, like the database itself.
 """
 import argparse
 import collections
@@ -26,8 +34,10 @@ import os
 import random
 import re
 import resource
+import shutil
 import subprocess
 import sys
+import tempfile
 
 from osm3s_run import check_rss_support, run_osm3s
 
@@ -412,10 +422,83 @@ def run_once(bindir, db, query, timeout, rss=False):
     return status, digest, proc.stdout, peak
 
 
+DEFAULT_CACHE_DIR = os.path.expanduser('~/.cache/overpass-bench/fuzz')
+# Outcomes that depend on load rather than on the build, so they are never cached.
+UNCACHEABLE = ('timeout', 'resource-limit')
+# Files whose contents are the database. osm3s_query appends to transactions.log on every run,
+# so log files must not be part of the fingerprint.
+DB_DATA_SUFFIXES = ('.bin', '.idx', '.map')
+DB_DATA_NAMES = ('replicate_id', 'osm_base_version', 'area_version')
+
+
+def file_sha(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for block in iter(lambda: f.read(1 << 20), b''):
+            h.update(block)
+    return h.hexdigest()
+
+
+def db_fingerprint(db):
+    """Identify a database's contents cheaply: the name, size and modification time of each data file.
+    An import or update changes them."""
+    h = hashlib.sha256(os.path.realpath(db).encode())
+    for name in sorted(os.listdir(db)):
+        if not (name.endswith(DB_DATA_SUFFIXES) or name in DB_DATA_NAMES):
+            continue
+        st = os.stat(os.path.join(db, name))
+        h.update(f'\0{name}\0{st.st_size}\0{st.st_mtime_ns}'.encode())
+    return h.hexdigest()
+
+
+def baseline_cache_prefix(bindir, db, timeout):
+    """The part of the cache key shared by every query of a run."""
+    return f'{file_sha(os.path.join(bindir, "osm3s_query"))}|{db_fingerprint(db)}|{timeout}'
+
+
+def cache_path(cache_dir, prefix, query):
+    key = hashlib.sha256(f'{prefix}\0{query}'.encode()).hexdigest()
+    return os.path.join(cache_dir, key[:2], key + '.json')
+
+
+def cache_load(path, need_rss):
+    try:
+        with open(path) as f:
+            entry = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if need_rss and entry.get('rss_kb') is None:
+        return None
+    return entry
+
+
+def cache_store(path, status, digest, out, cpu, rss_kb):
+    if status in UNCACHEABLE:
+        return
+    entry = {'status': status, 'digest': digest, 'out_bytes': len(out),
+             'empty': status == 'ok' and out.count(b'\n') <= 6, 'cpu': cpu, 'rss_kb': rss_kb}
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # Write and rename, so parallel workers and interrupted runs never leave a partial entry.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
+    with os.fdopen(fd, 'w') as f:
+        json.dump(entry, f)
+    os.replace(tmp, path)
+
+
 def check(args_tuple):
-    a, b, db, db_b, vocab, seed, index, timeout, features, rss = args_tuple
+    a, b, db, db_b, vocab, seed, index, timeout, features, rss, cache_dir, cache_prefix = args_tuple
     query = generate(vocab, seed, index, features)
-    status_a, digest_a, out_a, cpu_a, rss_a = run(a, db, query, timeout, rss)
+    path = cache_path(cache_dir, cache_prefix, query) if cache_dir else None
+    entry = cache_load(path, rss) if path else None
+    stale = False
+    if entry:
+        status_a, digest_a, out_a, cpu_a, rss_a = entry['status'], entry['digest'], None, entry['cpu'], entry['rss_kb']
+        out_bytes_a, empty = entry['out_bytes'], entry['empty']
+    else:
+        status_a, digest_a, out_a, cpu_a, rss_a = run(a, db, query, timeout, rss)
+        if path:
+            cache_store(path, status_a, digest_a, out_a, cpu_a, rss_a)
+        out_bytes_a, empty = len(out_a), status_a == 'ok' and out_a.count(b'\n') <= 6
     status_b, digest_b, out_b, cpu_b, rss_b = run(b, db_b, query, timeout, rss)
     if 'timeout' in (status_a, status_b) or 'resource-limit' in (status_a, status_b):
         verdict = 'skipped'
@@ -423,8 +506,25 @@ def check(args_tuple):
         verdict = 'same'
     else:
         verdict = 'DIFFERENT'
-    empty = status_a == 'ok' and out_a.count(b'\n') <= 6
-    return index, verdict, status_a, status_b, empty, query, out_a, out_b, cpu_a, cpu_b, rss_a, rss_b
+    if verdict == 'DIFFERENT' and entry:
+        # Run the baseline again: a.out needs its output, and a cached outcome that no longer
+        # holds (an undetected database change, or a non-deterministic baseline) must not
+        # pass for a difference in --b.
+        status_a, fresh_digest, out_a, cpu_a, rss_a = run(a, db, query, timeout, rss)
+        out_bytes_a, empty = len(out_a), status_a == 'ok' and out_a.count(b'\n') <= 6
+        if fresh_digest != digest_a:
+            stale = True
+            digest_a = fresh_digest
+            if status_a not in UNCACHEABLE:
+                cache_store(path, status_a, digest_a, out_a, cpu_a, rss_a)
+            elif os.path.exists(path):
+                os.unlink(path)
+            if 'timeout' in (status_a, status_b) or 'resource-limit' in (status_a, status_b):
+                verdict = 'skipped'
+            elif digest_a == digest_b:
+                verdict = 'same'
+    return (index, verdict, status_a, status_b, empty, query, out_a, out_b, cpu_a, cpu_b, rss_a, rss_b,
+            out_bytes_a, entry is not None and out_a is None, stale)
 
 
 def main():
@@ -450,6 +550,11 @@ def main():
     parser.add_argument('--rss', action='store_true',
                         help='run each query under GNU time and add each build\'s peak memory (RSS) '
                              'to the --report rows (for finding memory-hungry queries)')
+    parser.add_argument('--cache-dir', default=DEFAULT_CACHE_DIR,
+                        help=f'where baseline (--a) outcomes are cached (default {DEFAULT_CACHE_DIR})')
+    parser.add_argument('--no-cache', action='store_true',
+                        help='run the baseline for every query, and neither read nor write the cache')
+    parser.add_argument('--clear-cache', action='store_true', help='empty --cache-dir before running')
     args = parser.parse_args()
 
     with open(args.vocab, 'rb') as f:
@@ -469,30 +574,42 @@ def main():
 
     print(f'seed {args.seed}, features {",".join(sorted(features)) or "none"}, queries {args.start}..{args.start + args.count - 1}, '
           f'vocab sha256 {hashlib.sha256(raw).hexdigest()[:12]}')
+    cache_dir = cache_prefix = None
+    if args.clear_cache and os.path.isdir(args.cache_dir):
+        shutil.rmtree(args.cache_dir)
+    if not args.no_cache:
+        cache_dir = args.cache_dir
+        cache_prefix = baseline_cache_prefix(args.a, args.db, args.timeout)
     verdicts = collections.Counter()
     statuses = collections.Counter()
     empty = 0
+    reused = stale = 0
     tasks = [(args.a, args.b, args.db, args.db_b or args.db, vocab, args.seed, i, args.timeout, features,
-              args.rss)
+              args.rss, cache_dir, cache_prefix)
              for i in range(args.start, args.start + args.count)]
     report = None
     if args.report:
         report = open(args.report, 'w', newline='')
         report_csv = csv.writer(report)
+        # a_cached is last, so readers of the earlier columns are unaffected. A cached row's
+        # cpu_a_ms and rss_a_kb come from the run that filled the cache.
         report_csv.writerow(['seed', 'index', 'verdict', 'status_a', 'status_b', 'cpu_a_ms', 'cpu_b_ms', 'b_over_a',
                              'out_bytes', 'cpu_a_ms_per_kb']
-                            + (['rss_a_kb', 'rss_b_kb', 'rss_b_over_a'] if args.rss else []))
+                            + (['rss_a_kb', 'rss_b_kb', 'rss_b_over_a'] if args.rss else []) + ['a_cached'])
     with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs) as pool:
         for done, result in enumerate(pool.map(check, tasks, chunksize=4), 1):
-            index, verdict, status_a, status_b, is_empty, query, out_a, out_b, cpu_a, cpu_b, rss_a, rss_b = result
+            (index, verdict, status_a, status_b, is_empty, query, out_a, out_b, cpu_a, cpu_b, rss_a, rss_b,
+             size, a_cached, is_stale) = result
+            reused += a_cached
+            stale += is_stale
             if report:
-                size = len(out_a)
                 ratio = cpu_b / cpu_a if cpu_a > 0 else 0
                 # Statuses carry error messages, which can contain commas: csv quotes them.
                 row = [args.seed, index, verdict, status_a, status_b, f'{cpu_a*1000:.1f}', f'{cpu_b*1000:.1f}',
                        f'{ratio:.3f}', size, f'{cpu_a*1000/max(size/1024, 1):.2f}']
                 if args.rss:
                     row += [rss_a or '', rss_b or '', f'{rss_b / rss_a:.3f}' if rss_a and rss_b else '']
+                row.append(int(a_cached))
                 report_csv.writerow(row)
             verdicts[verdict] += 1
             statuses[status_a] += 1
@@ -509,6 +626,9 @@ def main():
     if report:
         report.close()
     print(f'verdicts: {dict(verdicts)}')
+    if cache_dir:
+        print(f'baseline: {reused} of {len(tasks)} outcomes reused from {cache_dir}'
+              + (f'; {stale} stale entries replaced' if stale else ''))
     plain = collections.Counter({k: v for k, v in statuses.items() if not k.startswith('query-error')})
     errs = {k: v for k, v in statuses.items() if k.startswith('query-error')}
     print(f'baseline outcomes: {dict(plain)}, query errors: {sum(errs.values())}; ok but empty: {empty}')

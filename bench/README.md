@@ -68,11 +68,33 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
   that each feature set still generates every construct it should (`poly:`, both area-by-id forms,
   `[bbox:]`, `around`, each out mode, history and user filters, and so on), that generation is
   reproducible, and, with `--bin`, that the queries parse (`osm3s_query --dump-xml`, no database
-  needed). Run it after changing the generator; it takes about half a minute.
+  needed). It also runs `bench/test_fuzz_cache.py`, which tests the baseline cache with a fake
+  `osm3s_query`. Run it after changing the generator or the cache; it takes about a minute.
 - **Reproducible:** query N of seed S depends only on S, N and the vocabulary file (the run prints
   the vocabulary's hash), not on `--jobs` or on which other queries ran.
 - **Reusable:** `--a` and `--b` take any two builds, so the same seeds can be replayed against every
   change.
+- **Baseline cache:** the baseline's (`--a`'s) outcomes are cached in `--cache-dir` (default
+  `~/.cache/overpass-bench/fuzz/`), so replaying seeds against another change runs only `--b`.
+  - **Key:** a hash of `--a`'s `osm3s_query` binary, a fingerprint of the database's data files
+    (name, size and modification time of each `*.bin`, `*.idx` and `*.map` file and the
+    replication markers, so an import or update invalidates it, but `transactions.log` doesn't),
+    `--timeout`, and the query text. The vocabulary and `--features` only decide the query text,
+    so they need no separate place in the key.
+  - **Not cached:** timeouts and memory-limit failures, which depend on load. They run again.
+  - **Checked on differences:** when a query differs and its baseline came from the cache, the
+    baseline runs again, to write `a.out` and to confirm the cached outcome still holds. If it
+    doesn't (an undetected database change, or a baseline that isn't deterministic), the entry is
+    replaced, the fresh outcome decides the verdict, and the summary counts it as stale.
+  - **Reporting:** the summary says how many outcomes were reused. `--report` adds an `a_cached`
+    column at the end; a cached row's `cpu_a_ms` and `rss_a_kb` come from the run that filled the
+    cache. With `--rss`, entries without a peak RSS run again.
+  - **Flags:** `--no-cache` runs the baseline every time and leaves the cache alone, and
+    `--clear-cache` empties it first. With the same build as `--a` and `--b`, a cached run compares
+    fresh outputs against earlier ones, which checks determinism across runs.
+  - **Licensed data:** entries hold digests and sizes, not outputs, but entries from a database
+    derived from licensed data (such as a full-history extract) stay on the machine, like the
+    database.
 - **Import changes:** `--db-b` runs `--b` against a second database. With the same build for `--a`
   and `--b`, this compares two databases, e.g. one imported by the baseline and one by a changed
   `update_database`, or the same file imported with two `--flush-size` values.

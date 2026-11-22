@@ -2,7 +2,7 @@
 """Tests for fuzz.py's query generator: coverage of the constructs it should produce, and,
 given an Overpass build, that the generated queries parse.
 
-  python3 bench/test_fuzz.py                      # coverage only, no Overpass needed
+  python3 bench/test_fuzz.py                      # coverage and the baseline cache, no Overpass needed
   python3 bench/test_fuzz.py --bin BUILD/bin      # also parse every query (osm3s_query --dump-xml)
 
 Uses a small synthetic vocabulary, so it needs no extract or database. Exit status is 1
@@ -138,6 +138,14 @@ def main():
             failures.append(f'{sorted(features)}: generation is not reproducible')
         if args.bin:
             check_parse(args.bin, features, queries, failures)
+
+    # The baseline cache, with a fake osm3s_query (bench/test_fuzz_cache.py).
+    cache = subprocess.run([sys.executable, os.path.join(HERE, 'test_fuzz_cache.py')],
+                           capture_output=True, text=True, timeout=600)
+    print('  baseline cache: ' + (cache.stdout.strip().split('\n')[-1] if cache.stdout else 'no output'))
+    if cache.returncode != 0:
+        failures.append('baseline cache: ' + '; '.join(
+            l for l in cache.stdout.split('\n') if l.startswith('FAIL')) or cache.stderr[-500:])
 
     for f in failures:
         print('FAIL', f)
