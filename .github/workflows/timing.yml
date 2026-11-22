@@ -195,6 +195,14 @@ jobs:
     if: always()
     runs-on: ubuntu-24.04-arm
     steps:
+      - name: Check out the noise floors
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TOOLS_REF }}
+          path: tools
+          sparse-checkout: bench/timing-floors.json
+          sparse-checkout-cone-mode: false
+
       - name: Collect the measurements
         uses: actions/download-artifact@v7
         with:
@@ -225,6 +233,23 @@ jobs:
           expected = len(json.loads(os.environ['EXPECTED']))
           mode = os.environ['MODE']
           tol = float(os.environ['TOLERANCE'])
+          # Per-query noise floors for this runner type (bench/timing-floors.json on bench-tools).
+          floors, floor_src = {}, None
+          try:
+              entry = json.load(open('tools/bench/timing-floors.json'))['runners'].get(os.environ['RUNNER'])
+              if entry:
+                  floors, floor_src = entry['floors'], f"{entry['date']}, {entry['runners']} runners"
+          except (OSError, ValueError, KeyError):
+              pass
+
+          def verdict(name, ratio):
+              floor = floors.get(name)
+              if floor is None:
+                  return 'no floor'
+              d = ratio - 1
+              if abs(d) <= floor:
+                  return f'within noise (±{floor:.1%})'
+              return f"**{'faster' if d < 0 else 'slower'}** ({d:+.1%}, floor ±{floor:.1%})"
 
           def ratios(result):
               return {q['name']: med(q['b_times']) / med(q['a_times'])
@@ -250,24 +275,32 @@ jobs:
                    '', f"{len(runs)} of {expected} runners reported ({os.environ['RUNNER']}; CPUs: {', '.join(cpus) or '?'}), "
                    f"{os.environ['REPS']} alternating runs per query per build each.", '']
           if mode == 'compare':
-              lines += ['| Query | A (median ms) | B/A (median over runners) | Runner range | Outputs |', '|---|---:|---:|---:|---|']
+              if not floors:
+                  lines += [f"No noise floors for {os.environ['RUNNER']} in bench/timing-floors.json; verdicts show 'no floor'.", '']
+              else:
+                  lines += [f"Verdicts use the noise floors calibrated {floor_src} (bench/timing-floors.json).", '']
+              lines += ['| Query | A (median ms) | B/A (median over runners) | Runner range | Verdict | Outputs |', '|---|---:|---:|---:|---|---|']
           else:
               lines += ['| Query | A (median ms) | A/A (median over runners) | Runner range | Max deviation |', '|---|---:|---:|---:|---:|']
-          floors = []
+          floors_seen = []
+          significant = []
           for n in names:
               rs = [pr[n] for pr in per_runner if n in pr]
               if not rs:
                   continue
               rng = f'{min(rs):.3f}-{max(rs):.3f}'
               if mode == 'compare':
-                  lines.append(f"| {n} | {med(a_ms[n]):.1f} | {med(rs):.3f} | {rng} | {'DIFFERENT' if n in differing else 'same'} |")
+                  v = verdict(n, med(rs))
+                  if v.startswith('**'):
+                      significant.append(f'{n} {v}')
+                  lines.append(f"| {n} | {med(a_ms[n]):.1f} | {med(rs):.3f} | {rng} | {v} | {'DIFFERENT' if n in differing else 'same'} |")
               else:
                   dev = max(abs(r - 1) for r in rs)
-                  floors.append(dev)
+                  floors_seen.append(dev)
                   lines.append(f"| {n} | {med(a_ms[n]):.1f} | {med(rs):.3f} | {rng} | {dev:.1%} |")
           totals = [total(r) for _, r, _ in runs]
           if totals:
-              lines.append(f"| **Total (sum of medians)** | | **{med(totals):.3f}** | {min(totals):.3f}-{max(totals):.3f} | |")
+              lines.append(f"| **Total (sum of medians)** | | **{med(totals):.3f}** | {min(totals):.3f}-{max(totals):.3f} |{' |' if mode == 'compare' else ''} |")
           bad = []
           if mode == 'compare':
               lines += ['', f'A/A control per runner (median over {os.environ.get("CONTROL_QUERIES", "").count(".ql")} queries; flagged beyond ±{tol:.0%}):', '']
@@ -282,8 +315,10 @@ jobs:
                   if flag:
                       bad.append(f"runner {m['index']} (control {cr:.3f})")
           else:
-              if floors:
-                  lines += ['', f"Noise floor: median over queries of the max deviation {med(floors):.1%}, worst query {max(floors):.1%}."]
+              if floors_seen:
+                  lines += ['', f"Noise floor: median over queries of the max deviation {med(floors_seen):.1%}, worst query {max(floors_seen):.1%}."]
+          if mode == 'compare' and floors:
+              lines += ['', ('Beyond the noise floor: ' + '; '.join(significant)) if significant else 'No query is beyond its noise floor.']
           if differing:
               lines += ['', 'Outputs differ for: ' + ', '.join(sorted(differing))]
           if bad:
