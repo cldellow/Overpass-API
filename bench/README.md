@@ -44,6 +44,16 @@ expect a database built from a Nova Scotia extract. Two more sets need databases
 
 Run each set with `--db` pointed at its database; the baseline cache keeps them apart.
 
+## Timing on GitHub Actions
+
+The `timing` workflow (`.github/workflows/timing.yml` on `master`) runs `compare.py --no-cache --json` on several runners and combines them: per query, the median over runners of each runner's B/A ratio. It runs on pull requests into `master` that change `src/`, and by hand with a ref, the number of runners, the runner type (ARM by default, `ubuntu-24.04` for x86) and a mode.
+
+- **Noise floors:** `timing-floors.json` holds each query's noise floor per runner type: the largest deviation from 1.0 of any single runner's A/A ratio in a calibration run (mode `calibrate`, 10 runners, 5 alternating runs per query per build). The summary calls a median B/A ratio faster or slower only when it's further from 1.0 than the query's floor, and "within noise" otherwise.
+- **Current floors** (calibrated 2026-11-22):
+  - ARM (`ubuntu-24.04-arm`, all Neoverse-N2): median 0.5%, worst `q03` 2.2%.
+  - x86 (`ubuntu-24.04`, a mix of AMD EPYC 7763, Xeon Platinum 8573C and Xeon 6975P-C): median 0.7%, worst `q12` 4.6%.
+- **Recalibrate** after a runner image change, or when queries are added: run the workflow with mode `calibrate` and 10 runners, download its `timing-summary` artifact, and replace that runner type's entry (`calibration_run`, `date`, `cpus` and `floors`). A query without a floor is shown as "no floor".
+
 ## Differential fuzzing
 
 `fuzz.py` generates random Overpass QL queries and runs each one against two builds, reporting

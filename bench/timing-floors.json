@@ -1,0 +1,85 @@
+{
+ "_about": "Per-query noise floors for the timing workflow (.github/workflows/timing.yml on master): the largest deviation from 1.0 of any single runner's A/A ratio (median of the baseline's times against median of the same baseline's times, 5 alternating runs each) in a calibration run of 10 runners. timing.yml calls a median B/A ratio significant when it is further from 1.0 than the query's floor. Recalibrate (timing.yml, mode calibrate) after a runner image change or when queries are added, and replace the entry for that runner type.",
+ "runners": {
+  "ubuntu-24.04-arm": {
+   "calibration_run": "https://github.com/cldellow/Overpass-API/actions/runs/45030397513",
+   "date": "2026-11-22",
+   "runners": 10,
+   "reps": 5,
+   "cpus": [
+    "Neoverse-N2"
+   ],
+   "baseline": "8edf11b0419c (upstream/master)",
+   "floors": {
+    "a1_cafes_halifax": 0.0052,
+    "a2_highways_halifax": 0.0028,
+    "a3_buildings_hrm": 0.0023,
+    "a4_is_in_cafes": 0.0079,
+    "q01_global_tag": 0.0031,
+    "q02_global_rare_tag": 0.0056,
+    "q03_bbox_all_nodes": 0.0215,
+    "q04_bbox_tag": 0.0078,
+    "q05_recurse_down": 0.006,
+    "q06_around": 0.0087,
+    "q07_big_relation": 0.0066,
+    "q08_out_meta": 0.0044,
+    "q09_out_geom_buildings": 0.0048,
+    "q10_out_geom_highways": 0.0077,
+    "q11_recurse_up": 0.0043,
+    "q12_josm_download": 0.0038,
+    "t01_turbo_default": 0.0053,
+    "t02_turbo_wizard_area": 0.0042,
+    "t03_turbo_wizard_bbox": 0.0053,
+    "t04_turbo_cycle_network": 0.0129,
+    "t05_josm_full_download": 0.0041,
+    "t06_josm_wizard_bbox": 0.0063,
+    "t07_quickosm_area": 0.0104,
+    "t08_osmnx_graph_drive": 0.0092,
+    "t09_osmnx_features": 0.0036,
+    "t10_osmdata_bbox": 0.0032,
+    "t11_mapcomplete": 0.0046
+   }
+  },
+  "ubuntu-24.04": {
+   "calibration_run": "https://github.com/cldellow/Overpass-API/actions/runs/45030400034",
+   "date": "2026-11-22",
+   "runners": 10,
+   "reps": 5,
+   "cpus": [
+    "AMD EPYC 7763 64-Core Processor",
+    "INTEL(R) XEON(R) PLATINUM 8573C",
+    "Intel(R) Xeon(R) 6975P-C"
+   ],
+   "baseline": "8edf11b0419c (upstream/master)",
+   "floors": {
+    "a1_cafes_halifax": 0.0087,
+    "a2_highways_halifax": 0.0049,
+    "a3_buildings_hrm": 0.0116,
+    "a4_is_in_cafes": 0.0048,
+    "q01_global_tag": 0.002,
+    "q02_global_rare_tag": 0.0036,
+    "q03_bbox_all_nodes": 0.0133,
+    "q04_bbox_tag": 0.0048,
+    "q05_recurse_down": 0.0026,
+    "q06_around": 0.0116,
+    "q07_big_relation": 0.007,
+    "q08_out_meta": 0.0047,
+    "q09_out_geom_buildings": 0.0083,
+    "q10_out_geom_highways": 0.0202,
+    "q11_recurse_up": 0.0039,
+    "q12_josm_download": 0.0463,
+    "t01_turbo_default": 0.0076,
+    "t02_turbo_wizard_area": 0.0046,
+    "t03_turbo_wizard_bbox": 0.0168,
+    "t04_turbo_cycle_network": 0.0102,
+    "t05_josm_full_download": 0.0074,
+    "t06_josm_wizard_bbox": 0.0098,
+    "t07_quickosm_area": 0.0037,
+    "t08_osmnx_graph_drive": 0.005,
+    "t09_osmnx_features": 0.0046,
+    "t10_osmdata_bbox": 0.0047,
+    "t11_mapcomplete": 0.0071
+   }
+  }
+ }
+}
