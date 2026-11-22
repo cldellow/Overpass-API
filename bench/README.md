@@ -114,6 +114,108 @@ It prints query indices, not query text, so it's safe with private vocabularies;
 with `fuzz.py --show`. Run it against a slow build (`upstream/master`): on a fast one few queries
 reach the limit at all.
 
+## Property tests on synthetic data
+
+`props/props.py` generates small synthetic databases, runs queries on them and checks every
+result. Where `fuzz.py` replays random queries on real data, this targets the configurations real
+data almost never contains: points on or 1-2 units (1e-7 degrees) off polygon edges and vertices,
+segments parallel to an axis 0-3 units apart, shared endpoints, and data straddling index tile
+boundaries, at four scales from a few units to several tiles.
+
+```bash
+# Check a build against upstream: properties, plus byte-identical output.
+python3 bench/props/props.py --bin NEW/build/bin --baseline UPSTREAM/build/bin --seeds 1-60
+
+# Check upstream against itself (outputs must be deterministic).
+python3 bench/props/props.py --bin UPSTREAM/build/bin --baseline UPSTREAM/build/bin --seeds 1-60
+
+# Print one seed's data and queries.
+python3 bench/props/props.py --seeds 7 --show
+```
+
+- **Only the binaries:** the tests use `update_database` and `osm3s_query`, nothing internal, so
+  the same seeds replay unchanged against upstream and every branch. A build directory after
+  `make bin/osm3s_query` is enough for the candidate; the importing build also needs
+  `make bin/update_database`.
+- **Same database for both builds:** each seed is imported once, by the baseline's
+  `update_database` (or `--import-bin`), with `--meta`, and the area rules are run on it. Both
+  builds then query the same files. Use `--import-bin` with the candidate for changes to the
+  on-disk format; import and area-creation changes themselves aren't tested this way.
+- **What is checked:** each query's result against an answer computed from the generated data:
+  bbox, tag, id, recursion, relation members, set operations, `uid`/`user`/`newer` exactly;
+  `poly:`, areas, `is_in` and `around` with a margin (objects clearly inside must be returned,
+  objects clearly outside must not; objects within 2 units of the boundary, or within 0.5 m plus
+  0.1% of an `around` radius, aren't checked). With `--baseline`, every output must also be
+  byte-identical to the baseline's, which covers the boundary cases the margins leave out.
+- **Output:** the queries above print only type and id. Separate checks print whole outputs:
+  `out meta` in XML and JSON (every node's coordinates, metadata and tags), `out meta geom` and
+  `out bb` of ways and `out geom` of relations (node lists, member geometry and bounds), each
+  against the generated data; `out center`, CSV with tag columns, JSON geometry and `out skel qt`
+  are compared with the baseline only. To exercise output formatting, each seed also has nodes
+  at extreme coordinates (0, one unit either side of 0, next to the poles and the antimeridian),
+  and tag values and user names that need escaping (`&`, `<`, quotes, newlines, tabs, non-ASCII
+  text, a 300-character value, an empty value).
+- **History:** with `--history-import-bin BETTER_IMPORTS/build/bin`, each seed also gets a history
+  database: the seed's data as version 1 in 2019, then three rounds of edits in 2020-2022 (nodes
+  moved, some by a single unit; tags changed; nodes and ways deleted and created; way node lists
+  and relation members changed), imported as one full-history file with `--meta --keep-attic`.
+  `upstream/master` imports full history incorrectly, so use a `better-imports` build for the
+  import. At twelve dates (before the data, at each edit, a second either side, in between,
+  after), `[date:]` queries are checked exactly: bbox, tag, id, `uid`, `node(w)`, `way(bn)`,
+  `way(r)`, `>` from ways and relations, and `out meta` and `out meta geom` (versions, node lists
+  and coordinates as of the date); `way(bbox)` and `poly:` with a margin. Also `changed` (an
+  element counts if a version falls in the interval; a way also counts if one of its nodes
+  moved then, but not for a node's tag edit), and `uid_touched`/`user_touched` (any version by
+  the user, also one after a `[date:]`, which is what upstream does). `[diff:]` and `[adiff:]`
+  outputs are compared with the baseline only.
+- **Fixes:** where a check has an exact expected answer and the candidate gets it right while
+  the baseline doesn't, a difference in output is counted as fixed (the last column), not as a
+  failure. A branch that fixes an upstream bug shows up there.
+- **Failures on the baseline too** are counted separately and don't fail the run: they're
+  upstream behaviour, not a regression. Expect some in the `poly ways` and `area ways` rows:
+  upstream misses ways that cross a polygon edge when `uint32` latitudes wrap around in
+  `ordered_intersects_inner`, and `way(area)` drops a way that touches the area's border if it
+  also crosses the interior. With history, `date rel >` fails occasionally: at a past date,
+  `relation; >;` also returns nodes of a member way's current version when they're in another
+  index tile. And `rel set uid_touched` always fails on upstream, which filters a set's relations
+  by the touched criterion only when the set also holds nodes (fixed on this fork; see
+  "Fixes" above).
+- **Failures** are printed with their seed and query, and with `--out-dir` written to
+  `OUT_DIR/<seed>-<check>/{data.osm,query.ql,candidate.out,baseline.out,problems.txt}`. The exit
+  status is 1 if any check fails on the candidate but not the baseline, or any output differs.
+- **Reproducible:** a seed's data and queries depend only on the seed and the script (its hash
+  is printed).
+- **Speed:** 60 seeds (about 5,400 queries per build) take about two and a half minutes on 4 cores;
+  with history (about 17,000 more), about six and a half.
+
+### Does a passing run mean anything? (`mutate.py`)
+
+`props/mutate.py` breaks each change on purpose and checks that `props.py` notices. Each mutant
+in `props/mutants-all-changes.json` is one exact text replacement in the `all-changes` sources,
+a plausible bug in the logic one commit added (an off-by-one, a dropped case, a wrong index).
+For each, the script applies it, rebuilds `osm3s_query`, runs `props.py` against the baseline
+and restores the file.
+
+```bash
+python3 bench/props/mutate.py --src ALL_CHANGES --build ALL_CHANGES/build \
+    --baseline UPSTREAM/build/bin --history-import-bin BETTER_IMPORTS/build/bin \
+    --mutants bench/props/mutants-all-changes.json --seeds 1-40
+```
+
+- **Use a dedicated checkout:** the source files and the build are modified while it runs (each
+  file is restored afterwards, also on an error), and the build is rebuilt from the restored
+  sources at the end. Don't run anything else against that build meanwhile.
+- **Caught** means the mutant's summary table differs from the unmutated tree's: more failures,
+  more output differences, or fewer fixes. Comparing with the unmutated run, not only with the
+  baseline, also catches a mutant that undoes a bug fix, whose output matches the baseline again.
+- **Reading the result:** a mutant that isn't caught marks a change whose correctness the
+  checks don't cover, or an equivalent mutant (one that can't change any result; the JSON's
+  `note` says so where that's expected).
+- **Keeping it current:** a mutant whose text no longer matches is reported as not applicable.
+  When a commit in `all-changes` changes, update its mutant.
+- **Time:** a rebuild plus a `props.py` run per mutant, so a few minutes each.
+
+
 ## A database with history
 
 **From a full-history extract** (`.osh.pbf`): import it directly. `--keep-attic` includes the

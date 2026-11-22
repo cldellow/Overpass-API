@@ -1,0 +1,281 @@
+[
+ {
+  "commit": "5f7ca76",
+  "subject": "area and poly queries: skip the segment test when bounding boxes don't overlap",
+  "file": "src/overpass_api/statements/area_query.cc",
+  "old": "  for (Decoded_Coords::const_iterator it = coords.begin(); it != coords.end(); ++it)",
+  "new": "  for (Decoded_Coords::const_iterator it = coords.begin() + 1; it != coords.end(); ++it)",
+  "note": "Coords_Bounds leaves the first vertex out of the box",
+  "expect_caught": "maybe"
+ },
+ {
+  "commit": "a5bad4f",
+  "subject": "Segment pre-check: allow the 1-unit latitude slack intersects_inner uses",
+  "file": "src/overpass_api/statements/area_query.h",
+  "old": "    return !((max_lat < rhs.min_lat && rhs.min_lat - max_lat > 1)\n        || (rhs.max_lat < min_lat && min_lat - rhs.max_lat > 1)",
+  "new": "    return !((max_lat < rhs.min_lat && rhs.min_lat - max_lat > 0)\n        || (rhs.max_lat < min_lat && min_lat - rhs.max_lat > 0)",
+  "note": "removes the 1-unit latitude slack (the original #81 bug)",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "6eb8582",
+  "subject": "poly queries: test nodes against blocks decoded once per tile",
+  "file": "src/overpass_api/statements/polygon_query.cc",
+  "old": "      areas_in_tile.push_back(Coord_Query_Statement::Decoded_Area_Block(current_idx, *ait));\n\n    while (nodes_it != nodes.end() && nodes_it->first.val() < current_idx)",
+  "new": "      areas_in_tile.push_back(Coord_Query_Statement::Decoded_Area_Block(0, *ait));\n\n    while (nodes_it != nodes.end() && nodes_it->first.val() < current_idx)",
+  "note": "poly node test decodes blocks with ll_index 0 instead of the tile",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "6ae7b9f",
+  "subject": "area and poly queries: decode each block once per tile for the segment tests",
+  "file": "src/overpass_api/statements/area_query.cc",
+  "old": "  coords.clear();\n  coords.reserve(block.coors.size());",
+  "new": "  coords.reserve(block.coors.size());",
+  "note": "decode_coords no longer clears its output, so segments pile up",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "ce2e8fc",
+  "subject": "area queries: decode area blocks once per tile, skip blocks out of range",
+  "file": "src/overpass_api/statements/coord_query.cc",
+  "old": "coord_lon > area_block.max_lon)",
+  "new": "coord_lon >= area_block.max_lon)",
+  "note": "decoded block early exit rejects the maximum longitude",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "8e4d3fd",
+  "subject": "bbox filter: keep ways in inner tiles without loading their geometry",
+  "file": "src/overpass_api/data/bbox_filter.cc",
+  "old": "::lon(idx, 0xffffffff) <= bbox.east)",
+  "new": "::lon(idx, 0) <= bbox.east)",
+  "note": "inner-tile test compares the west edge with bbox.east",
+  "expect_caught": "maybe"
+ },
+ {
+  "commit": "019d509",
+  "subject": "Geometry stores: keep member node positions in 16 bytes, not 40",
+  "file": "src/overpass_api/data/way_geometry_store.cc",
+  "old": "  move_to_node_positions(way_members_, nodes);\n  sort(nodes.begin(), nodes.end(), Node_Comparator_By_Id());",
+  "new": "  move_to_node_positions(way_members_, nodes);",
+  "note": "node positions not sorted by id before binary search",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "034d754",
+  "subject": "Collect relation node members and way nodes in one pass",
+  "file": "src/overpass_api/data/collect_members.cc",
+  "old": "      relation_node_member_indices(relations, attic_relations).union_(way_nd_indices(ways, attic_ways)));",
+  "new": "      relation_node_member_indices(relations, attic_relations));",
+  "note": "one-pass reader drops the way nodes' tiles (affects > and >>)",
+  "expect_caught": "maybe"
+ },
+ {
+  "commit": "7fbeb71",
+  "subject": "Collect relation node members and way nodes in one pass at past dates",
+  "file": "src/overpass_api/data/collect_members.cc",
+  "old": "            context, input_set.relations, input_set.attic_relations, all_ways.current, all_ways.attic)",
+  "new": "            context, {}, input_set.attic_relations, all_ways.current, all_ways.attic)",
+  "note": "past-date one-pass recursion drops current relations' node members",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "124b684",
+  "subject": "Reject non-matching ids with a bit filter before binary search",
+  "file": "src/overpass_api/data/abstract_processing.h",
+  "old": "    return (bits[h>>6] >> (h & 63)) & 1;",
+  "new": "    return (bits[h>>6] >> (h & 31)) & 1;",
+  "note": "id bit filter reads the wrong bit",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "81baad8",
+  "subject": "around: skip index entries without objects when computing candidate ranges",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": "    if (it->second.empty())\n      continue;",
+  "new": "    if (it->second.size() <= 1)\n      continue;",
+  "note": "input-set ranges skip index entries with one object",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "1a75fcc",
+  "subject": "around: take candidate ranges for relation inputs from their members",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": ".union_(member_node_ranges)",
+  "new": "",
+  "note": "relation input ranges drop node members",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "e927242",
+  "subject": "around grid: test each entry once per lookup, tighter reach for segments",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": "  seen[id] = lookup;",
+  "new": "  seen[id] = lookup + 1;",
+  "note": "grid visit stamp off by one: every second lookup skips an entry",
+  "expect_caught": "maybe"
+ },
+ {
+  "commit": "352a181",
+  "subject": "around: let the tag index drive queries whose around area is large",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": "    if (tiles > 65536)",
+  "new": "    if (tiles > 64)",
+  "note": "strategy threshold only: equivalent, both strategies return the same result",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "6ad3fed",
+  "subject": "around: check the query's time limit while filtering candidates",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": "    if (++count % 256 == 0)",
+  "new": "    if (++count % 256 != 0)",
+  "note": "time-limit check frequency only: equivalent for results",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "89b6ab5",
+  "subject": "around: index the input set's geometry with a coarse grid",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": "  lon0 = (int64)floor(box.west / cell_size);",
+  "new": "  lon0 = (int64)(box.west / cell_size);",
+  "note": "grid cell index truncates instead of floor for negative longitudes",
+  "expect_caught": "maybe"
+ },
+ {
+  "commit": "0e0fb95",
+  "subject": "around: use fixed-size arrays for 3-D vectors",
+  "file": "src/overpass_api/statements/around.h",
+  "old": "typedef std::array< double, 3 > Vec3;",
+  "new": "typedef std::array< float, 3 > Vec3;",
+  "note": "3-D vectors in float lose precision",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "90dccb0",
+  "subject": "Format output coordinates without general float formatting",
+  "file": "src/overpass_api/output_formats/fixed7.h",
+  "old": "  double rounded = std::floor(scaled + 0.5);",
+  "new": "  double rounded = std::floor(scaled);",
+  "note": "coordinate formatting truncates instead of rounding",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "0a05268",
+  "subject": "Write tag strings without an escaped copy when nothing needs escaping",
+  "file": "src/expat/escape_xml.cc",
+  "old": "    if (c == '&' || c == '\\\"' || c == '<' || c == '>' || c < 32)",
+  "new": "    if (c == '&' || c == '\\\"' || c == '<' || c < 32)",
+  "note": "escape fast path forgets >",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "6a07314",
+  "subject": "changed: collect only the ids other constraints allow",
+  "file": "src/overpass_api/statements/query.cc",
+  "old": "      bool restricts = (pass == 1 && !ids.invert)",
+  "new": "      bool restricts = (pass == 1)",
+  "note": "changed: narrows by an \"all ids\" list",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "f116b76",
+  "subject": "filter_attic_elements: build and use the timestamps one index at a time",
+  "file": "src/overpass_api/data/collect_members.h",
+  "old": "                ait = attic.insert(std::make_pair(*idx, std::vector< Attic< Skeleton > >())).first;",
+  "new": "                continue;",
+  "note": "past date: current element ending before NOW dropped when its index had no attic",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "a0b94f3",
+  "subject": "user: keep touched ids for the whole query, whatever their number",
+  "file": "src/overpass_api/statements/user.cc",
+  "old": "    ids = touched_nodes(rman);",
+  "new": "    touched_nodes(rman); ids.swap(touched_node_ids);",
+  "note": "touched ids handed over but still marked known",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "41e5c43",
+  "subject": "keep_matching_skeletons: valid-until timestamps in a sorted vector, not a std::map",
+  "file": "src/overpass_api/data/collect_members.h",
+  "old": "        if (valid_until == 0)\n          valid_until = run_end->second;",
+  "new": "        valid_until = run_end->second;",
+  "note": "past date: keeps the largest valid-until, not the smallest",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "60e59a9",
+  "subject": "Collect_Items: cap chunk size, and chunk queries at a past date",
+  "file": "src/overpass_api/data/collect_items.h",
+  "old": "            || result_size >= MAX_CHUNK_ACCOUNTED_SIZE;\n        cur_idx = it.index();",
+  "new": "            || result_size >= MAX_CHUNK_ACCOUNTED_SIZE;\n        cur_idx = it.index();\n        if (too_much_data)\n          return true;",
+  "note": "chunk ends mid-index, duplicating objects; only past 256K scanned objects, so not reachable with the small synthetic data",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "84bc740",
+  "subject": "collect_items_range: keep the result size up to date instead of recounting it",
+  "file": "src/overpass_api/data/collect_items.h",
+  "old": "        if (last == result.end() || !(last->first == it.index()))",
+  "new": "        if (last == result.end())",
+  "note": "cached index iterator never advances",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "6d44388",
+  "subject": "filter_attic_elements: per-index timestamps in a sorted vector, not a std::map",
+  "file": "src/overpass_api/data/collect_members.h",
+  "old": "      [](const std::pair< Id_Type, Value >& a, const Id_Type& b) { return a.first < b; });",
+  "new": "      [](const std::pair< Id_Type, Value >& a, const Id_Type& b) { return !(b < a.first); });",
+  "note": "past date: lower_bound behaves as upper_bound (a.first <= b)",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "a20d3f5",
+  "subject": "Don't copy the input set when passing it or an empty set by reference",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": "  around->calc_lat_lons(input ? *input : empty, *around, rman);",
+  "new": "  around->calc_lat_lons(empty, *around, rman);",
+  "note": "around with an input set uses the empty set",
+  "expect_caught": "maybe"
+ },
+ {
+  "commit": "c700fa3",
+  "subject": "query: run metadata-only filters before geometry filters",
+  "file": "src/overpass_api/statements/query.cc",
+  "old": "    if (!(*it)->filter_reads_only_metadata())",
+  "new": "    if ((*it)->filter_reads_only_metadata())",
+  "note": "geometry filters never run",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "7077c94",
+  "subject": "user: compute the ids of touched objects once per query",
+  "file": "src/overpass_api/statements/user.cc",
+  "old": "  if (!relation_ids_known)",
+  "new": "  if (!way_ids_known)",
+  "note": "touched relations check the wrong cache flag",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "6237e6d",
+  "subject": "user: filter relations by touched ids whenever the set has relations",
+  "file": "src/overpass_api/statements/user.cc",
+  "old": "    if (!into.relations.empty() || !into.attic_relations.empty())",
+  "new": "    if (!into.nodes.empty() || !into.attic_nodes.empty())",
+  "note": "touched filter skips relations when the set has no nodes",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "fc7b13c",
+  "subject": "Meta_Collector: keep a tile's metadata in a sorted vector, not a std::set",
+  "file": "src/overpass_api/data/meta_collector.h",
+  "old": "      { return !(a < b) && !(b < a); }), current_objects.end());",
+  "new": "      { return !(b < a); }), current_objects.end());",
+  "note": "metadata dedup collapses each tile to one entry",
+  "expect_caught": "yes"
+ }
+]
