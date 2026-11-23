@@ -284,8 +284,8 @@
   "file": "src/overpass_api/statements/bbox_query.cc",
   "old": "      move_into(into.attic_nodes, chunk.attic_nodes);\n",
   "new": "      chunk.attic_nodes.clear();\n",
-  "note": "past-date chunk loop drops each chunk's attic nodes, keeping only nodes whose current version is valid at the date; needs a standalone node(bbox) at a past date with attic versions in its result",
-  "expect_caught": "maybe"
+  "note": "past-date chunk loop drops each chunk's attic nodes, keeping only nodes whose current version is valid at the date",
+  "expect_caught": "yes"
  },
  {
   "commit": "3f7cfa8",
@@ -338,8 +338,8 @@
   "file": "src/overpass_api/core/type_tags.h",
   "old": "      if (!(it2->id < lower_id_bound) && it2->id < upper_id_bound)\n        ids_by_coarse[it->first.val() & 0x7fffff00].push_back(it2->id);",
   "new": "      if (lower_id_bound < it2->id && it2->id < upper_id_bound)\n        ids_by_coarse[it->first.val() & 0x7fffff00].push_back(it2->id);",
-  "note": "a chunk's id list leaves out the chunk's first id, so that element prints without tags; caught only if the lowest id of an out with tags (one chunk on the synthetic sets) has tags",
-  "expect_caught": "maybe"
+  "note": "a chunk's id list leaves out the chunk's first id, so that element prints without tags",
+  "expect_caught": "yes"
  },
  {
   "commit": "f7274dc",
