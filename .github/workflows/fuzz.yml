@@ -3,8 +3,8 @@
 #
 # - The baseline is upstream/master at the candidate's merge base, as in props.yml.
 # - setup.yml builds or restores the binaries and the database (the Nova Scotia extract with the
-#   standard area rules, lz4 data and uncompressed maps, cached as a sparse archive). Plain and area
-#   queries both run on it.
+#   standard area rules, lz4 data and uncompressed maps, cached as a sparse archive). Plain, area
+#   and evaluator (convert, make, for, if) queries all run on it.
 # - Each shard keeps fuzz.py's baseline cache in the Actions cache, so later runs with the same
 #   baseline, seed and database only run the candidate.
 # - Pull requests and manual runs use seed 1 by default, so the baseline cache is reused across
@@ -39,6 +39,10 @@ on:
         description: Queries per shard (10 shards per feature set)
         required: true
         default: '200'
+      tools_ref:
+        description: bench-tools branch to take fuzz.py from
+        required: true
+        default: bench-tools
       import_ref:
         description: better-imports commit that builds the database
         required: true
@@ -101,13 +105,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        set: [plain, areas]
+        set: [plain, areas, evaluators]
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     steps:
       - name: Check out bench-tools
         uses: actions/checkout@v7
         with:
-          ref: bench-tools
+          ref: ${{ inputs.tools_ref || 'bench-tools' }}
           path: tools
 
       - name: Restore the baseline binaries
@@ -157,6 +161,7 @@ jobs:
           case "$SET" in
             plain) features= ;;
             areas) features=areas,complete ;;
+            evaluators) features=evaluators ;;
           esac
           start=$((SHARD * QUERIES_PER_SHARD))
           set +e
@@ -241,13 +246,13 @@ jobs:
               if r['exit'] != 0 or r['verdicts'] is None:
                   bad.append(f"{r['set']} shard {r['shard']} (exit {r['exit']})")
           lines = [f"### fuzz.py: {os.environ['CANDIDATE']} ({os.environ['CAND_SHA'][:12]}) against upstream/master at {os.environ['BASE_SHA'][:12]}, seed {os.environ['SEED']}", '',
-                   f"{len(rows)} of 20 shards reported. Verdicts: {dict(total)}. Baseline outcomes reused from the cache: {reused} of {queries}.", '']
+                   f"{len(rows)} of 30 shards reported. Verdicts: {dict(total)}. Baseline outcomes reused from the cache: {reused} of {queries}.", '']
           for s, c in sorted(by_set.items()):
               lines.append(f"- **{s}:** {dict(c)}")
           if bad:
               lines += ['', 'Shards with differences or errors (see their fuzz-failures artifacts): ' + ', '.join(bad)]
           open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write('\n'.join(lines) + '\n')
           print('\n'.join(lines))
-          if bad or len(rows) < 20:
+          if bad or len(rows) < 30:
               raise SystemExit(1)
           EOF

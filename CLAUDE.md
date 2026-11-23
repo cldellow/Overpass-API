@@ -58,7 +58,7 @@ Databases with history, built from a full-history extract, need a `better-import
   its confidence interval and sign test, not by medians and spreads. Don't call a change noise, or
   drop it, without a paired measurement: medians misjudged real 4–9% gains as noise.
 - **Correctness:** don't run `bench/fuzz.py` locally to check a change; CI runs it. The `fuzz`
-  workflow (plain database: plain and `areas,complete`) and the `history` workflow (full-history
+  workflow (plain database: plain, `areas,complete` and `evaluators`) and the `history` workflow (full-history
   database: `history,users,complete`) run on every PR into `master` that touches `src/`. For a
   stacked PR, or one opened before these workflows existed, dispatch both from `master`:
   `gh api -X POST repos/cldellow/Overpass-API/actions/workflows/fuzz.yml/dispatches -f ref=master
