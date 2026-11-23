@@ -795,8 +795,9 @@ void Print_Statement::execute(Resource_Manager& rman)
   const Set* output_items = 0;
   if (mode & Output_Mode::COUNT)
   {
+    const Set empty;
     count_set.deriveds[Uint31_Index(0u)].push_back(Derived_Structure("count", Uint64(0ull),
-        make_count_tags(input_set ? *input_set : Set(), rman.get_area_transaction()), 0));
+        make_count_tags(input_set ? *input_set : empty, rman.get_area_transaction()), 0));
     output_items = &count_set;
     mode = mode | Output_Mode::TAGS;
   }
