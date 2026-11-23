@@ -13,14 +13,16 @@ import json
 import sys
 
 
-def load(paths):
+def load(paths, keep_edge=None):
     recs = []
     for p in paths:
         for line in open(p):
             r = json.loads(line)
             if r.get('features'):
-                r['features'] = set(r['features'])
-                recs.append(r)
+                feats = r['features'] if keep_edge is None else [f for f in r['features'] if keep_edge[f >> 4]]
+                if feats:
+                    r['features'] = set(feats)
+                    recs.append(r)
     return recs
 
 
@@ -48,9 +50,19 @@ def main():
     ap.add_argument('inputs', nargs='+', help='coverage.py JSON lines')
     ap.add_argument('--overhead', type=float, default=0.05, help='seconds added to each query\'s CPU')
     ap.add_argument('--out', help='write the selection here')
+    ap.add_argument('--edgemap', help='edge to source file map (JSON with "files"), for --exclude-prefix')
+    ap.add_argument('--exclude-prefix', action='append', default=[],
+                    help='ignore edges in source files with this prefix, e.g. /usr for the C++ library '
+                         '(repeatable; needs --edgemap)')
     args = ap.parse_args()
 
-    recs = load(args.inputs)
+    keep_edge = None
+    if args.exclude_prefix:
+        if not args.edgemap:
+            sys.exit('--exclude-prefix needs --edgemap')
+        files = json.load(open(args.edgemap))['files']
+        keep_edge = [not any(f.startswith(p) for p in args.exclude_prefix) for f in files]
+    recs = load(args.inputs, keep_edge)
     universe = set().union(*(r['features'] for r in recs))
     edges = {f >> 4 for f in universe}
     picks = greedy(recs, args.overhead)
