@@ -10,14 +10,23 @@ edges ignoring hit counts) and writes the selection, in pick order, as JSON line
 import argparse
 import heapq
 import json
+import re
 import sys
 
 
-def load(paths, keep_edge=None):
+def query_timeout(query):
+    """The query's [timeout:N] setting, or osm3s_query's default of 180 s."""
+    m = re.search(r'\[timeout:\s*(\d+)\s*\]', query)
+    return int(m.group(1)) if m else 180
+
+
+def load(paths, keep_edge=None, margin=0.0):
     recs = []
     for p in paths:
         for line in open(p):
             r = json.loads(line)
+            if margin and r['cpu'] * margin > query_timeout(r['query']):
+                continue  # too close to its own timeout: its result depends on the machine's speed
             if r.get('features'):
                 feats = r['features'] if keep_edge is None else [f for f in r['features'] if keep_edge[f >> 4]]
                 if feats:
@@ -50,6 +59,8 @@ def main():
     ap.add_argument('inputs', nargs='+', help='coverage.py JSON lines')
     ap.add_argument('--overhead', type=float, default=0.05, help='seconds added to each query\'s CPU')
     ap.add_argument('--out', help='write the selection here')
+    ap.add_argument('--timeout-margin', type=float, default=4.0,
+                    help='skip queries whose CPU time times this exceeds their [timeout:] (0 to keep all)')
     ap.add_argument('--edgemap', help='edge to source file map (JSON with "files"), for --exclude-prefix')
     ap.add_argument('--exclude-prefix', action='append', default=[],
                     help='ignore edges in source files with this prefix, e.g. /usr for the C++ library '
@@ -62,7 +73,7 @@ def main():
             sys.exit('--exclude-prefix needs --edgemap')
         files = json.load(open(args.edgemap))['files']
         keep_edge = [not any(f.startswith(p) for p in args.exclude_prefix) for f in files]
-    recs = load(args.inputs, keep_edge)
+    recs = load(args.inputs, keep_edge, args.timeout_margin)
     universe = set().union(*(r['features'] for r in recs))
     edges = {f >> 4 for f in universe}
     picks = greedy(recs, args.overhead)
