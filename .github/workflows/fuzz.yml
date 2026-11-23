@@ -168,17 +168,28 @@ jobs:
           set +e
           python3 tools/bench/fuzz.py --a base-bin --b cand-bin --db db --vocab vocab.json \
             --seed "$SEED" --start "$start" --count "$QUERIES_PER_SHARD" --jobs "$(nproc)" \
-            --features "$features" --cache-dir fuzz-cache --out-dir failures 2>&1 | tee fuzz.txt
+            --features "$features" --cache-dir fuzz-cache --out-dir failures --report report.csv 2>&1 | tee fuzz.txt
           status=${PIPESTATUS[0]}
           set -e
           python3 - "$SET" "$SHARD" "$status" <<'EOF'
-          import ast, json, re, sys
+          import ast, csv, json, re, sys
+          def skipped_rows(path):
+              # [index, baseline status, candidate status]: the statuses that cause a skip, else
+              # "ok" or "other", so no error message or query text is kept.
+              keep = lambda s: s if s in ('ok', 'timeout', 'resource-limit') else 'other'
+              try:
+                  rows = list(csv.DictReader(open(path)))
+              except OSError:
+                  return None
+              return [[int(r['index']), keep(r['status_a']), keep(r['status_b'])]
+                      for r in rows if r['verdict'] == 'skipped']
           text = open('fuzz.txt').read()
           verdicts = re.search(r'^verdicts: (\{.*\})$', text, re.M)
           reused = re.search(r'^baseline: (\d+) of (\d+) outcomes reused', text, re.M)
           json.dump({'set': sys.argv[1], 'shard': int(sys.argv[2]), 'exit': int(sys.argv[3]),
                      'verdicts': ast.literal_eval(verdicts.group(1)) if verdicts else None,
-                     'reused': int(reused.group(1)) if reused else None},
+                     'reused': int(reused.group(1)) if reused else None,
+                     'skipped': skipped_rows('report.csv')},
                     open('result.json', 'w'))
           EOF
           echo "status=$status" >> "$GITHUB_OUTPUT"
@@ -252,6 +263,14 @@ jobs:
               lines.append(f"- **{s}:** {dict(c)}")
           if bad:
               lines += ['', 'Shards with differences or errors (see their fuzz-failures artifacts): ' + ', '.join(bad)]
+          skipped = collections.defaultdict(list)
+          for r in rows:
+              for i, a, b in r.get('skipped') or []:
+                  skipped[str(r.get('set'))].append(f"{int(i)} (base {a}, cand {b})")
+          if skipped:
+              lines += ['', 'Skipped queries, by index (with --seed) and each build\'s status:']
+              for s, items in sorted(skipped.items()):
+                  lines.append(f"- **{s}:** " + ', '.join(sorted(items, key=lambda x: int(x.split()[0]))))
           open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write('\n'.join(lines) + '\n')
           print('\n'.join(lines))
           if bad or len(rows) < 30:
