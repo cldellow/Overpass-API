@@ -438,7 +438,7 @@
   "old": "    if (b != bounds.end() && b->first < Index(it->val() + 0x100))",
   "new": "    if (b != bounds.end() && b->first < Index(it->val() + 0x80))",
   "note": "a candidate's cell counts as inside the ranges only if they reach its first half, so candidates in cells whose second half alone overlaps are lost",
-  "expect_caught": "maybe"
+  "expect_caught": "yes"
  },
  {
   "commit": "d855242",
@@ -446,7 +446,7 @@
   "file": "src/overpass_api/statements/query.cc",
   "old": "    if (!bounds.empty() && !(bounds.back().second < it->first))",
   "new": "    if (false && !bounds.empty() && !(bounds.back().second < it->first))",
-  "note": "overlapping ranges aren't merged, so the binary search over upper bounds can skip cells that overlap (the bug the CI fuzz run found with an area filter)",
-  "expect_caught": "maybe"
+  "note": "needs data beyond the synthetic sets: overlapping ranges aren't merged, so the binary search over upper bounds can skip candidates' cells, but only when ranges nest, as with many large areas. On the Nova Scotia extract with areas, area[boundary=administrative][admin_level=8]->.a; node[amenity=pharmacy](area.a); gives 121 nodes, the mutant 113; the CI fuzz run found the original bug. Checks with all synthetic areas, or around a node-and-way set, plus a tag filter don't reach it (30 seeds).",
+  "expect_caught": "no"
  }
 ]
