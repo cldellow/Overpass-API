@@ -183,8 +183,8 @@ jobs:
           EOF
           echo "status=$status" >> "$GITHUB_OUTPUT"
 
-      # One-off (branch fuzz-recheck-skipped): rerun each skipped query with a 600 s limit,
-      # in the query ([timeout:600], [maxsize:2147483648]) and for the process. Logs only
+      # One-off (branch fuzz-recheck-skipped): rerun each skipped query with a 300 s limit,
+      # in the query ([timeout:300], [maxsize:2147483648]) and for the process. Logs only
       # indexes, statuses and timings.
       - name: Recheck skipped queries
         if: always()
@@ -202,22 +202,26 @@ jobs:
           def one(r):
               i = int(r['index'])
               q = fuzz.generate(vocab, seed, i, frozenset())
-              q = q.replace('[timeout:60]', '[timeout:600]').replace('[maxsize:536870912]', '[maxsize:2147483648]')
+              q = q.replace('[timeout:60]', '[timeout:300]').replace('[maxsize:536870912]', '[maxsize:2147483648]')
               t0 = time.monotonic()
-              sa, da, _, _ = fuzz.run_once('base-bin', 'db', q, 660)
+              sa, da, _, _ = fuzz.run_once('base-bin', 'db', q, 360)
               t1 = time.monotonic()
-              sb, db_, _, _ = fuzz.run_once('cand-bin', 'db', q, 660)
+              sb, db_, _, _ = fuzz.run_once('cand-bin', 'db', q, 360)
               ca, cb = t1 - t0, time.monotonic() - t1
               bad = ('timeout', 'resource-limit')
               v = 'skipped' if sa in bad or sb in bad else ('same' if da == db_ else 'DIFFERENT')
               short = lambda s: s if s in ('ok',) + bad else s.split(':')[0]
               return {'index': i, 'first': [r['status_a'], r['status_b']], 'status': [short(sa), short(sb)],
                       'wall_s': [round(ca, 1), round(cb, 1)], 'verdict': v}
-          with concurrent.futures.ThreadPoolExecutor(2) as ex:
-              res = list(ex.map(one, rows))
-          for x in res:
-              print(json.dumps(x))
-          json.dump(res, open('recheck.json', 'w'))
+          # Print and save each result as it finishes, so a shard that hits the job's time
+          # limit still reports what it rechecked.
+          print(f'{len(rows)} skipped queries to recheck', flush=True)
+          with open('recheck.json', 'w') as out, concurrent.futures.ThreadPoolExecutor(4) as ex:
+              for f in concurrent.futures.as_completed([ex.submit(one, r) for r in rows]):
+                  line = json.dumps(f.result())
+                  print(line, flush=True)
+                  out.write(line + '\n')
+                  out.flush()
           EOF
 
       - name: Upload the recheck
