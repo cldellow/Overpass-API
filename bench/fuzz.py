@@ -40,6 +40,7 @@ import sys
 import tempfile
 
 from osm3s_run import check_rss_support, run_osm3s
+import fuzz_eval
 
 # Lines that name the build, so they differ between builds without the data differing.
 VOLATILE = re.compile(rb'(generator|Overpass API \d|"version":)')
@@ -58,6 +59,7 @@ class Generator:
         #   history  [date:], [diff:], [adiff:], newer, changed, retro, timeline (needs attic data)
         #   users    user, uid, user_touched, uid_touched (needs user metadata)
         #   complete complete loops
+        #   evaluators convert, make, for, if/else and (if:) filters from a typed expression grammar
         self.features = features
         self.sets = []  # names of the sets defined so far, with their element types
 
@@ -141,6 +143,8 @@ class Generator:
         return '(id:' + ','.join(map(str, chosen)) + ')'
 
     def evaluator(self):
+        if 'evaluators' in self.features and self.r.random() < 0.6:
+            return fuzz_eval.Expr(self).elem('B')
         key, value = self.tag()
         choices = [
             f't[{self.quote(key)}]=={self.quote(value)}',
@@ -301,6 +305,8 @@ class Generator:
             options += ['area_filter', 'area_filter', 'is_in_set', 'map_to_area', 'pivot']
         if 'complete' in self.features:
             options.append('complete')
+        if 'evaluators' in self.features:
+            options += ['evaluators'] * 3
         if not options:
             return None
         pick = self.r.choice(options)
@@ -321,6 +327,8 @@ class Generator:
                 return None
             target = self.r.choice(['way', 'rel', 'nwr'])
             return f'{target}(pivot.{self.pick(areas)[0]})->.{self.new_set(target)};'
+        if pick == 'evaluators':
+            return fuzz_eval.evaluator_statement(self, name, kind)
         if pick == 'complete':
             key = self.quote(self.pick(self.v['keys'][:30]))
             body = self.r.choice([f'way(bn)[{key}]; node(w);', f'way(around:0)[{key}];', f'node(w); way(bn)[{key}];'])
@@ -543,7 +551,7 @@ def main():
     parser.add_argument('--timeout', type=int, default=30, help='seconds per run before giving up')
     parser.add_argument('--out-dir', default='fuzz-failures')
     parser.add_argument('--features', default='',
-                        help='comma-separated optional statement families: areas, history, users, complete')
+                        help='comma-separated optional statement families: areas, history, users, complete, evaluators')
     parser.add_argument('--report', metavar='CSV',
                         help='write one row per query: status, CPU time per build, output size '
                              '(for finding slow or degenerate queries)')
@@ -561,7 +569,7 @@ def main():
         raw = f.read()
     vocab = json.loads(raw)
     features = frozenset(f for f in args.features.split(',') if f)
-    unknown = features - {'areas', 'history', 'users', 'complete'}
+    unknown = features - {'areas', 'history', 'users', 'complete', 'evaluators'}
     if unknown:
         parser.error('unknown features: ' + ', '.join(sorted(unknown)))
     if args.show is not None:
