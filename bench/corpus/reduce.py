@@ -7,6 +7,10 @@ so the corpus as a whole keeps its coverage, and must keep its result class: the
 output if it had output before, an `out` statement if it had one, and at most --max-cpu seconds.
 Hit counts are not kept.
 
+Two more rules keep queries meaningful: a function's argument list is never deleted (s.max(...)
+would still parse, as the tag max), and a set the original defines must stay defined while the
+query still uses it (otherwise its statements run on an empty set).
+
 Reduction is greedy and structure-aware: it tries to delete whole statements (also inside unions
 and blocks), settings and filters in [...] or (...), items of comma lists (CSV fields, convert
 pairs), and `out` options, the biggest first, and keeps any deletion that preserves the above,
@@ -47,6 +51,36 @@ covmod = _load('corpus_coverage', os.path.join(HERE, 'coverage.py'))
 outmod = _load('corpus_outputs', os.path.join(HERE, 'outputs.py'))
 
 OUT_RE = re.compile(r'\bout\b')
+# Words that may directly precede a removable filter in parentheses: node(bbox), nwr.s1(...).
+QUERY_TYPES = {'node', 'way', 'rel', 'relation', 'nwr', 'nw', 'nr', 'wr', 'area', 'derived'}
+WORD_BEFORE = re.compile(r'([A-Za-z_]\w*)\s*$')
+DEFINED = re.compile(r'->\s*\.([A-Za-z_]\w*)')
+
+
+def is_call_args(q, o):
+    """Whether the "(" at o opens a function's argument list (max(...), count_by_role(...)), which
+    is never deleted: without it, s.max(...) still parses, as the value of the tag max."""
+    m = WORD_BEFORE.search(q[:o])
+    if not m:
+        return False
+    word, before = m.group(1), q[:m.start()].rstrip()
+    if word in QUERY_TYPES:
+        return False
+    if before.endswith('.'):
+        # node.s1(...) filters set s1; s2.max(...) calls max on s2
+        prev = WORD_BEFORE.search(before[:-1])
+        return not (prev and prev.group(1) in QUERY_TYPES)
+    return True
+
+
+def undefined_sets(q, defined_before):
+    """Sets the original query defined that q still uses but no longer defines."""
+    defined = set(DEFINED.findall(q))
+    missing = set()
+    for name in defined_before - defined:
+        if re.search(r'(?<![\w])' + re.escape(name) + r'(?![\w])', q):
+            missing.add(name)
+    return missing
 
 
 # ----- evaluation --------------------------------------------------------------------------------
@@ -131,7 +165,7 @@ def candidates(q):
             continue
         before = q[:o].rstrip()
         at_start = not before or before[-1] in ';{}('
-        if kind == '[' or (kind == '(' and not at_start):
+        if kind == '[' or (kind == '(' and not at_start and not is_call_args(q, o)):
             cands.add((o, c + 1))
         # comma-list items inside this group
         cs = sorted(commas.get(g, []))
@@ -163,10 +197,13 @@ def reduce_one(task):
     status0, elements0 = base
     q0 = rec['query']
     need_out = bool(OUT_RE.search(q0))
+    defined0 = set(DEFINED.findall(q0))
 
     def acceptable(q):
         if need_out and not OUT_RE.search(q):
             return False
+        if undefined_sets(q, defined0):
+            return False  # it would work on an empty set where the original had a real one
         st, el, edges, cpu = evaluate(bindir, db, q, args.eval_timeout, tmpdir)
         if st != status0 or cpu > args.max_cpu:
             return False
