@@ -19,6 +19,7 @@ import multiprocessing
 import os
 import resource
 import struct
+import subprocess
 import sys
 import tempfile
 
@@ -65,8 +66,26 @@ def child_cpu():
     return u.ru_utime + u.ru_stime
 
 
+DUMP_MODES = ('--dump-xml', '--dump-pretty-ql', '--dump-compact-ql')
+
+
+def dump_features(bindir, query, cov, timeout):
+    """The features of the parser's three dump modes (no database needed)."""
+    feats = set()
+    for mode in DUMP_MODES:
+        if os.path.exists(cov):
+            os.unlink(cov)
+        try:
+            subprocess.run([os.path.join(bindir, 'osm3s_query'), mode], input=query.encode(),
+                           capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            continue
+        feats |= set(read_features(cov) or [])
+    return feats
+
+
 def work(task):
-    qid, spec, bindir, db, timeout, tmpdir = task
+    qid, spec, bindir, db, timeout, tmpdir, dumps = task
     query = query_text(spec)
     cov = os.path.join(tmpdir, f'{os.getpid()}.cov')
     if os.path.exists(cov):
@@ -76,6 +95,8 @@ def work(task):
     status, digest, _out, _peak = fuzz.run_once(bindir, db, query, timeout)
     cpu = child_cpu() - before
     feats = read_features(cov) if status not in fuzz.UNCACHEABLE else None
+    if dumps and feats is not None:
+        feats = sorted(set(feats) | dump_features(bindir, query, cov, timeout))
     return {'id': qid, 'query': query, 'status': status, 'digest': digest,
             'cpu': round(cpu, 4), 'features': feats}
 
@@ -89,11 +110,14 @@ def main():
     ap.add_argument('--out', required=True, help='JSON lines output')
     ap.add_argument('--timeout', type=int, default=60)
     ap.add_argument('--jobs', type=int, default=os.cpu_count())
+    ap.add_argument('--dumps', action='store_true',
+                    help='also run each query through --dump-xml, --dump-pretty-ql and --dump-compact-ql')
     args = ap.parse_args()
 
     vocab = json.load(open(args.vocab))
     tmpdir = tempfile.mkdtemp(prefix='corpus-cov-')
-    tasks = [(qid, spec, args.bin, args.db, args.timeout, tmpdir) for qid, spec in expand(args.source, vocab)]
+    tasks = [(qid, spec, args.bin, args.db, args.timeout, tmpdir, args.dumps)
+             for qid, spec in expand(args.source, vocab)]
     done = 0
     with open(args.out, 'w') as out, multiprocessing.Pool(args.jobs) as pool:
         for rec in pool.imap_unordered(work, tasks, chunksize=4):

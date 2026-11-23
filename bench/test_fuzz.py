@@ -105,6 +105,33 @@ FEATURES = {
         ('ternary', r'\?\(', 0.05),
     ],
 }
+FEATURES['output'] = [
+    ('csv header', r'\[out:csv\(', 0.2),
+    ('csv count field', r'::"count:(nodes|ways|relations|areas)"', 0.02),
+    ('csv header line or separator', r'\[out:csv\([^)]*;(true|false)', 0.05),
+    ('popup', r'\[out:popup\(', 0.05),
+    ('json', r'\[out:json\]', 0.1),
+    ('timeout setting', r'\[timeout:', 0.3),
+    ('maxsize setting', r'\[maxsize:', 0.3),
+    ('out noids', r'out [^;]*noids', 0.05),
+    ('out count', r'out [^;]*count', 0.05),
+    ('out quirks (error path)', r'out [^;]*quirks', 0.002),
+    ('out limit', r'out [^;]*\b(1|2|5|17|100)\b', 0.05),
+]
+FEATURES['statements'] = [
+    ('local', r' local( ll| llb)?->', 0.02),
+    ('local llb', r' local llb->', 0.005),
+    ('regex key', r'\[~"', 0.02),
+    ('case-insensitive regex', r',i\]', 0.02),
+    ('polyline around', r'\(around:\d+,[-0-9.]+,[-0-9.]+,[-0-9.]+,[-0-9.]+', 0.02),
+    ('member filter with role', r'\((r|bn|bw|br)\.s\d+:"', 0.02),
+    ('foreach variant', r'foreach(\.s\d+)?(->\.x)?\(', 0.02),
+]
+# Rules for combinations of features.
+COMBINED = {
+    frozenset({'history', 'statements'}): [('compare', r' compare(\(\)|\(delta:)?->', 0.01)],
+    frozenset({'areas', 'statements'}): [('area filter by id', r'\(area:36\d+\)', 0.005)],
+}
 # Share of queries that may fail to parse. evaluators breaks some expressions on purpose.
 PARSE_ALLOWANCE = {'evaluators': 0.02}
 
@@ -113,6 +140,7 @@ COUNT = 2000
 
 def check_coverage(features, queries, failures):
     rules = BASE + [rule for f in sorted(features) for rule in FEATURES[f]]
+    rules += [rule for need, extra in COMBINED.items() if need <= features for rule in extra]
     for name, pattern, share in rules:
         hits = sum(1 for q in queries if re.search(pattern, q))
         if hits < share * len(queries):
@@ -146,9 +174,14 @@ def main():
 
     failures = []
     for features in [frozenset(), frozenset({'areas', 'complete'}),
-                     frozenset({'history', 'users', 'complete'}), frozenset({'evaluators'})]:
+                     frozenset({'history', 'users', 'complete'}), frozenset({'evaluators'}),
+                     frozenset({'output'}), frozenset({'statements', 'areas'}),
+                     frozenset({'history', 'users', 'statements'}),
+                     frozenset({'evaluators', 'output', 'statements', 'areas', 'complete'})]:
         queries = [fuzz.generate(VOCAB, 7, i, features) for i in range(COUNT)]
-        check_coverage(features, queries, failures)
+        # The rules' shares assume one new family at a time; the combined set only gets parsed.
+        if len(features & {'evaluators', 'output', 'statements'}) <= 1:
+            check_coverage(features, queries, failures)
         # Same seed and index, same query.
         if queries[:50] != [fuzz.generate(VOCAB, 7, i, features) for i in range(50)]:
             failures.append(f'{sorted(features)}: generation is not reproducible')
