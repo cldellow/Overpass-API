@@ -64,6 +64,7 @@ class Generator:
         #   evaluators convert, make, for, if/else and (if:) filters from a typed expression grammar
         #   output   every output format (xml, json, csv, popup), out mode and setting
         #   statements local, global tag queries, area filters by id, polyline around, more recursion
+        #   poi      point-of-interest lookups: JSON unions of statements around one point
         self.features = features
         self.sets = []  # names of the sets defined so far, with their element types
 
@@ -343,6 +344,51 @@ class Generator:
             return f'complete({self.r.randint(1, 6)}).{name}->.{self.new_set("any")} {{ {body} }}'
         return None
 
+    def values_of(self, key):
+        if not hasattr(self, '_values_by_key'):
+            self._values_by_key = {}
+            for k, v in self.v['common_tags'] + self.v['rare_tags']:
+                self._values_by_key.setdefault(k, []).append(v)
+        return self._values_by_key.get(key, [])
+
+    def poi_filter(self):
+        """Tag filters as POI lookups write them: exact values, keys, and alternations over a
+        key's values, unanchored or anchored and often case-insensitive."""
+        key, value = self.tag()
+        values = sorted({value} | {self.pick(self.values_of(key) or [value]) for _ in range(self.r.randint(1, 8))})
+        form = self.r.random()
+        ci = ',i' if self.r.random() < 0.3 else ''
+        if form < 0.4:
+            f = f'[{self.quote(key)}={self.quote(value)}]'
+        elif form < 0.55:
+            f = f'[{self.quote(key)}]'
+        elif form < 0.85:
+            f = f'[{self.quote(key)}~{self.quote("|".join(re.escape(v) for v in values))}{ci}]'
+        else:
+            f = f'[{self.quote(key)}~{self.quote("^(" + "|".join(re.escape(v) for v in values) + ")$")}{ci}]'
+        if self.r.random() < 0.1:
+            # A second filter on a name-like key, as brand searches add.
+            k2 = self.pick(self.v['keys'])
+            words = sorted({re.escape(self.tag()[1][:6]) for _ in range(self.r.randint(1, 4))})
+            f += f'[{self.quote(k2)}~{self.quote("|".join(words))},i]'
+        return f
+
+    def poi_query(self):
+        """A point-of-interest lookup, the most common shape among the public servers' heavy
+        queries: a JSON union of node, way and relation statements around one point, mostly with
+        one shared radius (often large, some from miles), returning centers and tags."""
+        lat, lon = self.pick(self.v['node_coords'])
+        shared = self.r.choice([500, 1000, 1500, 2000, 3000, 3219, 4828, 5000, 10000, 25000])
+        statements = []
+        for _ in range(self.r.randint(2, 15)):
+            kind = self.r.choice(['node', 'node', 'way', 'way', 'relation', 'nwr'])
+            radius = shared if self.r.random() < 0.6 else self.r.choice([500, 1000, 2000, 3000, 5000])
+            statements.append(f'{kind}{self.poi_filter()}(around:{radius},{lat:.6f},{lon:.6f});')
+        out = self.r.choice(['out center tags;', 'out center;', 'out body center;', 'out tags center;',
+                             'out center tags 200;', 'out body center qt;', 'out geom;'])
+        return ('[timeout:60][maxsize:536870912][out:json];\n(\n  ' + '\n  '.join(statements)
+                + '\n);\n' + out + '\n')
+
     def out_statement(self, name):
         if 'output' in self.features and self.r.random() < 0.8:
             return fuzz_output.out_statement(self, name)
@@ -360,6 +406,9 @@ class Generator:
         return f'.{name} out {" ".join(tokens)};'
 
     def query(self):
+        # Checked before any draw, so queries without the feature are unchanged.
+        if 'poi' in self.features and self.r.random() < 0.5:
+            return self.poi_query()
         if 'output' in self.features:
             header = fuzz_output.header(self)
         else:
@@ -566,7 +615,7 @@ def main():
     parser.add_argument('--timeout', type=int, default=30, help='seconds per run before giving up')
     parser.add_argument('--out-dir', default='fuzz-failures')
     parser.add_argument('--features', default='',
-                        help='comma-separated optional statement families: areas, history, users, complete, evaluators, output, statements')
+                        help='comma-separated optional statement families: areas, history, users, complete, evaluators, output, statements, poi')
     parser.add_argument('--report', metavar='CSV',
                         help='write one row per query: status, CPU time per build, output size '
                              '(for finding slow or degenerate queries)')
@@ -584,7 +633,7 @@ def main():
         raw = f.read()
     vocab = json.loads(raw)
     features = frozenset(f for f in args.features.split(',') if f)
-    unknown = features - {'areas', 'history', 'users', 'complete', 'evaluators', 'output', 'statements'}
+    unknown = features - {'areas', 'history', 'users', 'complete', 'evaluators', 'output', 'statements', 'poi'}
     if unknown:
         parser.error('unknown features: ' + ', '.join(sorted(unknown)))
     if args.show is not None:
