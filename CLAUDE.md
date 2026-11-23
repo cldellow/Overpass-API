@@ -57,8 +57,15 @@ Databases with history, built from a full-history extract, need a `better-import
   timed runs can drift by up to about 20%. Under about 10%, use `--paired --reps 25` and judge by
   its confidence interval and sign test, not by medians and spreads. Don't call a change noise, or
   drop it, without a paired measurement: medians misjudged real 4–9% gains as noise.
-- **Correctness:** run `bench/fuzz.py` against the baseline. Run a build against itself first to check
-  that outputs are deterministic.
+- **Correctness:** don't run `bench/fuzz.py` locally to check a change; CI runs it. The `fuzz`
+  workflow (plain database: plain and `areas,complete`) and the `history` workflow (full-history
+  database: `history,users,complete`) run on every PR into `master` that touches `src/`. For a
+  stacked PR, or one opened before these workflows existed, dispatch both from `master`:
+  `gh api -X POST repos/cldellow/Overpass-API/actions/workflows/fuzz.yml/dispatches -f ref=master
+  -f 'inputs[ref]=BRANCH'`, and the same for `history.yml`. Read the verdicts in the `summary` job's
+  log, and cite the run and its counts in the PR. A run with differences blocks the PR until
+  explained. History differences are in encrypted artifacts: ask the user for them. Run `fuzz.py`
+  locally only to investigate a difference, or for query features the workflows don't cover.
 - **Property tests:** also run `bench/props/props.py` against the baseline, with
   `--history-import-bin` pointing at a `better-imports` build. The `props` workflow runs it on every
   PR into `master`; trigger it by hand for PRs into other branches. A run with new failures or
