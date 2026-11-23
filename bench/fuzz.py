@@ -41,6 +41,8 @@ import tempfile
 
 from osm3s_run import check_rss_support, run_osm3s
 import fuzz_eval
+import fuzz_output
+import fuzz_more
 
 # Lines that name the build, so they differ between builds without the data differing.
 VOLATILE = re.compile(rb'(generator|Overpass API \d|"version":)')
@@ -60,6 +62,8 @@ class Generator:
         #   users    user, uid, user_touched, uid_touched (needs user metadata)
         #   complete complete loops
         #   evaluators convert, make, for, if/else and (if:) filters from a typed expression grammar
+        #   output   every output format (xml, json, csv, popup), out mode and setting
+        #   statements local, global tag queries, area filters by id, polyline around, more recursion
         self.features = features
         self.sets = []  # names of the sets defined so far, with their element types
 
@@ -307,6 +311,8 @@ class Generator:
             options.append('complete')
         if 'evaluators' in self.features:
             options += ['evaluators'] * 3
+        if 'statements' in self.features:
+            options += ['statements'] * 3
         if not options:
             return None
         pick = self.r.choice(options)
@@ -329,6 +335,8 @@ class Generator:
             return f'{target}(pivot.{self.pick(areas)[0]})->.{self.new_set(target)};'
         if pick == 'evaluators':
             return fuzz_eval.evaluator_statement(self, name, kind)
+        if pick == 'statements':
+            return fuzz_more.statement(self, name, kind)
         if pick == 'complete':
             key = self.quote(self.pick(self.v['keys'][:30]))
             body = self.r.choice([f'way(bn)[{key}]; node(w);', f'way(around:0)[{key}];', f'node(w); way(bn)[{key}];'])
@@ -336,6 +344,8 @@ class Generator:
         return None
 
     def out_statement(self, name):
+        if 'output' in self.features and self.r.random() < 0.8:
+            return fuzz_output.out_statement(self, name)
         if self.r.random() < 0.15:
             return f'.{name} out count;'
         tokens = [self.r.choice(['ids', 'skel', 'body', 'tags', 'meta'])]
@@ -350,14 +360,17 @@ class Generator:
         return f'.{name} out {" ".join(tokens)};'
 
     def query(self):
-        header = '[timeout:60][maxsize:536870912]'
-        fmt = self.r.random()
-        if fmt < 0.45:
-            header += '[out:json]'
-        elif fmt < 0.6:
-            header += '[out:csv(::type,::id,::lat,::lon,' + self.quote(self.pick(self.v['keys'])) + ')]'
-        if self.r.random() < 0.1:
-            header += '[bbox:' + self.bbox(0.3)[1:-1] + ']'
+        if 'output' in self.features:
+            header = fuzz_output.header(self)
+        else:
+            header = '[timeout:60][maxsize:536870912]'
+            fmt = self.r.random()
+            if fmt < 0.45:
+                header += '[out:json]'
+            elif fmt < 0.6:
+                header += '[out:csv(::type,::id,::lat,::lon,' + self.quote(self.pick(self.v['keys'])) + ')]'
+            if self.r.random() < 0.1:
+                header += '[bbox:' + self.bbox(0.3)[1:-1] + ']'
         if 'history' in self.features and self.v.get('edit_times'):
             mode = self.r.random()
             if mode < 0.25:
@@ -388,6 +401,8 @@ class Generator:
             name, _ = self.existing_set()
             lines.append(f'.{name} convert row ::id=id(),tags=count_tags();')
             lines.append('out;')
+        if 'statements' in self.features and ('[diff:' in header or '[adiff:' in header):
+            lines.append(fuzz_more.compare_statement(self))
         outs = sorted({self.pick(self.sets)[0] for _ in range(self.r.randint(1, 3))})
         lines.extend(self.out_statement(name) for name in outs)
         return '\n'.join(lines) + '\n'
@@ -551,7 +566,7 @@ def main():
     parser.add_argument('--timeout', type=int, default=30, help='seconds per run before giving up')
     parser.add_argument('--out-dir', default='fuzz-failures')
     parser.add_argument('--features', default='',
-                        help='comma-separated optional statement families: areas, history, users, complete, evaluators')
+                        help='comma-separated optional statement families: areas, history, users, complete, evaluators, output, statements')
     parser.add_argument('--report', metavar='CSV',
                         help='write one row per query: status, CPU time per build, output size '
                              '(for finding slow or degenerate queries)')
@@ -569,7 +584,7 @@ def main():
         raw = f.read()
     vocab = json.loads(raw)
     features = frozenset(f for f in args.features.split(',') if f)
-    unknown = features - {'areas', 'history', 'users', 'complete', 'evaluators'}
+    unknown = features - {'areas', 'history', 'users', 'complete', 'evaluators', 'output', 'statements'}
     if unknown:
         parser.error('unknown features: ' + ', '.join(sorted(unknown)))
     if args.show is not None:
