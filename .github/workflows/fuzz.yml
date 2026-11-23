@@ -102,11 +102,11 @@ jobs:
   fuzz:
     needs: [refs, setup]
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 120
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
-        set: [plain, areas, extended]
+        set: [plain]
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     steps:
       - name: Check out bench-tools
@@ -168,7 +168,7 @@ jobs:
           set +e
           python3 tools/bench/fuzz.py --a base-bin --b cand-bin --db db --vocab vocab.json \
             --seed "$SEED" --start "$start" --count "$QUERIES_PER_SHARD" --jobs "$(nproc)" \
-            --features "$features" --cache-dir fuzz-cache --out-dir failures 2>&1 | tee fuzz.txt
+            --features "$features" --cache-dir fuzz-cache --out-dir failures --report report.csv 2>&1 | tee fuzz.txt
           status=${PIPESTATUS[0]}
           set -e
           python3 - "$SET" "$SHARD" "$status" <<'EOF'
@@ -182,6 +182,51 @@ jobs:
                     open('result.json', 'w'))
           EOF
           echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      # One-off (branch fuzz-recheck-skipped): rerun each skipped query with a 600 s limit,
+      # in the query ([timeout:600], [maxsize:2147483648]) and for the process. Logs only
+      # indexes, statuses and timings.
+      - name: Recheck skipped queries
+        if: always()
+        env:
+          SEED: ${{ needs.refs.outputs.seed }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          python3 - <<'EOF'
+          import concurrent.futures, csv, json, os, sys, time
+          sys.path.insert(0, 'tools/bench')
+          import fuzz
+          vocab = json.load(open('vocab.json'))
+          seed = int(os.environ['SEED'])
+          rows = [r for r in csv.DictReader(open('report.csv')) if r['verdict'] == 'skipped']
+          def one(r):
+              i = int(r['index'])
+              q = fuzz.generate(vocab, seed, i, frozenset())
+              q = q.replace('[timeout:60]', '[timeout:600]').replace('[maxsize:536870912]', '[maxsize:2147483648]')
+              t0 = time.monotonic()
+              sa, da, _, _ = fuzz.run_once('base-bin', 'db', q, 660)
+              t1 = time.monotonic()
+              sb, db_, _, _ = fuzz.run_once('cand-bin', 'db', q, 660)
+              ca, cb = t1 - t0, time.monotonic() - t1
+              bad = ('timeout', 'resource-limit')
+              v = 'skipped' if sa in bad or sb in bad else ('same' if da == db_ else 'DIFFERENT')
+              short = lambda s: s if s in ('ok',) + bad else s.split(':')[0]
+              return {'index': i, 'first': [r['status_a'], r['status_b']], 'status': [short(sa), short(sb)],
+                      'wall_s': [round(ca, 1), round(cb, 1)], 'verdict': v}
+          with concurrent.futures.ThreadPoolExecutor(2) as ex:
+              res = list(ex.map(one, rows))
+          for x in res:
+              print(json.dumps(x))
+          json.dump(res, open('recheck.json', 'w'))
+          EOF
+
+      - name: Upload the recheck
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-recheck-${{ matrix.set }}-${{ matrix.shard }}
+          path: recheck.json
+          if-no-files-found: ignore
 
       - name: Save the baseline outcome cache
         if: always()
@@ -247,13 +292,13 @@ jobs:
               if r['exit'] != 0 or r['verdicts'] is None:
                   bad.append(f"{r['set']} shard {r['shard']} (exit {r['exit']})")
           lines = [f"### fuzz.py: {os.environ['CANDIDATE']} ({os.environ['CAND_SHA'][:12]}) against upstream/master at {os.environ['BASE_SHA'][:12]}, seed {os.environ['SEED']}", '',
-                   f"{len(rows)} of 30 shards reported. Verdicts: {dict(total)}. Baseline outcomes reused from the cache: {reused} of {queries}.", '']
+                   f"{len(rows)} of 10 shards reported. Verdicts: {dict(total)}. Baseline outcomes reused from the cache: {reused} of {queries}.", '']
           for s, c in sorted(by_set.items()):
               lines.append(f"- **{s}:** {dict(c)}")
           if bad:
               lines += ['', 'Shards with differences or errors (see their fuzz-failures artifacts): ' + ', '.join(bad)]
           open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write('\n'.join(lines) + '\n')
           print('\n'.join(lines))
-          if bad or len(rows) < 30:
+          if bad or len(rows) < 10:
               raise SystemExit(1)
           EOF
