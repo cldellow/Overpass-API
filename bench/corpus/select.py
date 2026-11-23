@@ -20,11 +20,13 @@ def query_timeout(query):
     return int(m.group(1)) if m else 180
 
 
-def load(paths, keep_edge=None, margin=0.0):
+def load(paths, keep_edge=None, margin=0.0, max_cpu=0.0):
     recs = []
     for p in paths:
         for line in open(p):
             r = json.loads(line)
+            if max_cpu and r['cpu'] > max_cpu:
+                continue  # too slow for a CI corpus; slower builds take several times longer
             if margin and r['cpu'] * margin > query_timeout(r['query']):
                 continue  # too close to its own timeout: its result depends on the machine's speed
             if r.get('features'):
@@ -61,6 +63,9 @@ def main():
     ap.add_argument('--out', help='write the selection here')
     ap.add_argument('--timeout-margin', type=float, default=4.0,
                     help='skip queries whose CPU time times this exceeds their [timeout:] (0 to keep all)')
+    ap.add_argument('--max-cpu', type=float, default=5.0,
+                    help='skip queries over this many CPU seconds (0 to keep all); builds differ by 3x '
+                         'or more, so slow queries make for a slow and machine-dependent corpus')
     ap.add_argument('--edgemap', help='edge to source file map (JSON with "files"), for --exclude-prefix')
     ap.add_argument('--exclude-prefix', action='append', default=[],
                     help='ignore edges in source files with this prefix, e.g. /usr for the C++ library '
@@ -73,7 +78,7 @@ def main():
             sys.exit('--exclude-prefix needs --edgemap')
         files = json.load(open(args.edgemap))['files']
         keep_edge = [not any(f.startswith(p) for p in args.exclude_prefix) for f in files]
-    recs = load(args.inputs, keep_edge, args.timeout_margin)
+    recs = load(args.inputs, keep_edge, args.timeout_margin, args.max_cpu)
     universe = set().union(*(r['features'] for r in recs))
     edges = {f >> 4 for f in universe}
     picks = greedy(recs, args.overhead)
