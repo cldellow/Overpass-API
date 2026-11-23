@@ -1,0 +1,1 @@
+[out:json][timeout:90]; (way["maxspeed"]["highway"="primary"](43.3,-66.5,47.1,-59.6); way["bridge"]["maxspeed"](43.3,-66.5,47.1,-59.6); way["tunnel"](43.3,-66.5,47.1,-59.6); node["maxheight"](43.3,-66.5,47.1,-59.6); ); out center;
