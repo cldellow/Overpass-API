@@ -277,5 +277,158 @@
   "new": "      { return !(b < a); }), current_objects.end());",
   "note": "metadata dedup collapses each tile to one entry",
   "expect_caught": "yes"
+ },
+ {
+  "commit": "2273b99",
+  "subject": "around: weight the time-limit check by the work done, and check inside long ways",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": "    if (work_done >= 64*1024)",
+  "new": "    if (false && work_done >= 64*1024)",
+  "note": "the time-limit check never runs; it only decides when a query that is out of time stops, and props.py sets no time limit, so this can't change a result",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "634d377",
+  "subject": "around: take candidate ranges for relations at a past date from their members",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": "      new_way_ranges = new_way_ranges.union_(ranges(relation_way_members(",
+  "new": "      if (false) new_way_ranges = new_way_ranges.union_(ranges(relation_way_members(",
+  "note": "relations at a past date lose their way members' candidate ranges; caught by the history check 'date around rel = around members'",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "5df9912",
+  "subject": "around: look up the input relations' members once per input",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": "      || member_ranges_relations != relations || member_ranges_attic_relations != attic_relations)",
+  "new": "      || false)",
+  "note": "the cached member ranges are kept when the input relations change. Needs data beyond the synthetic sets: the ranges are whole index tiles widened by the radius, and the synthetic data spans so few tiles that the first relation's ranges already cover the others, so the 'foreach around rel' check returns the same result. The targeted around check on the Nova Scotia history database caught it (see #38)",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "358e322",
+  "subject": "collect_items: pass end iterators to reconstruct_items by reference",
+  "file": "src/overpass_api/data/collect_items.h",
+  "old": "    Iterator& it, const Iterator& end, Index index,",
+  "new": "    Iterator& it, Iterator end, Index index,",
+  "note": "equivalent: the commit only avoids copies and adds no logic, so the only mutant is reverting it",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "4033566",
+  "subject": "collect_items_by_timestamp: keep the result size up to date instead of recounting it",
+  "file": "src/overpass_api/data/collect_items.h",
+  "old": "  return it == m.end() ? 0 : eval_index_size + it->second.size()*eval_object_size((const Object*)0);",
+  "new": "  return it == m.end() ? 0 : eval_index_size;",
+  "note": "the running size counts only indexes; that changes only where chunks end and which queries hit [maxsize:], never a result, and props.py's queries stay far below the limits",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "7b7d798",
+  "subject": "tag_store: remove placeholder tags only from the entries just collected",
+  "file": "src/overpass_api/data/tag_store.h",
+  "old": "      touched.push_back(&obj_vec);",
+  "new": "      if (false) touched.push_back(&obj_vec);",
+  "note": "placeholder tags for tags added after the date stay in the output of objects at a past date",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "9945057",
+  "subject": "area and poly queries: build each way's geometry once in collect_ways",
+  "file": "src/overpass_api/statements/area_query.cc",
+  "old": "      add_way_to_area_blocks(coords, it2->id.val(), way_segments);",
+  "new": "      add_way_to_area_blocks(std::vector< Quad_Coord >(coords.begin(), coords.end() - (coords.empty() ? 0 : 1)), it2->id.val(), way_segments);",
+  "note": "area queries split each way into segments without its last vertex",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "e643105",
+  "subject": "tag_store: find tag entries' ids with a forward cursor instead of a binary search",
+  "file": "src/overpass_api/data/tag_store.h",
+  "old": "  if (cursor != ids.begin() && !(*(cursor - 1) < id))",
+  "new": "  if (false && cursor != ids.begin() && !(*(cursor - 1) < id))",
+  "note": "the cursor never starts over, so tags of a later tag group whose ids are below the cursor are lost",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "1b30bbb",
+  "subject": "bbox query: collect and filter nodes in chunks at a past date",
+  "file": "src/overpass_api/statements/bbox_query.cc",
+  "old": "      move_into(into.attic_nodes, chunk.attic_nodes);\n",
+  "new": "      chunk.attic_nodes.clear();\n",
+  "note": "past-date chunk loop drops each chunk's attic nodes, keeping only nodes whose current version is valid at the date",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "3f7cfa8",
+  "subject": "bbox query: count the accumulated result in the chunk loop's size checks",
+  "file": "src/overpass_api/statements/bbox_query.cc",
+  "old": "      rman.health_check(*this, 0, eval_map(into.nodes) + eval_map(into.attic_nodes));",
+  "new": "      rman.health_check(*this);",
+  "note": "chunk loop stops counting the result built so far: a result over [maxsize:] fails only after the loop; results are unchanged unless a query exceeds its [maxsize:]",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "180c620",
+  "subject": "Collect_Items: count elements, not only indexes, in way and relation history collection",
+  "file": "src/overpass_api/data/collect_items.h",
+  "old": "    count += result[index].size() + attic_result[index].size();\n\n    //check_for_duplicated_objects< Way_Skeleton >",
+  "new": "\n    //check_for_duplicated_objects< Way_Skeleton >",
+  "note": "way history collection counts indexes only again: changes when the size check runs, not what it returns; equivalent unless a [maxsize:] limit falls between two checks",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "7d39a64",
+  "subject": "print: reserve the id-sorted element references exactly",
+  "file": "src/overpass_api/statements/print.cc",
+  "old": "    count += it->second.size();",
+  "new": "    count = it->second.size();",
+  "note": "reservation counts only the last index's elements, so the references grow by push_back again: memory only, equivalent for results",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "0ec8fa9",
+  "subject": "Filter bbox and past-date results in place, without vector slack",
+  "file": "src/overpass_api/data/bbox_filter.cc",
+  "old": "        if (out != iit)\n          *out = *iit;\n        ++out;",
+  "new": "        if (out != iit)\n        {\n          *out = *iit;\n          ++out;\n        }",
+  "note": "in-place bbox filter advances the output only after a move, so kept nodes before the first removed one are lost",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "1ef6664",
+  "subject": "Tag_Store: generate the id list once, and keep only a chunk's attic tags",
+  "file": "src/overpass_api/data/tag_store.h",
+  "old": "  // As for current elements: only this chunk's tags and ids are needed.\n  tags_by_id.clear();\n",
+  "new": "  // As for current elements: only this chunk's tags and ids are needed.\n",
+  "note": "attic prefetch_chunk keeps earlier chunks' tags again: memory only; tags are looked up by id and chunks don't share ids, so equivalent for results. The commit's other half (ids generated once) was replaced by 7b11467",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "7b11467",
+  "subject": "Tag_Store: keep only a chunk's ids when printing in chunks",
+  "file": "src/overpass_api/core/type_tags.h",
+  "old": "      if (!(it2->id < lower_id_bound) && it2->id < upper_id_bound)\n        ids_by_coarse[it->first.val() & 0x7fffff00].push_back(it2->id);",
+  "new": "      if (lower_id_bound < it2->id && it2->id < upper_id_bound)\n        ids_by_coarse[it->first.val() & 0x7fffff00].push_back(it2->id);",
+  "note": "a chunk's id list leaves out the chunk's first id, so that element prints without tags",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "f7274dc",
+  "subject": "print: reference id-sorted elements in 8 bytes",
+  "file": "src/overpass_api/statements/print.cc",
+  "old": "      if (items_by_id.timestamp(i.val()) == NOW)",
+  "new": "      if (items_by_id.timestamp(i.val()) != NOW)",
+  "note": "past-date output with tags treats current elements as attic and attic ones as current: wrong tags, metadata and timestamps",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "686a701",
+  "subject": "print: look up current and attic references the same way",
+  "file": "src/overpass_api/statements/print.cc",
+  "old": "    return *reinterpret_cast< const Object* >(entry.first + std::size_t(ref.pos) * entry.size);",
+  "new": "    return *reinterpret_cast< const Object* >(entry.first + std::size_t(ref.pos) * sizeof(Object));",
+  "note": "references step through attic vectors by the size of a current element, so every attic element after the first of its index is misread",
+  "expect_caught": "yes"
  }
 ]
