@@ -45,6 +45,25 @@ This fork's `master` only adds fork-specific files (this file, the README); neve
   change, cherry-picked onto `upstream/master`) and its PR current instead. Import changes get their
   own issues and PRs like any other change.
 
+## Proposing a change upstream
+
+Before giving the compare link for a change upstream may merge, prepare its branch:
+
+- **One commit**, rebased onto `upstream/master`. Squash iterations so the reviewer reads only
+  the design that ships. Rebuild with `git cherry-pick` or the diff from the merge base
+  (`git diff upstream/master...BRANCH`), never `git diff upstream/master BRANCH`: that also
+  reverts whatever upstream merged since the branch's base.
+- **Author** `Claude <noreply@anthropic.com>`; the only trailer is
+  `Co-Authored-By: Colin Dellow <cldellow@gmail.com>` (no session link, no Claude co-author line).
+- **Subject** says what the change does, not how (`out count, around: don't copy the input set`).
+- **Body:** the cause, the fix naming the functions it touches, and one or two measurements with
+  their full query text and the dataset, cache state and machine. Use the same numbers as the PR
+  description. Leave claims such as "outputs are unchanged" or "no new allocations" to the PR
+  description.
+- **Upstream PR description:** no fork-relative references (`#N` links to upstream's own
+  issues and PRs there), and no fork-only tools (`bench/...`) a reviewer can't run.
+- Show the user the draft message before rewriting the commit.
+
 ## Testing changes
 
 The tools are in `bench/` on the `bench-tools` branch; see `bench/README.md`. The test database is
