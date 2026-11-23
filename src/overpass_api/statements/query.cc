@@ -844,9 +844,20 @@ Ranges< Index > intersect_ranges(const Ranges< Index >& range_a, std::vector< In
   if (sum < range_vec.size())
     return range_a;
 
-  std::vector< std::pair< Index, Index > > bounds;
+  // range_a can hold overlapping ranges (Ranges::union_ doesn't merge them), so merge them
+  // here: the search below needs upper bounds that increase.
+  std::vector< std::pair< Index, Index > > raw;
   for (auto it = range_a.begin(); it != range_a.end(); ++it)
-    bounds.push_back(std::make_pair(it.lower_bound(), it.upper_bound()));
+    raw.push_back(std::make_pair(it.lower_bound(), it.upper_bound()));
+  std::sort(raw.begin(), raw.end());
+  std::vector< std::pair< Index, Index > > bounds;
+  for (auto it = raw.begin(); it != raw.end(); ++it)
+  {
+    if (!bounds.empty() && !(bounds.back().second < it->first))
+      bounds.back().second = std::max(bounds.back().second, it->second);
+    else
+      bounds.push_back(*it);
+  }
   std::vector< Index > inside;
   for (auto it = range_vec.begin(); it != range_vec.end(); ++it)
   {
