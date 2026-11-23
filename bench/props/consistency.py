@@ -149,6 +149,16 @@ def gen_consistency_checks(data, seed):
                     f'node({i})->.c; {kind}(around.c:{r});')
         wid = rnd.choice(list(data.ways))
         add('way within around.self:0', f'way({wid});', f'way({wid})->.s; way(around.s:0);', 'subset')
+
+    # around a set of relations = the union of around each one, collected in a foreach. Each
+    # iteration runs the same around statement with another relation as input.
+    if len(data.rels) > 1:
+        ids = ','.join(str(r) for r in sorted(data.rels))
+        r = rnd.choice([0, 5, 50])
+        for kind in ('node', 'way'):
+            add(f'foreach around rel = around rels ({kind}s)',
+                f'relation(id:{ids})->.r; ()->.acc; foreach.r->.it {{ {kind}(around.it:{r})->.x; (.acc; .x;)->.acc; }} .acc;',
+                f'relation(id:{ids})->.r; {kind}(around.r:{r});')
     return checks
 
 

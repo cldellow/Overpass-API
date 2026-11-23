@@ -377,3 +377,24 @@ def gen_history_output_checks(h, seed):
         checks.append(('adiff', f'[adiff:"{d1}","{d2}"];\n(way({world}); node({world}););\nout meta geom;\n',
                        props.no_verify))
     return checks
+
+
+def gen_history_consistency_checks(h, seed):
+    """Pairs of queries at a past date that must agree: around a relation = around its direct
+    member nodes and ways, which make up its geometry. Prefers relations edited after the date,
+    so the relation used is an old version."""
+    rnd = random.Random(seed * 104729 + 11)
+    checks = []
+    for date in DATES:
+        rels = h.alive('relation', date)
+        if not rels:
+            continue
+        later = [r for r in sorted(rels) if any(v['ts'] > date for v in h.versions[('relation', r)])]
+        rid = rnd.choice(later or sorted(rels))
+        r = rnd.choice([0, 5, 50])
+        d = f'[date:"{date}"]'
+        for kind in ('node', 'way'):
+            checks.append((f'date around rel = around members ({kind}s)',
+                           f'{d}; relation({rid})->.r; {kind}(around.r:{r});',
+                           f'{d}; relation({rid})->.rr; (node(r.rr); way(r.rr);)->.m; {kind}(around.m:{r});', 'equal'))
+    return checks
