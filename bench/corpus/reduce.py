@@ -262,7 +262,8 @@ def cmd_reduce(args):
     recs = [json.loads(line) for line in open(args.corpus)]
     own = json.load(open(args.owners))
     tmp = tempfile.mkdtemp(prefix='reduce-')
-    mine = [i for i in range(len(recs)) if i % args.shards == args.shard]
+    mine = [i for i in range(len(recs)) if i % args.shards == args.shard
+            and (own['owners'][str(i)] or not args.skip_unowned)]
     tasks = [(i, recs[i], set(own['owners'][str(i)]), tuple(own['base'][str(i)]), args.bin, args.db, args, tmp)
              for i in mine]
     done = []
@@ -321,6 +322,8 @@ def main():
     p.add_argument('--max-evals', type=int, default=300)
     p.add_argument('--time-limit', type=float, default=300)
     p.add_argument('--max-cpu', type=float, default=5.0)
+    p.add_argument('--skip-unowned', action='store_true',
+                   help='leave out queries that own no edge (they would only keep hit counts)')
     args = ap.parse_args()
     {'own': cmd_own, 'reduce': cmd_reduce, 'check': cmd_check}[args.cmd](args)
 
