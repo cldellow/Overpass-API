@@ -48,7 +48,8 @@ pre.src { margin:0; font:12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monosp
   overflow:auto; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px;
   display:none; box-shadow:0 8px 24px rgba(0,0,0,.2); }
 #panel.open { display:block; }
-#panel pre { white-space:pre-wrap; font:12px/1.4 ui-monospace, monospace; margin:4px 0 12px; }
+#panel pre { white-space:pre-wrap; font:12px/1.4 ui-monospace, monospace; margin:4px 0 12px; max-height:9em;
+  overflow:auto; border-left:3px solid var(--line); padding-left:8px; }
 pre.query { background:var(--panel); padding:12px; border-radius:6px; white-space:pre-wrap;
   font:13px/1.45 ui-monospace, monospace; }
 .legend span { display:inline-block; padding:0 6px; margin-right:8px; }
@@ -161,13 +162,13 @@ def main():
                 picks = qs[:args.per_line]
                 attr[ln] = [len(qs), picks]
                 qcell = f'<a data-l="{ln}" href="#L{ln}">{len(qs)} q</a>'
-            rows.append(f'<div class="l{cls}" id="L{ln}"><a class="n" href="{args.repo}/blob/{args.commit}/src/'
-                        f'{fn}#L{ln}">{ln}</a><span class="c">{"" if c is None else c}</span>'
+            rows.append(f'<div class="l{cls}" id="L{ln}"><a class="n" href="#L{ln}">{ln}</a><span class="c">{"" if c is None else c}</span>'
                         f'<span class="q">{qcell}</span><span>{html.escape(text)}</span></div>')
         attr_json = json.dumps(attr, separators=(',', ':')).replace('</', '<\\/')
         body = (f'<p><a href="{root}index.html">Overpass API corpus coverage</a> / {html.escape(fn)}</p>'
                 f'<h1>{html.escape(fn)}</h1><p>{hit} of {len(counts)} instrumented lines run by the corpus '
-                f'({pct(hit, len(counts))}) at <a href="{args.repo}/tree/{args.commit}">{short}</a>.</p>'
+                f'({pct(hit, len(counts))}) at <a href="{args.repo}/tree/{args.commit}">{short}</a> '
+                f'(<a href="{args.repo}/blob/{args.commit}/src/{fn}">this file on GitHub</a>).</p>'
                 f'<p class="legend muted"><span class="hit-k" style="background:var(--hit)">run</span>'
                 f'<span style="background:var(--miss)">never run</span>columns: line, executions, queries '
                 f'(click for the queries that run the line)</p>'
@@ -220,9 +221,10 @@ def main():
     qrows = ''.join(f'<tr><td><a href="q/{n}.html">{n}</a></td><td class="num">{r["cpu"]:.2f}</td>'
                     f'<td class="num">{len(unique.get(n, []))}</td><td>{html.escape(r["status"][:60])}</td>'
                     f'<td class="muted">{html.escape(r["id"][:70])}</td></tr>' for n, r in enumerate(corpus))
+    cpu_text = f'{cpu / 60:.1f} CPU minutes' if cpu >= 60 else f'{cpu:.0f} CPU seconds'
     body = (f'<h1>Overpass API: conformance corpus coverage</h1>'
             f'<p>Source: <a href="{args.repo}/tree/{args.commit}">{args.repo.split("github.com/")[-1]} at {short}</a>. '
-            f'{len(corpus)} queries, {cpu / 60:.1f} CPU minutes in all. They run '
+            f'{len(corpus)} queries, {cpu_text} in all. They run '
             f'<b>{all_hit} of {all_lines}</b> instrumented lines ({pct(all_hit, all_lines)}) of the files the '
             f'query binary (<code>osm3s_query</code>) is built from.</p>{args.about}'
             f'<p><a href="corpus.jsonl">corpus.jsonl</a>: every query with its expected status and output digest.</p>'
