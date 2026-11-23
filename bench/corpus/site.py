@@ -102,6 +102,7 @@ def main():
     ap.add_argument('--src', required=True)
     ap.add_argument('--commit', required=True, help='the source commit, for links and the title')
     ap.add_argument('--repo', default='https://github.com/fossgis/Overpass-API')
+    ap.add_argument('--dataset', default='', help='the database\'s name, for titles (e.g. Nova Scotia)')
     ap.add_argument('--about', default='', help='an HTML paragraph for the index page')
     ap.add_argument('--per-line', type=int, default=15, help='queries listed per line')
     ap.add_argument('--out', required=True)
@@ -140,6 +141,7 @@ def main():
                                 'digest': r['digest']}) + '\n')
 
     short = args.commit[:12]
+    dsuffix = f' ({html.escape(args.dataset)})' if args.dataset else ''
     stats = {}
     for fn in sorted(total):
         counts = total[fn]
@@ -165,7 +167,7 @@ def main():
             rows.append(f'<div class="l{cls}" id="L{ln}"><a class="n" href="#L{ln}">{ln}</a><span class="c">{"" if c is None else c}</span>'
                         f'<span class="q">{qcell}</span><span>{html.escape(text)}</span></div>')
         attr_json = json.dumps(attr, separators=(',', ':')).replace('</', '<\\/')
-        body = (f'<p><a href="{root}index.html">Overpass API corpus coverage</a> / {html.escape(fn)}</p>'
+        body = (f'<p><a href="{root}index.html">Overpass API corpus coverage{dsuffix}</a> / {html.escape(fn)}</p>'
                 f'<h1>{html.escape(fn)}</h1><p>{hit} of {len(counts)} instrumented lines run by the corpus '
                 f'({pct(hit, len(counts))}) at <a href="{args.repo}/tree/{args.commit}">{short}</a> '
                 f'(<a href="{args.repo}/blob/{args.commit}/src/{fn}">this file on GitHub</a>).</p>'
@@ -188,7 +190,7 @@ def main():
         lst = ''.join(f'<li><a href="../src/{html.escape(f)}.html#L{ln}">{html.escape(f)}:{ln}</a></li>'
                       for f, ln in uniq[:200])
         more = f'<li class="muted">and {len(uniq) - 200} more</li>' if len(uniq) > 200 else ''
-        body = (f'<p><a href="../index.html">Overpass API corpus coverage</a> / query {n}</p>'
+        body = (f'<p><a href="../index.html">Overpass API corpus coverage{dsuffix}</a> / query {n}</p>'
                 f'<h1>Query {n}</h1><p class="muted">{html.escape(r["id"])} · {r["cpu"]:.2f} s CPU · '
                 f'expected status <code>{html.escape(r["status"])}</code></p>'
                 f'<pre class="query">{html.escape(r["query"])}</pre>'
@@ -222,7 +224,8 @@ def main():
                     f'<td class="num">{len(unique.get(n, []))}</td><td>{html.escape(r["status"][:60])}</td>'
                     f'<td class="muted">{html.escape(r["id"][:70])}</td></tr>' for n, r in enumerate(corpus))
     cpu_text = f'{cpu / 60:.1f} CPU minutes' if cpu >= 60 else f'{cpu:.0f} CPU seconds'
-    body = (f'<h1>Overpass API: conformance corpus coverage</h1>'
+    title = 'Overpass API: conformance corpus coverage' + (f' ({args.dataset})' if args.dataset else '')
+    body = (f'<p class="muted"><a href="../index.html">All runs</a></p><h1>{html.escape(title)}</h1>'
             f'<p>Source: <a href="{args.repo}/tree/{args.commit}">{args.repo.split("github.com/")[-1]} at {short}</a>. '
             f'{len(corpus)} queries, {cpu_text} in all. They run '
             f'<b>{all_hit} of {all_lines}</b> instrumented lines ({pct(all_hit, all_lines)}) of the files the '
@@ -233,7 +236,7 @@ def main():
             f'<h2>Queries</h2><div class="scroll"><table><tr><th>#</th><th class="num">CPU s</th>'
             f'<th class="num">Unique lines</th><th>Expected status</th><th>Origin</th></tr>{qrows}</table></div>')
     with open(os.path.join(args.out, 'index.html'), 'w') as f:
-        f.write(page('Overpass API corpus coverage', body, ''))
+        f.write(page(title, body, ''))
     print(f'{len(stats)} files, {all_hit}/{all_lines} lines, {len(corpus)} queries -> {args.out}')
 
 
