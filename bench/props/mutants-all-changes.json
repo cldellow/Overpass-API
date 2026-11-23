@@ -457,5 +457,14 @@
   "new": "std::min< uint64 >(std::max< uint32 >(*(uint32*)buffer_ - 8, 8), (uint64)block_size * compression_factor));",
   "note": "the cache keeps the block without its last 8 bytes, so a block's later reads see stale bytes at its end",
   "expect_caught": "maybe"
+ },
+ {
+  "commit": "1487d9a",
+  "subject": "union: cache blocks from their first read when statements will re-read them",
+  "file": "src/overpass_api/statements/union.cc",
+  "old": "~Rereads_Expected_Guard() { if (active) --Block_Cache::rereads_expected(); }",
+  "new": "~Rereads_Expected_Guard() { }",
+  "note": "equivalent: after the first union that expects re-reads, every block is cached on its first read for the rest of the query. That changes only which blocks are cached and how much memory is used, never what a read returns, so no output check can catch it. The commit changes only the caching policy, so every mutant of it is equivalent in this sense; the cache's correctness is covered by the 3b4e810 mutant",
+  "expect_caught": "no"
  }
 ]
