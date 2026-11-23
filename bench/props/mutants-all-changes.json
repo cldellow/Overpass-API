@@ -1,6 +1,6 @@
 [
  {
-  "commit": "5f7ca76",
+  "commit": "661af2a",
   "subject": "area and poly queries: skip the segment test when bounding boxes don't overlap",
   "file": "src/overpass_api/statements/area_query.cc",
   "old": "  for (Decoded_Coords::const_iterator it = coords.begin(); it != coords.end(); ++it)",
@@ -9,7 +9,7 @@
   "expect_caught": "maybe"
  },
  {
-  "commit": "a5bad4f",
+  "commit": "2f1d4fc",
   "subject": "Segment pre-check: allow the 1-unit latitude slack intersects_inner uses",
   "file": "src/overpass_api/statements/area_query.h",
   "old": "    return !((max_lat < rhs.min_lat && rhs.min_lat - max_lat > 1)\n        || (rhs.max_lat < min_lat && min_lat - rhs.max_lat > 1)",
@@ -18,7 +18,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "6eb8582",
+  "commit": "1e95f47",
   "subject": "poly queries: test nodes against blocks decoded once per tile",
   "file": "src/overpass_api/statements/polygon_query.cc",
   "old": "      areas_in_tile.push_back(Coord_Query_Statement::Decoded_Area_Block(current_idx, *ait));\n\n    while (nodes_it != nodes.end() && nodes_it->first.val() < current_idx)",
@@ -27,7 +27,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "6ae7b9f",
+  "commit": "0600c1d",
   "subject": "area and poly queries: decode each block once per tile for the segment tests",
   "file": "src/overpass_api/statements/area_query.cc",
   "old": "  coords.clear();\n  coords.reserve(block.coors.size());",
@@ -36,7 +36,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "ce2e8fc",
+  "commit": "9e84cb4",
   "subject": "area queries: decode area blocks once per tile, skip blocks out of range",
   "file": "src/overpass_api/statements/coord_query.cc",
   "old": "coord_lon > area_block.max_lon)",
@@ -45,7 +45,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "8e4d3fd",
+  "commit": "1914286",
   "subject": "bbox filter: keep ways in inner tiles without loading their geometry",
   "file": "src/overpass_api/data/bbox_filter.cc",
   "old": "::lon(idx, 0xffffffff) <= bbox.east)",
@@ -54,7 +54,7 @@
   "expect_caught": "maybe"
  },
  {
-  "commit": "019d509",
+  "commit": "321af46",
   "subject": "Geometry stores: keep member node positions in 16 bytes, not 40",
   "file": "src/overpass_api/data/way_geometry_store.cc",
   "old": "  move_to_node_positions(way_members_, nodes);\n  sort(nodes.begin(), nodes.end(), Node_Comparator_By_Id());",
@@ -63,7 +63,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "034d754",
+  "commit": "1584736",
   "subject": "Collect relation node members and way nodes in one pass",
   "file": "src/overpass_api/data/collect_members.cc",
   "old": "      relation_node_member_indices(relations, attic_relations).union_(way_nd_indices(ways, attic_ways)));",
@@ -72,7 +72,7 @@
   "expect_caught": "maybe"
  },
  {
-  "commit": "7fbeb71",
+  "commit": "54ab643",
   "subject": "Collect relation node members and way nodes in one pass at past dates",
   "file": "src/overpass_api/data/collect_members.cc",
   "old": "            context, input_set.relations, input_set.attic_relations, all_ways.current, all_ways.attic)",
@@ -81,7 +81,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "124b684",
+  "commit": "911e663",
   "subject": "Reject non-matching ids with a bit filter before binary search",
   "file": "src/overpass_api/data/abstract_processing.h",
   "old": "    return (bits[h>>6] >> (h & 63)) & 1;",
@@ -90,7 +90,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "81baad8",
+  "commit": "6b8bde3",
   "subject": "around: skip index entries without objects when computing candidate ranges",
   "file": "src/overpass_api/statements/around.cc",
   "old": "    if (it->second.empty())\n      continue;",
@@ -99,7 +99,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "1a75fcc",
+  "commit": "1f93606",
   "subject": "around: take candidate ranges for relation inputs from their members",
   "file": "src/overpass_api/statements/around.cc",
   "old": ".union_(member_node_ranges)",
@@ -108,7 +108,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "e927242",
+  "commit": "b8982c7",
   "subject": "around grid: test each entry once per lookup, tighter reach for segments",
   "file": "src/overpass_api/statements/around.cc",
   "old": "  seen[id] = lookup;",
@@ -117,7 +117,7 @@
   "expect_caught": "maybe"
  },
  {
-  "commit": "352a181",
+  "commit": "8e9bbb6",
   "subject": "around: let the tag index drive queries whose around area is large",
   "file": "src/overpass_api/statements/around.cc",
   "old": "    if (tiles > 65536)",
@@ -126,7 +126,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "6ad3fed",
+  "commit": "a99f99b",
   "subject": "around: check the query's time limit while filtering candidates",
   "file": "src/overpass_api/statements/around.cc",
   "old": "    if (++count % 256 == 0)",
@@ -135,7 +135,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "89b6ab5",
+  "commit": "8f926ed",
   "subject": "around: index the input set's geometry with a coarse grid",
   "file": "src/overpass_api/statements/around.cc",
   "old": "  lon0 = (int64)floor(box.west / cell_size);",
@@ -144,7 +144,7 @@
   "expect_caught": "maybe"
  },
  {
-  "commit": "0e0fb95",
+  "commit": "5a978ed",
   "subject": "around: use fixed-size arrays for 3-D vectors",
   "file": "src/overpass_api/statements/around.h",
   "old": "typedef std::array< double, 3 > Vec3;",
@@ -153,7 +153,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "90dccb0",
+  "commit": "5bc0bc9",
   "subject": "Format output coordinates without general float formatting",
   "file": "src/overpass_api/output_formats/fixed7.h",
   "old": "  double rounded = std::floor(scaled + 0.5);",
@@ -162,7 +162,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "0a05268",
+  "commit": "d40a1e5",
   "subject": "Write tag strings without an escaped copy when nothing needs escaping",
   "file": "src/expat/escape_xml.cc",
   "old": "    if (c == '&' || c == '\\\"' || c == '<' || c == '>' || c < 32)",
@@ -171,7 +171,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "6a07314",
+  "commit": "7a3f9d6",
   "subject": "changed: collect only the ids other constraints allow",
   "file": "src/overpass_api/statements/query.cc",
   "old": "      bool restricts = (pass == 1 && !ids.invert)",
@@ -180,7 +180,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "f116b76",
+  "commit": "1158af4",
   "subject": "filter_attic_elements: build and use the timestamps one index at a time",
   "file": "src/overpass_api/data/collect_members.h",
   "old": "                ait = attic.insert(std::make_pair(*idx, std::vector< Attic< Skeleton > >())).first;",
@@ -189,7 +189,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "a0b94f3",
+  "commit": "c2494f8",
   "subject": "user: keep touched ids for the whole query, whatever their number",
   "file": "src/overpass_api/statements/user.cc",
   "old": "    ids = touched_nodes(rman);",
@@ -198,7 +198,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "41e5c43",
+  "commit": "d443f79",
   "subject": "keep_matching_skeletons: valid-until timestamps in a sorted vector, not a std::map",
   "file": "src/overpass_api/data/collect_members.h",
   "old": "        if (valid_until == 0)\n          valid_until = run_end->second;",
@@ -207,7 +207,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "60e59a9",
+  "commit": "f7e8517",
   "subject": "Collect_Items: cap chunk size, and chunk queries at a past date",
   "file": "src/overpass_api/data/collect_items.h",
   "old": "            || result_size >= MAX_CHUNK_ACCOUNTED_SIZE;\n        cur_idx = it.index();",
@@ -216,7 +216,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "84bc740",
+  "commit": "9bd2ccc",
   "subject": "collect_items_range: keep the result size up to date instead of recounting it",
   "file": "src/overpass_api/data/collect_items.h",
   "old": "        if (last == result.end() || !(last->first == it.index()))",
@@ -225,7 +225,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "6d44388",
+  "commit": "980da68",
   "subject": "filter_attic_elements: per-index timestamps in a sorted vector, not a std::map",
   "file": "src/overpass_api/data/collect_members.h",
   "old": "      [](const std::pair< Id_Type, Value >& a, const Id_Type& b) { return a.first < b; });",
@@ -234,7 +234,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "a20d3f5",
+  "commit": "47df470",
   "subject": "Don't copy the input set when passing it or an empty set by reference",
   "file": "src/overpass_api/statements/around.cc",
   "old": "  around->calc_lat_lons(input ? *input : empty, *around, rman);",
@@ -243,7 +243,7 @@
   "expect_caught": "maybe"
  },
  {
-  "commit": "c700fa3",
+  "commit": "3b28d33",
   "subject": "query: run metadata-only filters before geometry filters",
   "file": "src/overpass_api/statements/query.cc",
   "old": "    if (!(*it)->filter_reads_only_metadata())",
@@ -252,7 +252,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "7077c94",
+  "commit": "07bdf3d",
   "subject": "user: compute the ids of touched objects once per query",
   "file": "src/overpass_api/statements/user.cc",
   "old": "  if (!relation_ids_known)",
@@ -261,7 +261,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "6237e6d",
+  "commit": "4a9c1b5",
   "subject": "user: filter relations by touched ids whenever the set has relations",
   "file": "src/overpass_api/statements/user.cc",
   "old": "    if (!into.relations.empty() || !into.attic_relations.empty())",
@@ -270,7 +270,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "fc7b13c",
+  "commit": "01c5d7a",
   "subject": "Meta_Collector: keep a tile's metadata in a sorted vector, not a std::set",
   "file": "src/overpass_api/data/meta_collector.h",
   "old": "      { return !(a < b) && !(b < a); }), current_objects.end());",
@@ -279,7 +279,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "2273b99",
+  "commit": "1246db6",
   "subject": "around: weight the time-limit check by the work done, and check inside long ways",
   "file": "src/overpass_api/statements/around.cc",
   "old": "    if (work_done >= 64*1024)",
@@ -288,7 +288,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "634d377",
+  "commit": "57128b5",
   "subject": "around: take candidate ranges for relations at a past date from their members",
   "file": "src/overpass_api/statements/around.cc",
   "old": "      new_way_ranges = new_way_ranges.union_(ranges(relation_way_members(",
@@ -297,7 +297,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "5df9912",
+  "commit": "6da58b9",
   "subject": "around: look up the input relations' members once per input",
   "file": "src/overpass_api/statements/around.cc",
   "old": "      || member_ranges_relations != relations || member_ranges_attic_relations != attic_relations)",
@@ -306,7 +306,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "358e322",
+  "commit": "48d5aa5",
   "subject": "collect_items: pass end iterators to reconstruct_items by reference",
   "file": "src/overpass_api/data/collect_items.h",
   "old": "    Iterator& it, const Iterator& end, Index index,",
@@ -315,7 +315,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "4033566",
+  "commit": "ed92f99",
   "subject": "collect_items_by_timestamp: keep the result size up to date instead of recounting it",
   "file": "src/overpass_api/data/collect_items.h",
   "old": "  return it == m.end() ? 0 : eval_index_size + it->second.size()*eval_object_size((const Object*)0);",
@@ -324,7 +324,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "7b7d798",
+  "commit": "c5abb65",
   "subject": "tag_store: remove placeholder tags only from the entries just collected",
   "file": "src/overpass_api/data/tag_store.h",
   "old": "      touched.push_back(&obj_vec);",
@@ -333,7 +333,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "9945057",
+  "commit": "d760865",
   "subject": "area and poly queries: build each way's geometry once in collect_ways",
   "file": "src/overpass_api/statements/area_query.cc",
   "old": "      add_way_to_area_blocks(coords, it2->id.val(), way_segments);",
@@ -342,7 +342,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "e643105",
+  "commit": "1d5e301",
   "subject": "tag_store: find tag entries' ids with a forward cursor instead of a binary search",
   "file": "src/overpass_api/data/tag_store.h",
   "old": "  if (cursor != ids.begin() && !(*(cursor - 1) < id))",
@@ -351,7 +351,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "1b30bbb",
+  "commit": "119696b",
   "subject": "bbox query: collect and filter nodes in chunks at a past date",
   "file": "src/overpass_api/statements/bbox_query.cc",
   "old": "      move_into(into.attic_nodes, chunk.attic_nodes);\n",
@@ -360,7 +360,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "3f7cfa8",
+  "commit": "6fc7e0e",
   "subject": "bbox query: count the accumulated result in the chunk loop's size checks",
   "file": "src/overpass_api/statements/bbox_query.cc",
   "old": "      rman.health_check(*this, 0, eval_map(into.nodes) + eval_map(into.attic_nodes));",
@@ -369,7 +369,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "180c620",
+  "commit": "557a1b5",
   "subject": "Collect_Items: count elements, not only indexes, in way and relation history collection",
   "file": "src/overpass_api/data/collect_items.h",
   "old": "    count += result[index].size() + attic_result[index].size();\n\n    //check_for_duplicated_objects< Way_Skeleton >",
@@ -378,7 +378,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "7d39a64",
+  "commit": "dcaf3ef",
   "subject": "print: reserve the id-sorted element references exactly",
   "file": "src/overpass_api/statements/print.cc",
   "old": "    count += it->second.size();",
@@ -387,7 +387,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "0ec8fa9",
+  "commit": "80f9f12",
   "subject": "Filter bbox and past-date results in place, without vector slack",
   "file": "src/overpass_api/data/bbox_filter.cc",
   "old": "        if (out != iit)\n          *out = *iit;\n        ++out;",
@@ -396,7 +396,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "1ef6664",
+  "commit": "5409399",
   "subject": "Tag_Store: generate the id list once, and keep only a chunk's attic tags",
   "file": "src/overpass_api/data/tag_store.h",
   "old": "  // As for current elements: only this chunk's tags and ids are needed.\n  tags_by_id.clear();\n",
@@ -405,7 +405,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "7b11467",
+  "commit": "32631a0",
   "subject": "Tag_Store: keep only a chunk's ids when printing in chunks",
   "file": "src/overpass_api/core/type_tags.h",
   "old": "      if (!(it2->id < lower_id_bound) && it2->id < upper_id_bound)\n        ids_by_coarse[it->first.val() & 0x7fffff00].push_back(it2->id);",
@@ -414,7 +414,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "f7274dc",
+  "commit": "c9d90c7",
   "subject": "print: reference id-sorted elements in 8 bytes",
   "file": "src/overpass_api/statements/print.cc",
   "old": "      if (items_by_id.timestamp(i.val()) == NOW)",
@@ -423,7 +423,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "686a701",
+  "commit": "4c5528e",
   "subject": "print: look up current and attic references the same way",
   "file": "src/overpass_api/statements/print.cc",
   "old": "    return *reinterpret_cast< const Object* >(entry.first + std::size_t(ref.pos) * entry.size);",
@@ -432,7 +432,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "ca7580a",
+  "commit": "3eb7aa0",
   "subject": "query: narrow ranges to the candidates' cells inside them, not all candidates",
   "file": "src/overpass_api/statements/query.cc",
   "old": "    if (b != bounds.end() && b->first < Index(it->val() + 0x100))",
@@ -441,7 +441,7 @@
   "expect_caught": "yes"
  },
  {
-  "commit": "d855242",
+  "commit": "a4ab8f3",
   "subject": "query: merge overlapping ranges before filtering the candidates' cells",
   "file": "src/overpass_api/statements/query.cc",
   "old": "    if (!bounds.empty() && !(bounds.back().second < it->first))",
@@ -450,7 +450,7 @@
   "expect_caught": "no"
  },
  {
-  "commit": "3b4e810",
+  "commit": "0091bad",
   "subject": "template_db: keep decompressed blocks that a query reads repeatedly",
   "file": "src/template_db/file_blocks.h",
   "old": "std::min< uint64 >(std::max< uint32 >(*(uint32*)buffer_, 8), (uint64)block_size * compression_factor));",
@@ -459,12 +459,21 @@
   "expect_caught": "maybe"
  },
  {
-  "commit": "1487d9a",
+  "commit": "4aa1665",
   "subject": "union: cache blocks from their first read when statements will re-read them",
   "file": "src/overpass_api/statements/union.cc",
   "old": "~Rereads_Expected_Guard() { if (active) --Block_Cache::rereads_expected(); }",
   "new": "~Rereads_Expected_Guard() { }",
   "note": "equivalent: after the first union that expects re-reads, every block is cached on its first read for the rest of the query. That changes only which blocks are cached and how much memory is used, never what a read returns, so no output check can catch it. The commit changes only the caching policy, so every mutant of it is equivalent in this sense; the cache's correctness is covered by the 3b4e810 mutant",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "e0954f4",
+  "subject": "template_db: keep blocks only while a statement expects re-reads",
+  "file": "src/template_db/file_blocks_index.h",
+  "old": "    if (rereads_expected() > 0 && total_bytes() + size <= LIMIT)",
+  "new": "    if (rereads_expected() >= 0 && total_bytes() + size <= LIMIT)",
+  "note": "equivalent: every block read is cached, not only while a union that expects re-reads runs. That changes only which blocks are cached and how much memory is used, never what a read returns, so no output check can catch it; the cache's correctness is covered by the mutant for the commit that adds it",
   "expect_caught": "no"
  }
 ]
