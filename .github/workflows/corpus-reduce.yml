@@ -1,0 +1,202 @@
+# Shrink the queries of a published corpus while keeping its coverage (bench/corpus/reduce.py), on
+# the database with history and areas. Runs on a push to the corpus-reduce branch.
+#
+# The database comes from history.yml's cache: built from a licensed Geofabrik full-history extract
+# and encrypted with age (see the notes at the top of history.yml). Here, as there:
+# - Only this repository's pushes run it (secrets are not given to forks).
+# - AGE_PRIVATE_KEY is written to $RUNNER_TEMP only to decrypt, and removed right after.
+# - Logs carry counts only. The uploaded artifacts hold query text, edge ids and status classes,
+#   never query output; every one is leak-checked against the extract's user names and uids
+#   (bench/corpus/leakcheck.py) before upload.
+
+name: corpus-reduce
+
+on:
+  push:
+    branches: [corpus-reduce]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: corpus-reduce
+  cancel-in-progress: true
+
+env:
+  CORPUS_URL: https://overpass-coverage.github.io/nova-scotia-full/corpus.jsonl
+  UPSTREAM_SHA: 8edf11b0419c39df4cd074bb83b6854392e57b13
+  SOURCE_URL: https://public.hikeratlas.com/pbfs/nova-scotia-internal.osh.pbf.age
+  IMP_SHA: cc998517d5e1b02c4a59f184f85a05abce8f88b9
+  SHARDS: 20
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - name: Check out upstream
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: fossgis/Overpass-API
+          ref: ${{ env.UPSTREAM_SHA }}
+          path: upstream
+      - name: Check out the corpus tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          path: tools
+      - name: Build the coverage binary and its edge map
+        run: |
+          sudo apt-get update -q > /dev/null
+          sudo apt-get install -y -q autoconf automake libtool clang llvm make libexpat1-dev zlib1g-dev liblz4-dev > /dev/null
+          clang -O2 -c tools/bench/corpus/cov_rt.c -o "$PWD/cov_rt.o"
+          cd upstream/src && mkdir -p m4 && autoreconf -i > /dev/null 2>&1 && mkdir -p ../build && cd ../build
+          ../src/configure CC=clang CXX=clang++ CFLAGS=-O1 \
+            CXXFLAGS="-O1 -g -fsanitize-coverage=inline-8bit-counters,pc-table" \
+            LDFLAGS=-fno-sanitize-link-runtime LIBS="$GITHUB_WORKSPACE/cov_rt.o" --enable-lz4 --disable-shared > /dev/null
+          make -j"$(nproc)" bin/osm3s_query > ../../make.log 2>&1 || { tail -30 ../../make.log; exit 1; }
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p covbin && cp upstream/build/bin/osm3s_query covbin/
+          python3 tools/bench/corpus/edgefiles.py covbin/osm3s_query edgemap.json
+          llvm-strip -g covbin/osm3s_query
+          cp upstream/src/rules/areas.osm3s covbin/
+          ls -la covbin
+      - name: Upload the binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: covbin
+          path: |
+            covbin
+            edgemap.json
+
+  own:
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - &checkout_tools
+        name: Check out the corpus tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          path: tools
+      - &download_bin
+        name: Download the binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        with:
+          name: covbin
+      - &db_key
+        name: Compute the database cache key
+        id: key
+        run: |
+          etag=$(curl -fsSI "$SOURCE_URL" | tr -d '\r' | awk 'tolower($1) == "etag:" {print $2}' | tr -cd 'A-Za-z0-9-')
+          [ -n "$etag" ] || { echo "no ETag for the encrypted extract"; exit 1; }
+          echo "key=history-db-nova-scotia-$etag-$IMP_SHA-lz4-no-v1" >> "$GITHUB_OUTPUT"
+      - &db_restore
+        name: Restore the encrypted database archive
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: db.tar.zst.age
+          key: ${{ steps.key.outputs.key }}
+          fail-on-cache-miss: true
+      - &db_prepare
+        name: Decrypt the database and add areas
+        env:
+          AGE_PRIVATE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        run: |
+          set -o pipefail
+          sudo apt-get update -q > /dev/null
+          sudo apt-get install -y -q age zstd > /dev/null
+          chmod +x covbin/osm3s_query
+          key="$RUNNER_TEMP/age.key"
+          (umask 077; printf '%s\n' "$AGE_PRIVATE_KEY" > "$key")
+          age -d -i "$key" db.tar.zst.age | zstd -dc | tar -S -xf -
+          rm -f "$key" db.tar.zst.age
+          covbin/osm3s_query --db-dir="$PWD/db" --rules < covbin/areas.osm3s > "$RUNNER_TEMP/areas.log" 2>&1
+          echo "areas: $(ls db | grep -c '^area') area files"
+          curl -fsS -o corpus.jsonl "$CORPUS_URL"
+          echo "corpus: $(wc -l < corpus.jsonl) queries"
+      - name: Work out which query owns which edges
+        run: |
+          python3 tools/bench/corpus/reduce.py own corpus.jsonl --bin covbin --db "$PWD/db" --out owners.json \
+            --edgemap edgemap.json --exclude-prefix /usr --jobs "$(nproc)"
+          python3 tools/bench/corpus/leakcheck.py corpus.jsonl --vocab vocab.json > /dev/null
+      - name: Upload the owners
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: owners
+          path: owners.json
+
+  reduce:
+    needs: [build, own]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    steps:
+      - *checkout_tools
+      - *download_bin
+      - *db_key
+      - *db_restore
+      - *db_prepare
+      - name: Download the owners
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        with:
+          name: owners
+      - name: Reduce this shard's queries
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          python3 tools/bench/corpus/reduce.py reduce corpus.jsonl --owners owners.json --bin covbin --db "$PWD/db" \
+            --out "reduced-$SHARD.jsonl" --shard "$SHARD" --shards "$SHARDS" --jobs "$(nproc)" \
+            --max-evals 300 --time-limit 240
+          python3 -c "
+          import json, sys
+          rs = [json.loads(l) for l in open(sys.argv[1])]
+          with open(sys.argv[2], 'w') as f:
+              for r in rs: f.write(json.dumps({'id': r['id'], 'query': r['query']}) + '\n')
+          " "reduced-$SHARD.jsonl" "check-$SHARD.jsonl"
+          python3 tools/bench/corpus/leakcheck.py "check-$SHARD.jsonl" --vocab vocab.json > /dev/null
+      - name: Upload the shard
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: reduced-${{ matrix.shard }}
+          path: reduced-${{ matrix.shard }}.jsonl
+
+  check:
+    needs: [build, own, reduce]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - *checkout_tools
+      - *download_bin
+      - *db_key
+      - *db_restore
+      - *db_prepare
+      - name: Download the owners and the shards
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        with:
+          pattern: '{owners,reduced-*}'
+          merge-multiple: true
+      - name: Merge, and check coverage on the reduced corpus
+        run: |
+          python3 - <<'PYEOF'
+          import glob, json
+          rs = sorted((json.loads(l) for p in glob.glob('reduced-*.jsonl') for l in open(p)), key=lambda r: r['i'])
+          with open('reduced.jsonl', 'w') as f:
+              for r in rs:
+                  f.write(json.dumps({'i': r['i'], 'id': r['id'], 'query': r['query']}) + '\n')
+          o, n = sum(r['orig_len'] for r in rs), sum(r['len'] for r in rs)
+          print(f'{len(rs)} queries: {o} -> {n} characters ({100 * (1 - n / o):.0f}% smaller); '
+                f'{sum(r["evals"] for r in rs)} evaluations; {sum(r["len"] == r["orig_len"] for r in rs)} unchanged')
+          PYEOF
+          python3 tools/bench/corpus/reduce.py check reduced.jsonl --owners owners.json --bin covbin --db "$PWD/db" \
+            --out check.json --jobs "$(nproc)"
+          python3 tools/bench/corpus/leakcheck.py reduced.jsonl --vocab vocab.json > /dev/null
+      - name: Upload the reduced corpus
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: reduced-corpus
+          path: |
+            reduced.jsonl
+            check.json
