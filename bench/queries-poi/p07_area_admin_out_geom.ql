@@ -1,0 +1,1 @@
+[out:json][timeout:30]; area["name"="Nova Scotia"]["admin_level"="4"]->.p; (way["boundary"="administrative"]["admin_level"="6"](area.p); relation["boundary"="administrative"]["admin_level"="6"](area.p); ); out geom;

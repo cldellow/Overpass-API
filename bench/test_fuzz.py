@@ -104,6 +104,12 @@ FEATURES = {
         ('list function', r'lrs_(in|union|isect|min|max)\(', 0.05),
         ('ternary', r'\?\(', 0.05),
     ],
+    'poi': [
+        ('union of 4+ statements around one point', r'\((?:\s*\w+\[[^\n]*\(around:\d+,-?[\d.]+,-?[\d.]+\);){4,}', 0.2),
+        ('around radius >= 2000 m', r'around:(?:[2-9]\d{3}|\d{5,}),', 0.2),
+        ('out center and tags', r'out (?:center tags|tags center)', 0.08),
+        ('case-insensitive alternation', r'~"[^"]*\|[^"]*",i\]', 0.05),
+    ],
 }
 # Share of queries that may fail to parse. evaluators breaks some expressions on purpose.
 PARSE_ALLOWANCE = {'evaluators': 0.02}
@@ -112,7 +118,9 @@ COUNT = 2000
 
 
 def check_coverage(features, queries, failures):
-    rules = BASE + [rule for f in sorted(features) for rule in FEATURES[f]]
+    # With poi, half of the queries are POI lookups, so the other constructs are half as common.
+    base_scale = 0.5 if 'poi' in features else 1.0
+    rules = [(n, p, share * base_scale) for n, p, share in BASE] + [rule for f in sorted(features) for rule in FEATURES[f]]
     for name, pattern, share in rules:
         hits = sum(1 for q in queries if re.search(pattern, q))
         if hits < share * len(queries):
@@ -146,7 +154,7 @@ def main():
 
     failures = []
     for features in [frozenset(), frozenset({'areas', 'complete'}),
-                     frozenset({'history', 'users', 'complete'}), frozenset({'evaluators'})]:
+                     frozenset({'history', 'users', 'complete'}), frozenset({'evaluators'}), frozenset({'poi'})]:
         queries = [fuzz.generate(VOCAB, 7, i, features) for i in range(COUNT)]
         check_coverage(features, queries, failures)
         # Same seed and index, same query.
