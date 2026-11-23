@@ -204,7 +204,7 @@ jobs:
       fail-fast: false
       matrix:
         # history: the history, user and complete families. extended: those plus evaluators,
-        # output formats and the other statements (fuzz.py --features).
+        # output formats, the other statements and POI lookups (fuzz.py --features).
         set: [history, extended]
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     steps:
@@ -250,7 +250,7 @@ jobs:
           SEED: ${{ needs.refs.outputs.seed }}
           SHARD: ${{ matrix.shard }}
           SET: ${{ matrix.set }}
-          FEATURES: ${{ matrix.set == 'extended' && 'history,users,complete,evaluators,output,statements' || 'history,users,complete' }}
+          FEATURES: ${{ matrix.set == 'extended' && 'history,users,complete,evaluators,output,statements,poi' || 'history,users,complete' }}
         run: |
           set -o pipefail
           sudo apt-get install -y -q age > /dev/null 2>&1 || { sudo apt-get update -q > /dev/null; sudo apt-get install -y -q age > /dev/null; }
@@ -300,7 +300,8 @@ jobs:
               except (ValueError, SyntaxError):
                   return None
               # Keep only plain outcome names with integer counts.
-              return {k: v for k, v in d.items() if isinstance(v, int) and re.fullmatch(r'[a-z-]+(-\d+)?|exit-\d+', str(k))} if d else None
+              # Upper case too: fuzz.py's verdict for a difference is DIFFERENT.
+              return {k: v for k, v in d.items() if isinstance(v, int) and re.fullmatch(r'[A-Za-z-]+(-\d+)?|exit-\d+', str(k))} if d else None
           num = lambda pattern: (lambda m: int(m.group(1)) if m else None)(re.search(pattern, text, re.M))
           print(json.dumps({
               'shard': int(sys.argv[1]), 'exit': int(sys.argv[2]), 'set': sys.argv[3],

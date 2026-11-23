@@ -5,7 +5,7 @@
 # - setup.yml builds or restores the binaries and the database (the Nova Scotia extract with the
 #   standard area rules, lz4 data and uncompressed maps, cached as a sparse archive). Plain, area
 #   and extended queries all run on it; extended adds evaluators (convert, make, for, if), every
-#   output format and the other statements fuzz.py can generate (--features).
+#   output format, the other statements fuzz.py can generate, and POI lookups (--features).
 # - Each shard keeps fuzz.py's baseline cache in the Actions cache, so later runs with the same
 #   baseline, seed and database only run the candidate.
 # - Pull requests and manual runs use seed 1 by default, so the baseline cache is reused across
@@ -162,7 +162,7 @@ jobs:
           case "$SET" in
             plain) features= ;;
             areas) features=areas,complete ;;
-            extended) features=evaluators,output,statements,areas,complete ;;
+            extended) features=evaluators,output,statements,poi,areas,complete ;;
           esac
           start=$((SHARD * QUERIES_PER_SHARD))
           set +e
