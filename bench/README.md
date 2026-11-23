@@ -146,6 +146,22 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
   union of 2–15 statements around one point with realistic radii (0.5–25 km, including radii from
   miles), filters mixing values, keys and alternations (some case-insensitive), and `out center
   tags` or similar. It needs no special database. Queries without the feature are unchanged.
+- **Output formats:** `--features output` (any database) varies the settings line and the `out`
+  statements (`fuzz_output.py`): `[out:xml]`, `[out:json]`, `[out:csv(...)]` with every `::` field
+  (the `count:*` ones quoted, as the parser needs), header line on or off and several separators,
+  and `[out:popup(...)]` with categories of tag filters and title keys; `[timeout:]`, `[maxsize:]`
+  and `[bbox:]`; and every `out` mode (`ids`, `skel`, `body`, `tags`, `meta`, `count`), geometry
+  (`geom`, `bb`, `center`), order, `noids`, limit and bbox. `out quirks`, which the parser accepts
+  but the print statement rejects, appears in about 1% of statements. `[out:custom]` is left out:
+  it needs templates in the database directory.
+- **More statements:** `--features statements` (`fuzz_more.py`) adds `local` (plain, `ll`, `llb`),
+  tag-only queries with every tag-filter form (regex values, regex keys, `,i`, alternations,
+  negations), polyline `around`, member filters with roles, recursion on `_`, and the `foreach`
+  variants. With `areas`, it adds area filters by id (`(area:N)`); with `history`, `compare` in
+  diff queries (plain, `(delta:...)`, with a block).
+- **All of them:** `--features evaluators,output,statements` combines the three; add `areas,complete`
+  on a database with areas, or `history,users,complete` on one with history. Seeds of feature sets
+  without these three are unchanged.
 - **Errors count:** error messages on stderr (and in the output) are part of each outcome, and the
   summary lists the most common ones, so invalid generated queries are visible rather than silently
   matching.
