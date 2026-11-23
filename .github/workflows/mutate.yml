@@ -1,0 +1,160 @@
+# Mutation check (bench/props/mutate.py on the bench-tools branch): for each mutant of the
+# given commits in bench/props/mutants-all-changes.json, apply it to the candidate (all-changes
+# by default), rebuild osm3s_query and run props.py against upstream/master. A mutant whose
+# results match the unmutated tree's marks a change the property tests don't cover. See
+# bench/README.md on bench-tools.
+#
+# Each commit runs in its own job, so the mutants of several commits run in parallel.
+
+name: mutate
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: Commits whose mutants to run, comma-separated (as in mutants-all-changes.json)
+        required: true
+      ref:
+        description: Branch, tag or commit the mutants apply to
+        required: true
+        default: all-changes
+      tools_ref:
+        description: bench-tools branch to take mutate.py, props.py and the mutants from
+        required: true
+        default: bench-tools
+      seeds:
+        description: Seeds (e.g. 1-40)
+        required: true
+        default: 1-40
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: https://github.com/fossgis/Overpass-API
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      commits: ${{ steps.split.outputs.commits }}
+    steps:
+      - name: One job per commit
+        id: split
+        env:
+          ONLY: ${{ inputs.only }}
+        run: |
+          echo "commits=$(python3 -c 'import json,os; print(json.dumps([c.strip() for c in os.environ["ONLY"].split(",") if c.strip()]))')" >> "$GITHUB_OUTPUT"
+
+  mutate:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        commit: ${{ fromJson(needs.plan.outputs.commits) }}
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          path: cand
+          fetch-depth: 0
+
+      - name: Find the baseline (upstream/master at the merge base)
+        id: base
+        working-directory: cand
+        run: |
+          git fetch --quiet "$UPSTREAM" master
+          base=$(git merge-base HEAD FETCH_HEAD)
+          git worktree add --quiet ../base "$base"
+          echo "candidate $(git rev-parse HEAD), baseline $base"
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Check out bench-tools
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tools_ref }}
+          path: tools
+
+      - name: Check out better-imports
+        uses: actions/checkout@v7
+        with:
+          ref: better-imports
+          path: imp
+
+      - name: Record the better-imports commit
+        id: imp
+        working-directory: imp
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q autoconf automake libtool g++ make libexpat1-dev zlib1g-dev liblz4-dev
+
+      # The same binary caches as the props workflow.
+      - name: Cache the baseline binaries
+        id: cache-base
+        uses: actions/cache@v6
+        with:
+          path: base-bin
+          key: overpass-bin-${{ steps.base.outputs.sha }}-v1
+
+      - name: Cache the better-imports binaries
+        id: cache-imp
+        uses: actions/cache@v6
+        with:
+          path: imp-bin
+          key: overpass-bin-${{ steps.imp.outputs.sha }}-v1
+
+      - name: Build
+        env:
+          BASE_CACHED: ${{ steps.cache-base.outputs.cache-hit }}
+          IMP_CACHED: ${{ steps.cache-imp.outputs.cache-hit }}
+        run: |
+          configure() {  # configure SRC_CHECKOUT
+            (cd "$1/src" && mkdir -p m4 && autoreconf -i > /dev/null 2>&1)
+            mkdir -p "$1/build"
+            (cd "$1/build" && ../src/configure CXXFLAGS="-O2" --enable-lz4 > /dev/null)
+          }
+          build() {  # build SRC_CHECKOUT OUT_BIN TARGET...
+            local src=$1 out=$2; shift 2
+            configure "$src"
+            (cd "$src/build" && make -j"$(nproc)" "$@" > make.log 2>&1) || { tail -50 "$src/build/make.log"; exit 1; }
+            mkdir -p "$out"
+            for t in "$@"; do cp "$src/build/$t" "$out/"; done
+          }
+          [ "$BASE_CACHED" = true ] || build base base-bin bin/osm3s_query bin/update_database
+          [ "$IMP_CACHED" = true ] || build imp imp-bin bin/update_database
+          # mutate.py rebuilds osm3s_query in the candidate's build directory for each mutant.
+          configure cand
+          (cd cand/build && make -j"$(nproc)" bin/osm3s_query > make.log 2>&1) || { tail -50 cand/build/make.log; exit 1; }
+          ls -l base-bin imp-bin cand/build/bin
+
+      - name: Run the mutants
+        run: |
+          set -o pipefail
+          python3 tools/bench/props/mutate.py --src cand --build cand/build \
+            --baseline base-bin --import-bin base-bin --history-import-bin imp-bin \
+            --mutants tools/bench/props/mutants-all-changes.json --only "${{ matrix.commit }}" \
+            --seeds "${{ inputs.seeds }}" --jobs "$(nproc)" --log-dir logs | tee mutate.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          [ -f mutate.txt ] || exit 0
+          {
+            echo "### mutate.py: ${{ matrix.commit }} on ${{ inputs.ref }}"
+            echo
+            sed -n '/^| Commit /,$p' mutate.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutate-${{ matrix.commit }}
+          path: logs/
+          if-no-files-found: ignore
