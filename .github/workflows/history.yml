@@ -1,0 +1,400 @@
+# Differential fuzzing (bench/fuzz.py on bench-tools) of a change against upstream/master on a
+# database with history, built from a licensed Geofabrik full-history extract. See CLAUDE.md,
+# "Confidential data": derived databases and works must only be accessible to OpenStreetMap
+# contributors. So:
+#
+# - At rest everything is encrypted with age to AGE_PUBLIC_KEY: the source extract on R2, the
+#   database archive and the fuzz baseline cache in the Actions cache, and every artifact (fuzz
+#   output, differing queries, results). AGE_PRIVATE_KEY is a secret, written to $RUNNER_TEMP only
+#   for the commands that need it and removed afterwards.
+# - Only trusted runs decrypt: manual and scheduled runs, and pull requests from this repository's
+#   own branches. Third-party actions are pinned by commit SHA, here and in setup.yml.
+# - Logs carry aggregates only. Every command that could print data from the extract writes to a
+#   file, which is encrypted before upload. Messages for the log (fixed text, sizes and counts) are
+#   collected in a file, leak-checked against the vocabulary's user names and uids, and printed
+#   only if the check passes; the shards' counts are leak-checked the same way before encryption.
+#
+# setup.yml builds or restores the baseline, candidate and importer (better-imports) binaries.
+# The history database is imported by better-imports (upstream imports history incorrectly) with
+# lz4 data and uncompressed maps, made sparse, and cached as tar -S | zstd | age, keyed by the
+# encrypted extract's ETag, the importer commit and the compression methods.
+
+name: history
+
+on:
+  pull_request:
+    branches: [master]
+    # Only PRs that change code (or this workflow) need it; docs and other workflow PRs skip it.
+    paths:
+      - 'src/**'
+      - '.github/workflows/history.yml'
+      - '.github/workflows/setup.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to test
+        required: true
+        default: all-changes
+      seed:
+        description: Seed for the generated queries
+        required: true
+        default: '1'
+      queries_per_shard:
+        description: Queries per shard (10 shards)
+        required: true
+        default: '100'
+      import_ref:
+        description: better-imports commit that builds the database
+        required: true
+        default: cc998517d5e1b02c4a59f184f85a05abce8f88b9
+  schedule:
+    - cron: '17 8 * * 2'   # weekly, all-changes
+
+permissions:
+  contents: read
+
+concurrency:
+  group: history-${{ github.event.pull_request.number || inputs.ref || 'scheduled' }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_URL: https://public.hikeratlas.com/pbfs/nova-scotia-internal.osh.pbf.age
+  QUERIES_PER_SHARD: ${{ inputs.queries_per_shard || '100' }}
+  FEATURES: history,users,complete
+  AGE_RECIPIENT: ${{ vars.AGE_PUBLIC_KEY || secrets.AGE_PUBLIC_KEY }}
+
+jobs:
+  refs:
+    # Pull requests from forks never get here, so nothing downstream runs for them.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      candidate: ${{ steps.refs.outputs.candidate }}
+      seed: ${{ steps.refs.outputs.seed }}
+    steps:
+      - name: Choose what to test
+        id: refs
+        env:
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_SEED: ${{ inputs.seed }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ -n "$PR_SHA" ]; then cand="$PR_SHA"; else cand="${INPUT_REF:-all-changes}"; fi
+          if [ "$EVENT" = schedule ]; then seed=$(date -u +%Y%m%d); else seed="${INPUT_SEED:-1}"; fi
+          [ -n "$AGE_RECIPIENT" ] || { echo "AGE_PUBLIC_KEY is not configured"; exit 1; }
+          echo "candidate=$cand" >> "$GITHUB_OUTPUT"
+          echo "seed=$seed" >> "$GITHUB_OUTPUT"
+          echo "candidate $cand, seed $seed"
+
+  setup:
+    needs: refs
+    uses: ./.github/workflows/setup.yml
+    with:
+      candidate: ${{ needs.refs.outputs.candidate }}
+      import_ref: ${{ inputs.import_ref || 'cc998517d5e1b02c4a59f184f85a05abce8f88b9' }}
+
+  database:
+    needs: [refs, setup]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - name: Compute the database cache key
+        id: key
+        env:
+          IMP_SHA: ${{ needs.setup.outputs.imp_sha }}
+        run: |
+          etag=$(curl -fsSI "$SOURCE_URL" | tr -d '\r' | awk 'tolower($1) == "etag:" {print $2}' | tr -cd 'A-Za-z0-9-')
+          [ -n "$etag" ] || { echo "no ETag for the encrypted extract"; exit 1; }
+          key="history-db-nova-scotia-$etag-$IMP_SHA-lz4-no-v1"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "database cache key: $key"
+
+      - name: Look up the encrypted database archive
+        id: restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: db.tar.zst.age
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      - name: Restore the importer binaries
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: imp-bin
+          key: fuzz-imp-bin-${{ runner.arch }}-${{ needs.setup.outputs.imp_sha }}-v1
+          fail-on-cache-miss: true
+
+      - name: Check out bench-tools
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: bench-tools
+          path: tools
+
+      - name: Build, encrypt and remove the database
+        if: steps.restore.outputs.cache-hit != 'true'
+        env:
+          AGE_PRIVATE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        run: |
+          set -o pipefail
+          sudo apt-get update -q > /dev/null
+          sudo apt-get install -y -q osmium-tool age > /dev/null
+          # Leak check: the vocabulary's user names, and uids of 5 digits or more as whole numbers, must
+          # not appear in anything printed or left unencrypted. Matches are never printed.
+          cat > "$RUNNER_TEMP/leakcheck.py" <<'PYEOF'
+          import json, re, sys
+          v = json.load(open(sys.argv[1]))
+          names = [u for u in v.get('users', []) if len(u) >= 3]
+          uids = [str(u) for u in v.get('uids', []) if u >= 10000]
+          for path in sys.argv[2:]:
+              text = open(path, errors='replace').read()
+              if any(n in text for n in names) or any(re.search(r'(?<!\d)' + u + r'(?!\d)', text) for u in uids):
+                  print(f'leak check failed in {path}; nothing from it is printed or uploaded')
+                  sys.exit(1)
+          PYEOF
+          # Messages for the log are collected here, leak-checked, and printed at the end.
+          log="$RUNNER_TEMP/log.txt"; : > "$log"
+          say() { echo "$*" >> "$log"; }
+          key="$RUNNER_TEMP/age.key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077; printf '%s\n' "$AGE_PRIVATE_KEY" > "$key")
+          mkdir -p work db
+          # Output of the import and the vocabulary builder can name data: keep it in files.
+          curl -fsS "$SOURCE_URL" | age -d -i "$key" -o work/history.osh.pbf
+          rm -f "$key"
+          say "decrypted extract: $(stat -c %s work/history.osh.pbf) bytes"
+          osmium time-filter work/history.osh.pbf -o work/current.osm.pbf > work/osmium.log 2>&1
+          say "import start $(date -u +%T)"
+          osmium cat work/history.osh.pbf -f osh -o - 2> work/osmium-cat.log \
+            | imp-bin/update_database --db-dir="$PWD/db/" --keep-attic \
+                --compression-method=lz4 --map-compression-method=no > work/import.log 2>&1
+          say "import end $(date -u +%T) ($(wc -l < work/import.log) log lines)"
+          python3 tools/bench/fuzz_vocab.py work/current.osm.pbf vocab.json --history work/history.osh.pbf > work/vocab.log 2>&1
+          python3 -c "import json; v = json.load(open('vocab.json')); print('vocabulary sizes:', {k: len(v[k]) for k in ('users', 'uids', 'edit_times', 'node_ids')})" >> "$log"
+          say "database: $(du -sh --apparent-size db | cut -f1) apparent, $(du -sh db | cut -f1) on disk"
+          for f in db/*; do fallocate --dig-holes "$f"; done
+          say "after punching holes: $(du -sh db | cut -f1)"
+          tar -S -cf - db vocab.json | zstd -T0 -3 -q | age -r "$AGE_RECIPIENT" -o db.tar.zst.age
+          say "encrypted archive: $(stat -c %s db.tar.zst.age) bytes"
+          python3 "$RUNNER_TEMP/leakcheck.py" vocab.json "$log"
+          cat "$log"
+          rm -rf db vocab.json work
+
+      - name: Save the encrypted database archive
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: db.tar.zst.age
+          key: ${{ steps.key.outputs.key }}
+
+  fuzz:
+    needs: [refs, setup, database]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - name: Check out bench-tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: bench-tools
+          path: tools
+
+      - name: Restore the baseline binaries
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: base-bin
+          key: fuzz-bin-${{ runner.arch }}-${{ needs.setup.outputs.base_sha }}-v1
+          fail-on-cache-miss: true
+
+      - name: Restore the candidate binaries
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: cand-bin
+          key: fuzz-bin-${{ runner.arch }}-${{ needs.setup.outputs.cand_sha }}-v1
+          fail-on-cache-miss: true
+
+      - name: Restore the encrypted database archive
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: db.tar.zst.age
+          key: ${{ needs.database.outputs.key }}
+          fail-on-cache-miss: true
+
+      - name: Restore the encrypted baseline outcome cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: fuzz-cache.tar.age
+          key: history-outcomes-${{ runner.arch }}-${{ needs.setup.outputs.base_sha }}-${{ matrix.shard }}-${{ needs.refs.outputs.seed }}-${{ github.run_id }}
+          restore-keys: |
+            history-outcomes-${{ runner.arch }}-${{ needs.setup.outputs.base_sha }}-${{ matrix.shard }}-${{ needs.refs.outputs.seed }}-
+
+      - name: Decrypt and fuzz
+        id: fuzz
+        env:
+          AGE_PRIVATE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+          SEED: ${{ needs.refs.outputs.seed }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -o pipefail
+          sudo apt-get install -y -q age > /dev/null 2>&1 || { sudo apt-get update -q > /dev/null; sudo apt-get install -y -q age > /dev/null; }
+          # Leak check: the vocabulary's user names, and uids of 5 digits or more as whole numbers, must
+          # not appear in anything printed or left unencrypted. Matches are never printed.
+          cat > "$RUNNER_TEMP/leakcheck.py" <<'PYEOF'
+          import json, re, sys
+          v = json.load(open(sys.argv[1]))
+          names = [u for u in v.get('users', []) if len(u) >= 3]
+          uids = [str(u) for u in v.get('uids', []) if u >= 10000]
+          for path in sys.argv[2:]:
+              text = open(path, errors='replace').read()
+              if any(n in text for n in names) or any(re.search(r'(?<!\d)' + u + r'(?!\d)', text) for u in uids):
+                  print(f'leak check failed in {path}; nothing from it is printed or uploaded')
+                  sys.exit(1)
+          PYEOF
+          log="$RUNNER_TEMP/log.txt"; : > "$log"
+          say() { echo "$*" >> "$log"; }
+          key="$RUNNER_TEMP/age.key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077; printf '%s\n' "$AGE_PRIVATE_KEY" > "$key")
+          age -d -i "$key" db.tar.zst.age | zstd -dc | tar -S -xf -
+          rm db.tar.zst.age
+          if [ -f fuzz-cache.tar.age ]; then age -d -i "$key" fuzz-cache.tar.age | tar -xf -; rm fuzz-cache.tar.age; fi
+          rm -f "$key"
+          say "database: $(du -sh db | cut -f1) on disk"
+          mkdir -p out
+          start=$((SHARD * QUERIES_PER_SHARD))
+          # fuzz.py's output names statuses and error messages, which can quote queries built
+          # from the vocabulary: it goes to a file, encrypted below, never to the log.
+          set +e
+          python3 tools/bench/fuzz.py --a base-bin --b cand-bin --db db --vocab vocab.json \
+            --seed "$SEED" --start "$start" --count "$QUERIES_PER_SHARD" --jobs "$(nproc)" \
+            --features "$FEATURES" --cache-dir fuzz-cache --out-dir out/failures \
+            --report out/report.csv > out/fuzz.txt 2>&1
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          # Aggregates only: counts parsed from fuzz.py's summary lines, never its messages.
+          python3 - "$SHARD" "$status" > out/result.json <<'EOF'
+          import ast, json, re, sys
+          text = open('out/fuzz.txt', errors='replace').read()
+          def dict_after(prefix):
+              m = re.search(r'^' + re.escape(prefix) + r'(\{[^}]*\})', text, re.M)
+              try:
+                  d = ast.literal_eval(m.group(1)) if m else None
+              except (ValueError, SyntaxError):
+                  return None
+              # Keep only plain outcome names with integer counts.
+              return {k: v for k, v in d.items() if isinstance(v, int) and re.fullmatch(r'[a-z-]+(-\d+)?|exit-\d+', str(k))} if d else None
+          num = lambda pattern: (lambda m: int(m.group(1)) if m else None)(re.search(pattern, text, re.M))
+          print(json.dumps({
+              'shard': int(sys.argv[1]), 'exit': int(sys.argv[2]),
+              'verdicts': dict_after('verdicts: '),
+              'baseline_outcomes': dict_after('baseline outcomes: '),
+              'query_errors': num(r'query errors: (\d+)'),
+              'empty': num(r'ok but empty: (\d+)'),
+              'reused': num(r'^baseline: (\d+) of \d+ outcomes reused'),
+          }))
+          EOF
+          python3 -c "import json; r = json.load(open('out/result.json')); print('shard', r['shard'], 'verdicts', r['verdicts'], 'reused', r['reused'], 'query errors', r['query_errors'])" >> "$log"
+          python3 "$RUNNER_TEMP/leakcheck.py" vocab.json out/result.json "$log"
+          cat "$log"
+          # Everything leaves the job encrypted, the counts included.
+          tar -cf - -C out . | age -r "$AGE_RECIPIENT" -o "history-shard-$SHARD.tar.age"
+          age -r "$AGE_RECIPIENT" -o result.json.age out/result.json
+          tar -cf - fuzz-cache | age -r "$AGE_RECIPIENT" -o fuzz-cache.tar.age
+          rm -rf db vocab.json out fuzz-cache
+
+      - name: Save the encrypted baseline outcome cache
+        if: always() && hashFiles('fuzz-cache.tar.age') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: fuzz-cache.tar.age
+          key: history-outcomes-${{ runner.arch }}-${{ needs.setup.outputs.base_sha }}-${{ matrix.shard }}-${{ needs.refs.outputs.seed }}-${{ github.run_id }}
+
+      - name: Upload the encrypted shard output
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: history-shard-${{ matrix.shard }}
+          path: history-shard-${{ matrix.shard }}.tar.age
+          if-no-files-found: ignore
+
+      # The counts, leak-checked above and encrypted like everything else, for the summary job.
+      - name: Upload the shard's encrypted counts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: history-result-${{ matrix.shard }}
+          path: result.json.age
+          if-no-files-found: ignore
+
+      - name: Fail on differences
+        if: steps.fuzz.outputs.status != '0'
+        run: |
+          echo "fuzz.py exited ${{ steps.fuzz.outputs.status }}; differing queries are in the encrypted history-shard-${{ matrix.shard }} artifact"
+          exit 1
+
+  summary:
+    needs: [refs, setup, fuzz]
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Collect the shard counts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
+        with:
+          pattern: history-result-*
+          path: results
+
+      - name: Decrypt the counts
+        env:
+          AGE_PRIVATE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        run: |
+          sudo apt-get install -y -q age > /dev/null 2>&1 || { sudo apt-get update -q > /dev/null; sudo apt-get install -y -q age > /dev/null; }
+          key="$RUNNER_TEMP/age.key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077; printf '%s\n' "$AGE_PRIVATE_KEY" > "$key")
+          for f in results/*/result.json.age; do [ -f "$f" ] && age -d -i "$key" -o "${f%.age}" "$f"; done
+          rm -f "$key"
+
+      # The counts passed each shard's leak check, and the summary adds only numbers, refs and
+      # fixed text.
+      - name: Summarise
+        env:
+          CANDIDATE: ${{ needs.refs.outputs.candidate }}
+          CAND_SHA: ${{ needs.setup.outputs.cand_sha }}
+          BASE_SHA: ${{ needs.setup.outputs.base_sha }}
+          SEED: ${{ needs.refs.outputs.seed }}
+        run: |
+          python3 - <<'EOF'
+          import collections, glob, json, os
+          rows = [json.load(open(p)) for p in sorted(glob.glob('results/*/result.json'))]
+          total = collections.Counter()
+          reused = queries = 0
+          bad = []
+          for r in rows:
+              v = r.get('verdicts') or {}
+              total.update({k: n for k, n in v.items() if isinstance(n, int)})
+              queries += sum(n for n in v.values() if isinstance(n, int))
+              reused += r.get('reused') or 0
+              if r.get('exit') != 0 or not v:
+                  bad.append(f"shard {int(r.get('shard', -1))} (exit {int(r.get('exit', -1))})")
+          lines = [f"### fuzz.py on the history database ({os.environ['FEATURES']}): {os.environ['CANDIDATE']} "
+                   f"({os.environ['CAND_SHA'][:12]}) against upstream/master at {os.environ['BASE_SHA'][:12]}, seed {os.environ['SEED']}",
+                   '', f"{len(rows)} of 10 shards reported. Verdicts: {dict(total)}. Baseline outcomes reused from the cache: {reused} of {queries}."]
+          if bad:
+              lines += ['', 'Shards with differences or errors: ' + ', '.join(bad)
+                        + '. Their differing queries are in the encrypted history-shard-N artifacts (age, AGE_PUBLIC_KEY).']
+          text = '\n'.join(lines) + '\n'
+          open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write(text)
+          print(text)
+          if bad or len(rows) < 10:
+              raise SystemExit(1)
+          EOF

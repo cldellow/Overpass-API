@@ -52,6 +52,9 @@ on:
       db_key:
         description: Cache key of the database archive (db.tar.zst)
         value: ${{ jobs.prepare.outputs.db_key }}
+      imp_sha:
+        description: Importer (better-imports) commit, whose binaries are cached by architecture
+        value: ${{ jobs.prepare.outputs.imp_sha }}
 
 env:
   UPSTREAM: https://github.com/fossgis/Overpass-API
@@ -70,7 +73,7 @@ jobs:
       db_key: ${{ steps.dbkey.outputs.key }}
     steps:
       - name: Check out the candidate
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ inputs.candidate }}
           path: cand
@@ -92,7 +95,7 @@ jobs:
           echo "sha=$base" >> "$GITHUB_OUTPUT"
 
       - name: Check out the importer
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ inputs.import_ref }}
           path: imp
@@ -120,21 +123,21 @@ jobs:
 
       - name: Cache the baseline binaries
         id: cache-base
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: base-bin
           key: fuzz-bin-${{ runner.arch }}-${{ steps.base.outputs.sha }}-v1
 
       - name: Cache the candidate binaries
         id: cache-cand
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: cand-bin
           key: fuzz-bin-${{ runner.arch }}-${{ steps.cand.outputs.sha }}-v1
 
       - name: Cache the importer binaries
         id: cache-imp
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: imp-bin
           key: fuzz-imp-bin-${{ runner.arch }}-${{ steps.imp.outputs.sha }}-v1
@@ -166,7 +169,7 @@ jobs:
     steps:
       - name: Look up the database archive
         id: restore
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: db.tar.zst
           key: ${{ needs.prepare.outputs.db_key }}
@@ -174,7 +177,7 @@ jobs:
 
       - name: Restore the importer binaries
         if: steps.restore.outputs.cache-hit != 'true'
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: imp-bin
           key: fuzz-imp-bin-${{ runner.arch }}-${{ needs.prepare.outputs.imp_sha }}-v1
@@ -182,7 +185,7 @@ jobs:
 
       - name: Check out the importer (area rules)
         if: steps.restore.outputs.cache-hit != 'true'
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.imp_sha }}
           path: imp
@@ -190,7 +193,7 @@ jobs:
 
       - name: Check out bench-tools
         if: steps.restore.outputs.cache-hit != 'true'
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: bench-tools
           path: tools
@@ -220,7 +223,7 @@ jobs:
 
       - name: Save the database archive
         if: steps.restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: db.tar.zst
           key: ${{ needs.prepare.outputs.db_key }}
