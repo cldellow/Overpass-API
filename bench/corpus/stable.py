@@ -2,7 +2,7 @@
 """Keep only what is reproducible across repeated coverage.py runs of the same pool.
 
 For each query id present in every run: if its status or output digest differs between runs, the
-query is dropped (its result is not deterministic, so it can't be a conformance test). Otherwise
+query is dropped (its result is not deterministic, so it can't be a regression test). Otherwise
 its features are the intersection over the runs, so a feature only counts if every run saw it.
 
 Writes the merged records (as coverage.py's, with the run-to-run CPU maximum) to --out, and prints

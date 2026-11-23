@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Build a static site showing what the conformance corpus exercises in the source: every source
-file with its line coverage, and for each executed line the corpus queries that run it.
+"""Build a static site showing what the regression suite exercises in the source: every source
+file with its line coverage, and for each executed line the queries that run it.
 
 Inputs: the corpus (select.py's JSON lines), and linecov.py's output for it. Output: a directory
 of plain HTML (no build step, no external assets) for GitHub Pages:
 
   index.html          totals, and line coverage by directory and file
   src/<file>.html     the source; click a line's query count for the queries that run it
-  q/<n>.html          one corpus query: its text, expected result, and the lines only it runs
+  q/<n>.html          one query: its text, expected result, and the lines only it runs
   corpus.jsonl        the corpus itself (id, query, status, digest)"""
 import argparse
 import collections
@@ -68,7 +68,7 @@ document.addEventListener('click', async e => {
   if (!a) { if (!e.target.closest('#panel')) panel.classList.remove('open'); return; }
   e.preventDefault();
   const [total, picks] = Q[a.dataset.l];
-  let h = `<b>Line ${a.dataset.l}</b>: run by ${total} corpus quer${total == 1 ? 'y' : 'ies'}` +
+  let h = `<b>Line ${a.dataset.l}</b>: run by ${total} quer${total == 1 ? 'y' : 'ies'}` +
     (picks.length < total ? `; the ${picks.length} cheapest:` : ':');
   for (const n of picks) h += `<div><a href="${ROOT}q/${n}.html">query ${n}</a><pre></pre></div>`;
   panel.innerHTML = h;
@@ -167,8 +167,8 @@ def main():
             rows.append(f'<div class="l{cls}" id="L{ln}"><a class="n" href="#L{ln}">{ln}</a><span class="c">{"" if c is None else c}</span>'
                         f'<span class="q">{qcell}</span><span>{html.escape(text)}</span></div>')
         attr_json = json.dumps(attr, separators=(',', ':')).replace('</', '<\\/')
-        body = (f'<p><a href="{root}index.html">Overpass API corpus coverage{dsuffix}</a> / {html.escape(fn)}</p>'
-                f'<h1>{html.escape(fn)}</h1><p>{hit} of {len(counts)} instrumented lines run by the corpus '
+        body = (f'<p><a href="{root}index.html">Overpass API regression suite coverage{dsuffix}</a> / {html.escape(fn)}</p>'
+                f'<h1>{html.escape(fn)}</h1><p>{hit} of {len(counts)} instrumented lines run by the suite '
                 f'({pct(hit, len(counts))}) at <a href="{args.repo}/tree/{args.commit}">{short}</a> '
                 f'(<a href="{args.repo}/blob/{args.commit}/src/{fn}">this file on GitHub</a>).</p>'
                 f'<p class="legend muted"><span class="hit-k" style="background:var(--hit)">run</span>'
@@ -190,13 +190,13 @@ def main():
         lst = ''.join(f'<li><a href="../src/{html.escape(f)}.html#L{ln}">{html.escape(f)}:{ln}</a></li>'
                       for f, ln in uniq[:200])
         more = f'<li class="muted">and {len(uniq) - 200} more</li>' if len(uniq) > 200 else ''
-        body = (f'<p><a href="../index.html">Overpass API corpus coverage{dsuffix}</a> / query {n}</p>'
+        body = (f'<p><a href="../index.html">Overpass API regression suite coverage{dsuffix}</a> / query {n}</p>'
                 f'<h1>Query {n}</h1><p class="muted">{html.escape(r["id"])} · {r["cpu"]:.2f} s CPU · '
                 f'expected status <code>{html.escape(r["status"])}</code></p>'
                 f'<pre class="query">{html.escape(r["query"])}</pre>'
                 f'<h2>Lines only this query runs ({len(uniq)})</h2>'
                 + (f'<ul>{lst}{more}</ul>' if uniq else
-                   '<p class="muted">None: it is in the corpus for edges or hit counts that other '
+                   '<p class="muted">None: it is in the suite for edges or hit counts that other '
                    'queries reach only in part.</p>'))
         with open(os.path.join(qdir, f'{n}.html'), 'w') as f:
             f.write(page(f'Query {n}', body, '../'))
@@ -224,7 +224,7 @@ def main():
                     f'<td class="num">{len(unique.get(n, []))}</td><td>{html.escape(r["status"][:60])}</td>'
                     f'<td class="muted">{html.escape(r["id"][:70])}</td></tr>' for n, r in enumerate(corpus))
     cpu_text = f'{cpu / 60:.1f} CPU minutes' if cpu >= 60 else f'{cpu:.0f} CPU seconds'
-    title = 'Overpass API: conformance corpus coverage' + (f' ({args.dataset})' if args.dataset else '')
+    title = 'Overpass API: regression suite coverage' + (f' ({args.dataset})' if args.dataset else '')
     body = (f'<p class="muted"><a href="../index.html">All runs</a></p><h1>{html.escape(title)}</h1>'
             f'<p>Source: <a href="{args.repo}/tree/{args.commit}">{args.repo.split("github.com/")[-1]} at {short}</a>. '
             f'{len(corpus)} queries, {cpu_text} in all. They run '

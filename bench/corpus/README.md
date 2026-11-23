@@ -1,4 +1,4 @@
-# Conformance corpus (work in progress)
+# Regression suite (work in progress)
 
 Goal: a small, fixed set of queries that covers as much of the query engine as a large pool of
 generated queries does, to be re-run on every change and compared with `upstream/master`.
