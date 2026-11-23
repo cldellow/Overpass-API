@@ -279,6 +279,78 @@
   "expect_caught": "yes"
  },
  {
+  "commit": "2273b99",
+  "subject": "around: weight the time-limit check by the work done, and check inside long ways",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": "    if (work_done >= 64*1024)",
+  "new": "    if (false && work_done >= 64*1024)",
+  "note": "the time-limit check never runs; it only decides when a query that is out of time stops, and props.py sets no time limit, so this can't change a result",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "634d377",
+  "subject": "around: take candidate ranges for relations at a past date from their members",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": "      new_way_ranges = new_way_ranges.union_(ranges(relation_way_members(",
+  "new": "      if (false) new_way_ranges = new_way_ranges.union_(ranges(relation_way_members(",
+  "note": "relations at a past date lose their way members' candidate ranges; caught by the history check 'date around rel = around members'",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "5df9912",
+  "subject": "around: look up the input relations' members once per input",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": "      || member_ranges_relations != relations || member_ranges_attic_relations != attic_relations)",
+  "new": "      || false)",
+  "note": "the cached member ranges are kept when the input relations change. Needs data beyond the synthetic sets: the ranges are whole index tiles widened by the radius, and the synthetic data spans so few tiles that the first relation's ranges already cover the others, so the 'foreach around rel' check returns the same result. The targeted around check on the Nova Scotia history database caught it (see #38)",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "358e322",
+  "subject": "collect_items: pass end iterators to reconstruct_items by reference",
+  "file": "src/overpass_api/data/collect_items.h",
+  "old": "    Iterator& it, const Iterator& end, Index index,",
+  "new": "    Iterator& it, Iterator end, Index index,",
+  "note": "equivalent: the commit only avoids copies and adds no logic, so the only mutant is reverting it",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "4033566",
+  "subject": "collect_items_by_timestamp: keep the result size up to date instead of recounting it",
+  "file": "src/overpass_api/data/collect_items.h",
+  "old": "  return it == m.end() ? 0 : eval_index_size + it->second.size()*eval_object_size((const Object*)0);",
+  "new": "  return it == m.end() ? 0 : eval_index_size;",
+  "note": "the running size counts only indexes; that changes only where chunks end and which queries hit [maxsize:], never a result, and props.py's queries stay far below the limits",
+  "expect_caught": "no"
+ },
+ {
+  "commit": "7b7d798",
+  "subject": "tag_store: remove placeholder tags only from the entries just collected",
+  "file": "src/overpass_api/data/tag_store.h",
+  "old": "      touched.push_back(&obj_vec);",
+  "new": "      if (false) touched.push_back(&obj_vec);",
+  "note": "placeholder tags for tags added after the date stay in the output of objects at a past date",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "9945057",
+  "subject": "area and poly queries: build each way's geometry once in collect_ways",
+  "file": "src/overpass_api/statements/area_query.cc",
+  "old": "      add_way_to_area_blocks(coords, it2->id.val(), way_segments);",
+  "new": "      add_way_to_area_blocks(std::vector< Quad_Coord >(coords.begin(), coords.end() - (coords.empty() ? 0 : 1)), it2->id.val(), way_segments);",
+  "note": "area queries split each way into segments without its last vertex",
+  "expect_caught": "yes"
+ },
+ {
+  "commit": "e643105",
+  "subject": "tag_store: find tag entries' ids with a forward cursor instead of a binary search",
+  "file": "src/overpass_api/data/tag_store.h",
+  "old": "  if (cursor != ids.begin() && !(*(cursor - 1) < id))",
+  "new": "  if (false && cursor != ids.begin() && !(*(cursor - 1) < id))",
+  "note": "the cursor never starts over, so tags of a later tag group whose ids are below the cursor are lost",
+  "expect_caught": "yes"
+ },
+ {
   "commit": "1b30bbb",
   "subject": "bbox query: collect and filter nodes in chunks at a past date",
   "file": "src/overpass_api/statements/bbox_query.cc",
