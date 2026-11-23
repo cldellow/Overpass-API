@@ -835,10 +835,32 @@ Ranges< Index > intersect_ranges(const Ranges< Index >& range_a, std::vector< In
   for (auto it = range_a.begin(); it != range_a.end(); ++it)
     sum += difference(it.lower_bound(), it.upper_bound());
 
-  if (sum/256 < range_vec.size())
+  // range_vec holds the coarse index (256 tiles) of every candidate in the database, many sharing
+  // a cell. Count only the distinct cells that overlap range_a: comparing all candidates with
+  // range_a's cells skipped the intersection for any tag with more matches anywhere than range_a
+  // has cells, however few of them lie in range_a.
+  // With more candidates than range_a has tiles, nearly every cell holds one anyway, and
+  // filtering them would cost more than it saves.
+  if (sum < range_vec.size())
     return range_a;
 
-  std::sort(range_vec.begin(), range_vec.end());
+  std::vector< std::pair< Index, Index > > bounds;
+  for (auto it = range_a.begin(); it != range_a.end(); ++it)
+    bounds.push_back(std::make_pair(it.lower_bound(), it.upper_bound()));
+  std::vector< Index > inside;
+  for (auto it = range_vec.begin(); it != range_vec.end(); ++it)
+  {
+    auto b = std::upper_bound(bounds.begin(), bounds.end(), *it,
+        [](const Index& x, const std::pair< Index, Index >& r) { return x < r.second; });
+    if (b != bounds.end() && b->first < Index(it->val() + 0x100))
+      inside.push_back(*it);
+  }
+  std::sort(inside.begin(), inside.end());
+  inside.erase(std::unique(inside.begin(), inside.end()), inside.end());
+  range_vec.swap(inside);
+
+  if (sum/256 < range_vec.size())
+    return range_a;
 
   auto it_a = range_a.begin();
   auto it_vec = range_vec.begin();
