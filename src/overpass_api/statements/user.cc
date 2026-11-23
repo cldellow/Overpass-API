@@ -249,7 +249,7 @@ void User_Constraint::filter(const Statement& query, Resource_Manager& rman, Set
           touched_ids_by_users< Uint31_Index, Way_Skeleton >(
               rman, other_ranges, user->get_ids(*rman.get_transaction())))
           .swap(into.ways, into.attic_ways);
-    if (!into.nodes.empty() || !into.attic_nodes.empty())
+    if (!into.relations.empty() || !into.attic_relations.empty())
       Timeless< Uint31_Index, Relation_Skeleton >{ into.relations, into.attic_relations }.filter_by_id(
           touched_ids_by_users< Uint31_Index, Relation_Skeleton >(
               rman, other_ranges, user->get_ids(*rman.get_transaction())))
