@@ -293,8 +293,8 @@
   "file": "src/overpass_api/statements/around.cc",
   "old": "      new_way_ranges = new_way_ranges.union_(ranges(relation_way_members(",
   "new": "      if (false) new_way_ranges = new_way_ranges.union_(ranges(relation_way_members(",
-  "note": "relations at a past date lose their way members' candidate ranges; only an around filter with relation input at a past date can show it",
-  "expect_caught": "maybe"
+  "note": "relations at a past date lose their way members' candidate ranges; caught by the history check 'date around rel = around members'",
+  "expect_caught": "yes"
  },
  {
   "commit": "5df9912",
@@ -302,8 +302,8 @@
   "file": "src/overpass_api/statements/around.cc",
   "old": "      || member_ranges_relations != relations || member_ranges_attic_relations != attic_relations)",
   "new": "      || false)",
-  "note": "the cached member ranges are kept when the input relations change; only an around statement executed again with other relations (e.g. in foreach) can show it",
-  "expect_caught": "maybe"
+  "note": "the cached member ranges are kept when the input relations change. Needs data beyond the synthetic sets: the ranges are whole index tiles widened by the radius, and the synthetic data spans so few tiles that the first relation's ranges already cover the others, so the 'foreach around rel' check returns the same result. The targeted around check on the Nova Scotia history database caught it (see #38)",
+  "expect_caught": "no"
  },
  {
   "commit": "358e322",
