@@ -51,6 +51,12 @@ expect a database built from a Nova Scotia extract. Two more sets need databases
   filled in for Halifax. Run them on the area database: the area and `poly:` forms need it.
   `t08` and `t09` carry the Halifax boundary (relation 9092218, 1,041 points) as a `poly:` filter,
   as osmnx sends a place polygon (osmnx also buffers it by 500 m first; these don't).
+- `queries-poi/`: point-of-interest lookups, the shape that dominates the public servers' heavy
+  load in 2026: JSON unions of node and way statements around one point (0.5–25 km), tag-regex
+  alternations (some case-insensitive), `out center` and `out center tags`, plus global and
+  province-wide tag lookups with `out center`. They copy the shapes of the top templates from a
+  log analysis of the public servers, with Nova Scotia coordinates and tag lists. Run them on the
+  area database (`p07` needs the area rules).
 
 Run each set with `--db` pointed at its database; the baseline cache keeps them apart.
 
@@ -129,6 +135,10 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
   that supports them: areas need the area rules run (`osm3s_query --rules < rules/areas.osm3s`),
   and history and users need a database built with `--keep-attic` from diffs with metadata.
   `fuzz_vocab.py --osc-dir DIR` adds the users and edit times from such diffs to the vocabulary.
+- **POI lookups:** `--features poi` makes half of the queries point-of-interest lookups: a JSON
+  union of 2–15 statements around one point with realistic radii (0.5–25 km, including radii from
+  miles), filters mixing values, keys and alternations (some case-insensitive), and `out center
+  tags` or similar. It needs no special database. Queries without the feature are unchanged.
 - **Errors count:** error messages on stderr (and in the output) are part of each outcome, and the
   summary lists the most common ones, so invalid generated queries are visible rather than silently
   matching.
