@@ -40,9 +40,13 @@ on:
         required: true
         default: '1'
       queries_per_shard:
-        description: Queries per shard (10 shards)
+        description: Queries per shard (10 shards per feature set)
         required: true
         default: '100'
+      tools_ref:
+        description: bench-tools branch to take fuzz.py from
+        required: true
+        default: bench-tools
       import_ref:
         description: better-imports commit that builds the database
         required: true
@@ -60,7 +64,6 @@ concurrency:
 env:
   SOURCE_URL: https://public.hikeratlas.com/pbfs/nova-scotia-internal.osh.pbf.age
   QUERIES_PER_SHARD: ${{ inputs.queries_per_shard || '100' }}
-  FEATURES: history,users,complete
   AGE_RECIPIENT: ${{ vars.AGE_PUBLIC_KEY || secrets.AGE_PUBLIC_KEY }}
 
 jobs:
@@ -200,12 +203,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # history: the history, user and complete families. extended: those plus evaluators,
+        # output formats, the other statements and POI lookups (fuzz.py --features).
+        set: [history, extended]
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     steps:
       - name: Check out bench-tools
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          ref: bench-tools
+          ref: ${{ inputs.tools_ref || 'bench-tools' }}
           path: tools
 
       - name: Restore the baseline binaries
@@ -233,9 +239,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: fuzz-cache.tar.age
-          key: history-outcomes-${{ runner.arch }}-${{ needs.setup.outputs.base_sha }}-${{ matrix.shard }}-${{ needs.refs.outputs.seed }}-${{ github.run_id }}
+          key: history-outcomes-${{ runner.arch }}-${{ needs.setup.outputs.base_sha }}-${{ matrix.set }}-${{ matrix.shard }}-${{ needs.refs.outputs.seed }}-${{ github.run_id }}
           restore-keys: |
-            history-outcomes-${{ runner.arch }}-${{ needs.setup.outputs.base_sha }}-${{ matrix.shard }}-${{ needs.refs.outputs.seed }}-
+            history-outcomes-${{ runner.arch }}-${{ needs.setup.outputs.base_sha }}-${{ matrix.set }}-${{ matrix.shard }}-${{ needs.refs.outputs.seed }}-
 
       - name: Decrypt and fuzz
         id: fuzz
@@ -243,6 +249,8 @@ jobs:
           AGE_PRIVATE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
           SEED: ${{ needs.refs.outputs.seed }}
           SHARD: ${{ matrix.shard }}
+          SET: ${{ matrix.set }}
+          FEATURES: ${{ matrix.set == 'extended' && 'history,users,complete,evaluators,output,statements,poi' || 'history,users,complete' }}
         run: |
           set -o pipefail
           sudo apt-get install -y -q age > /dev/null 2>&1 || { sudo apt-get update -q > /dev/null; sudo apt-get install -y -q age > /dev/null; }
@@ -282,7 +290,7 @@ jobs:
           set -e
           echo "status=$status" >> "$GITHUB_OUTPUT"
           # Aggregates only: counts parsed from fuzz.py's summary lines, never its messages.
-          python3 - "$SHARD" "$status" > out/result.json <<'EOF'
+          python3 - "$SHARD" "$status" "$SET" > out/result.json <<'EOF'
           import ast, json, re, sys
           text = open('out/fuzz.txt', errors='replace').read()
           def dict_after(prefix):
@@ -292,10 +300,11 @@ jobs:
               except (ValueError, SyntaxError):
                   return None
               # Keep only plain outcome names with integer counts.
-              return {k: v for k, v in d.items() if isinstance(v, int) and re.fullmatch(r'[a-z-]+(-\d+)?|exit-\d+', str(k))} if d else None
+              # Upper case too: fuzz.py's verdict for a difference is DIFFERENT.
+              return {k: v for k, v in d.items() if isinstance(v, int) and re.fullmatch(r'[A-Za-z-]+(-\d+)?|exit-\d+', str(k))} if d else None
           num = lambda pattern: (lambda m: int(m.group(1)) if m else None)(re.search(pattern, text, re.M))
           print(json.dumps({
-              'shard': int(sys.argv[1]), 'exit': int(sys.argv[2]),
+              'shard': int(sys.argv[1]), 'exit': int(sys.argv[2]), 'set': sys.argv[3],
               'verdicts': dict_after('verdicts: '),
               'baseline_outcomes': dict_after('baseline outcomes: '),
               'query_errors': num(r'query errors: (\d+)'),
@@ -303,11 +312,11 @@ jobs:
               'reused': num(r'^baseline: (\d+) of \d+ outcomes reused'),
           }))
           EOF
-          python3 -c "import json; r = json.load(open('out/result.json')); print('shard', r['shard'], 'verdicts', r['verdicts'], 'reused', r['reused'], 'query errors', r['query_errors'])" >> "$log"
+          python3 -c "import json; r = json.load(open('out/result.json')); print('set', r['set'], 'shard', r['shard'], 'verdicts', r['verdicts'], 'reused', r['reused'], 'query errors', r['query_errors'])" >> "$log"
           python3 "$RUNNER_TEMP/leakcheck.py" vocab.json out/result.json "$log"
           cat "$log"
           # Everything leaves the job encrypted, the counts included.
-          tar -cf - -C out . | age -r "$AGE_RECIPIENT" -o "history-shard-$SHARD.tar.age"
+          tar -cf - -C out . | age -r "$AGE_RECIPIENT" -o "history-shard-$SET-$SHARD.tar.age"
           age -r "$AGE_RECIPIENT" -o result.json.age out/result.json
           tar -cf - fuzz-cache | age -r "$AGE_RECIPIENT" -o fuzz-cache.tar.age
           rm -rf db vocab.json out fuzz-cache
@@ -317,14 +326,14 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: fuzz-cache.tar.age
-          key: history-outcomes-${{ runner.arch }}-${{ needs.setup.outputs.base_sha }}-${{ matrix.shard }}-${{ needs.refs.outputs.seed }}-${{ github.run_id }}
+          key: history-outcomes-${{ runner.arch }}-${{ needs.setup.outputs.base_sha }}-${{ matrix.set }}-${{ matrix.shard }}-${{ needs.refs.outputs.seed }}-${{ github.run_id }}
 
       - name: Upload the encrypted shard output
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: history-shard-${{ matrix.shard }}
-          path: history-shard-${{ matrix.shard }}.tar.age
+          name: history-shard-${{ matrix.set }}-${{ matrix.shard }}
+          path: history-shard-${{ matrix.set }}-${{ matrix.shard }}.tar.age
           if-no-files-found: ignore
 
       # The counts, leak-checked above and encrypted like everything else, for the summary job.
@@ -332,14 +341,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: history-result-${{ matrix.shard }}
+          name: history-result-${{ matrix.set }}-${{ matrix.shard }}
           path: result.json.age
           if-no-files-found: ignore
 
       - name: Fail on differences
         if: steps.fuzz.outputs.status != '0'
         run: |
-          echo "fuzz.py exited ${{ steps.fuzz.outputs.status }}; differing queries are in the encrypted history-shard-${{ matrix.shard }} artifact"
+          echo "fuzz.py exited ${{ steps.fuzz.outputs.status }}; differing queries are in the encrypted history-shard-${{ matrix.set }}-${{ matrix.shard }} artifact"
           exit 1
 
   summary:
@@ -377,24 +386,28 @@ jobs:
           import collections, glob, json, os
           rows = [json.load(open(p)) for p in sorted(glob.glob('results/*/result.json'))]
           total = collections.Counter()
+          by_set = collections.defaultdict(collections.Counter)
           reused = queries = 0
           bad = []
           for r in rows:
               v = r.get('verdicts') or {}
               total.update({k: n for k, n in v.items() if isinstance(n, int)})
+              by_set[str(r.get('set'))].update({k: n for k, n in v.items() if isinstance(n, int)})
               queries += sum(n for n in v.values() if isinstance(n, int))
               reused += r.get('reused') or 0
               if r.get('exit') != 0 or not v:
-                  bad.append(f"shard {int(r.get('shard', -1))} (exit {int(r.get('exit', -1))})")
-          lines = [f"### fuzz.py on the history database ({os.environ['FEATURES']}): {os.environ['CANDIDATE']} "
+                  bad.append(f"{r.get('set')} shard {int(r.get('shard', -1))} (exit {int(r.get('exit', -1))})")
+          lines = [f"### fuzz.py on the history database: {os.environ['CANDIDATE']} "
                    f"({os.environ['CAND_SHA'][:12]}) against upstream/master at {os.environ['BASE_SHA'][:12]}, seed {os.environ['SEED']}",
-                   '', f"{len(rows)} of 10 shards reported. Verdicts: {dict(total)}. Baseline outcomes reused from the cache: {reused} of {queries}."]
+                   '', f"{len(rows)} of 20 shards reported. Verdicts: {dict(total)}. Baseline outcomes reused from the cache: {reused} of {queries}.", '']
+          for s, c in sorted(by_set.items()):
+              lines.append(f"- **{s}:** {dict(c)}")
           if bad:
               lines += ['', 'Shards with differences or errors: ' + ', '.join(bad)
-                        + '. Their differing queries are in the encrypted history-shard-N artifacts (age, AGE_PUBLIC_KEY).']
+                        + '. Their differing queries are in the encrypted history-shard-SET-N artifacts (age, AGE_PUBLIC_KEY).']
           text = '\n'.join(lines) + '\n'
           open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write(text)
           print(text)
-          if bad or len(rows) < 10:
+          if bad or len(rows) < 20:
               raise SystemExit(1)
           EOF

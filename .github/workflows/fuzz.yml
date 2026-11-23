@@ -4,7 +4,8 @@
 # - The baseline is upstream/master at the candidate's merge base, as in props.yml.
 # - setup.yml builds or restores the binaries and the database (the Nova Scotia extract with the
 #   standard area rules, lz4 data and uncompressed maps, cached as a sparse archive). Plain, area
-#   and evaluator (convert, make, for, if) queries all run on it.
+#   and extended queries all run on it; extended adds evaluators (convert, make, for, if), every
+#   output format, the other statements fuzz.py can generate, and POI lookups (--features).
 # - Each shard keeps fuzz.py's baseline cache in the Actions cache, so later runs with the same
 #   baseline, seed and database only run the candidate.
 # - Pull requests and manual runs use seed 1 by default, so the baseline cache is reused across
@@ -105,7 +106,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        set: [plain, areas, evaluators]
+        set: [plain, areas, extended]
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     steps:
       - name: Check out bench-tools
@@ -161,7 +162,7 @@ jobs:
           case "$SET" in
             plain) features= ;;
             areas) features=areas,complete ;;
-            evaluators) features=evaluators ;;
+            extended) features=evaluators,output,statements,poi,areas,complete ;;
           esac
           start=$((SHARD * QUERIES_PER_SHARD))
           set +e
