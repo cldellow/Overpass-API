@@ -936,6 +936,7 @@ def run_seed(seed, args, tmp):
         results += run_checks(args, hdb, h, hchecks, seed, prefix='h')
         results += run_output_checks(args, hdb, h, history.gen_history_output_checks(h, seed), seed,
                                      len(hchecks), prefix='h')
+        results += run_pairs(args, hdb, hdb, h, history.gen_history_consistency_checks(h, seed), seed, 'hc')
         shutil.rmtree(hdb, ignore_errors=True)
     return seed, data.scale, results
 

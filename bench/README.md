@@ -202,7 +202,11 @@ python3 bench/props/props.py --seeds 7 --show
   against the union of its two halves (split on a tile boundary where possible); a polygon
   against itself reversed and starting at another vertex; the same filters in different orders;
   `[bbox:]` against an inline bbox; `around` a point against `around` a node at that point;
-  `way(bn)` of the nodes in a box within `way(bbox)`; a way within `way(around.s:0)` of itself.
+  `way(bn)` of the nodes in a box within `way(bbox)`; a way within `way(around.s:0)` of itself;
+  `around` a set of relations against the union of `around` each one, collected in a `foreach`
+  (the same statement run again with another relation); and, on the history database at each
+  date, `around` a relation against `around` its direct member nodes and ways, preferring
+  relations edited after the date.
   And translation: each seed is also imported shifted by an offset that isn't a multiple of the
   tile size, and bbox, `poly:`, area and `is_in` queries must return the same elements on both.
   Region comparisons leave out elements that come within one unit of the boundary without being
