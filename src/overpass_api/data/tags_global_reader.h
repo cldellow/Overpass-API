@@ -59,12 +59,28 @@ bool operator==(const std::pair< Id_Type, Uint31_Index >& lhs, const std::pair< 
 }
 
 
+// The attic collectors below give up once they hold limit ids (0 means no limit), as filter_id_list
+// does for current data. The caller then checks the tags late instead of collecting ids.
+template< class Id_Type >
+bool attic_ids_limit_reached(
+    std::map< Id_Type, std::pair< uint64, Uint31_Index > >& timestamp_per_id,
+    std::size_t limit, bool* limit_reached)
+{
+  if (!limit || timestamp_per_id.size() < limit)
+    return false;
+  timestamp_per_id.clear();
+  *limit_reached = true;
+  return true;
+}
+
+
 template< class Id_Type >
 std::map< Id_Type, std::pair< uint64, Uint31_Index > > collect_attic_kv(
     std::vector< std::pair< std::string, std::string > >::const_iterator kvit, uint64 timestamp,
     Block_Backend< Tag_Index_Global, Tag_Object_Global< Id_Type > >& tags_db,
     Block_Backend< Tag_Index_Global, Attic< Tag_Object_Global< Id_Type > > >& attic_tags_db,
-    std::vector< std::pair< Id_Type, Uint31_Index > >* relevant_ids = 0)
+    std::vector< std::pair< Id_Type, Uint31_Index > >* relevant_ids = 0,
+    std::size_t limit = 0, bool* limit_reached = 0)
 {
   std::map< Id_Type, std::pair< uint64, Uint31_Index > > timestamp_per_id;
   Ranges< Tag_Index_Global > tag_req = get_kv_req(kvit->first, kvit->second);
@@ -73,7 +89,11 @@ std::map< Id_Type, std::pair< uint64, Uint31_Index > > collect_attic_kv(
   {
     if (!relevant_ids || std::binary_search(
         relevant_ids->begin(), relevant_ids->end(), std::make_pair(it2.object().id, Uint31_Index(0u))))
+    {
       timestamp_per_id[it2.object().id] = std::make_pair(NOW, it2.object().idx);
+      if (attic_ids_limit_reached(timestamp_per_id, limit, limit_reached))
+        return timestamp_per_id;
+    }
   }
 
   for (auto it2 = attic_tags_db.range_begin(tag_req); !(it2 == attic_tags_db.range_end()); ++it2)
@@ -85,6 +105,8 @@ std::map< Id_Type, std::pair< uint64, Uint31_Index > > collect_attic_kv(
       std::pair< uint64, Uint31_Index >& ref = timestamp_per_id[it2.object().id];
       if (ref.first == 0 || it2.object().timestamp < ref.first)
         ref = std::make_pair(it2.object().timestamp, it2.object().idx);
+      if (attic_ids_limit_reached(timestamp_per_id, limit, limit_reached))
+        return timestamp_per_id;
     }
   }
 
@@ -112,13 +134,18 @@ template< class Id_Type >
 std::map< Id_Type, std::pair< uint64, Uint31_Index > > collect_attic_k(
     std::vector< std::string >::const_iterator kit, uint64 timestamp,
     Block_Backend< Tag_Index_Global, Tag_Object_Global< Id_Type > >& tags_db,
-    Block_Backend< Tag_Index_Global, Attic< Tag_Object_Global< Id_Type > > >& attic_tags_db)
+    Block_Backend< Tag_Index_Global, Attic< Tag_Object_Global< Id_Type > > >& attic_tags_db,
+    std::size_t limit = 0, bool* limit_reached = 0)
 {
   std::map< Id_Type, std::pair< uint64, Uint31_Index > > timestamp_per_id;
   Ranges< Tag_Index_Global > ranges = get_k_req(*kit);
 
   for (auto it2 = tags_db.range_begin(ranges); !(it2 == tags_db.range_end()); ++it2)
+  {
     timestamp_per_id[it2.object().id] = std::make_pair(NOW, it2.object().idx);
+    if (attic_ids_limit_reached(timestamp_per_id, limit, limit_reached))
+      return timestamp_per_id;
+  }
 
   for (auto it2 = attic_tags_db.range_begin(ranges); !(it2 == attic_tags_db.range_end()); ++it2)
   {
@@ -127,6 +154,8 @@ std::map< Id_Type, std::pair< uint64, Uint31_Index > > collect_attic_k(
       std::pair< uint64, Uint31_Index >& ref = timestamp_per_id[it2.object().id];
       if (ref.first == 0 || it2.object().timestamp < ref.first)
         ref = std::make_pair(it2.object().timestamp, it2.object().idx);
+      if (attic_ids_limit_reached(timestamp_per_id, limit, limit_reached))
+        return timestamp_per_id;
     }
   }
 
@@ -153,7 +182,8 @@ std::map< Id_Type, std::pair< uint64, Uint31_Index > > collect_attic_kregv(
     std::vector< std::pair< std::string, Regular_Expression* > >::const_iterator krit, uint64 timestamp,
     Block_Backend< Tag_Index_Global, Tag_Object_Global< Id_Type > >& tags_db,
     Block_Backend< Tag_Index_Global, Attic< Tag_Object_Global< Id_Type > > >& attic_tags_db,
-    std::vector< std::pair< Id_Type, Uint31_Index > >* relevant_ids = 0)
+    std::vector< std::pair< Id_Type, Uint31_Index > >* relevant_ids = 0,
+    std::size_t limit = 0, bool* limit_reached = 0)
 {
   std::map< Id_Type, std::pair< uint64, Uint31_Index > > timestamp_per_id;
   Ranges< Tag_Index_Global > ranges = get_k_req(krit->first);
@@ -163,7 +193,11 @@ std::map< Id_Type, std::pair< uint64, Uint31_Index > > collect_attic_kregv(
     if ((!relevant_ids || std::binary_search(
         relevant_ids->begin(), relevant_ids->end(), std::make_pair(it2.object().id, Uint31_Index(0u))))
         && krit->second->matches(it2.index().value))
+    {
       timestamp_per_id[it2.object().id] = std::make_pair(NOW, it2.object().idx);
+      if (attic_ids_limit_reached(timestamp_per_id, limit, limit_reached))
+        return timestamp_per_id;
+    }
   }
 
   for (auto it2 = attic_tags_db.range_begin(ranges); !(it2 == attic_tags_db.range_end()); ++it2)
@@ -176,6 +210,8 @@ std::map< Id_Type, std::pair< uint64, Uint31_Index > > collect_attic_kregv(
       std::pair< uint64, Uint31_Index >& ref = timestamp_per_id[it2.object().id];
       if (ref.first == 0 || it2.object().timestamp < ref.first)
         ref = std::make_pair(it2.object().timestamp, it2.object().idx);
+      if (attic_ids_limit_reached(timestamp_per_id, limit, limit_reached))
+        return timestamp_per_id;
     }
   }
 
@@ -399,7 +435,16 @@ std::vector< std::pair< Id_Type, Uint31_Index > > collect_ids(
         return new_ids;
     }
     else
-      filter_id_list(new_ids, filtered, collect_attic_kv(kvit, timestamp, tags_db, *attic_tags_db.obj));
+    {
+      bool limit_reached = false;
+      std::map< Id_Type, std::pair< uint64, Uint31_Index > > attic_ids = collect_attic_kv(
+          kvit, timestamp, tags_db, *attic_tags_db.obj, (std::vector< std::pair< Id_Type, Uint31_Index > >*)0,
+          !filtered && (check_keys_late == prefer_ranges || check_keys_late == ids_useful) ? 1024*1024 : 0,
+          &limit_reached);
+      if (limit_reached)
+        return new_ids;
+      filter_id_list(new_ids, filtered, attic_ids);
+    }
 
     rman.health_check(stmt);
   }
@@ -419,7 +464,15 @@ std::vector< std::pair< Id_Type, Uint31_Index > > collect_ids(
           return new_ids;
       }
       else
-	filter_id_list(new_ids, filtered, collect_attic_k(kit, timestamp, tags_db, *attic_tags_db.obj));
+      {
+        bool limit_reached = false;
+        std::map< Id_Type, std::pair< uint64, Uint31_Index > > attic_ids = collect_attic_k(
+            kit, timestamp, tags_db, *attic_tags_db.obj,
+            !filtered && check_keys_late == ids_useful ? 1024*1024 : 0, &limit_reached);
+        if (limit_reached)
+          return new_ids;
+        filter_id_list(new_ids, filtered, attic_ids);
+      }
 
       rman.health_check(stmt);
     }
@@ -438,7 +491,15 @@ std::vector< std::pair< Id_Type, Uint31_Index > > collect_ids(
           return new_ids;
       }
       else
-	filter_id_list(new_ids, filtered, collect_attic_kregv(krit, timestamp, tags_db, *attic_tags_db.obj));
+      {
+        bool limit_reached = false;
+        std::map< Id_Type, std::pair< uint64, Uint31_Index > > attic_ids = collect_attic_kregv(
+            krit, timestamp, tags_db, *attic_tags_db.obj, (std::vector< std::pair< Id_Type, Uint31_Index > >*)0,
+            !filtered && check_keys_late == ids_useful ? 1024*1024 : 0, &limit_reached);
+        if (limit_reached)
+          return new_ids;
+        filter_id_list(new_ids, filtered, attic_ids);
+      }
 
       rman.health_check(stmt);
     }
