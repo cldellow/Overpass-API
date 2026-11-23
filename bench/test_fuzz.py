@@ -91,6 +91,19 @@ FEATURES = {
     'complete': [
         ('complete loop', r'complete\(', 0.02),
     ],
+    'evaluators': [
+        ('convert', r' convert (item|row|stat) ', 0.05),
+        ('make', r'(^|\n)make ', 0.05),
+        ('for loop', r'for\.s\d+->', 0.02),
+        ('for over keys()', r'for\.s\d+->\.s\d+ \(keys\(\)\)', 0.002),
+        ('if/else', r'if \(.*\} else \{', 0.01),
+        ('per_member', r'per_member\(', 0.005),
+        ('aggregate', r'\.(u|set|sum|min|max|count)\(', 0.05),
+        ('geometry constructor', r'(pt|lstr|poly)\(', 0.02),
+        ('hull or trace', r'(hull|trace)\(', 0.02),
+        ('list function', r'lrs_(in|union|isect|min|max)\(', 0.05),
+        ('ternary', r'\?\(', 0.05),
+    ],
     'poi': [
         ('union of 4+ statements around one point', r'\((?:\s*\w+\[[^\n]*\(around:\d+,-?[\d.]+,-?[\d.]+\);){4,}', 0.2),
         ('around radius >= 2000 m', r'around:(?:[2-9]\d{3}|\d{5,}),', 0.2),
@@ -98,6 +111,8 @@ FEATURES = {
         ('case-insensitive alternation', r'~"[^"]*\|[^"]*",i\]', 0.05),
     ],
 }
+# Share of queries that may fail to parse. evaluators breaks some expressions on purpose.
+PARSE_ALLOWANCE = {'evaluators': 0.02}
 
 COUNT = 2000
 
@@ -126,7 +141,8 @@ def check_parse(bindir, features, queries, failures):
                 examples.append(next(l for l in out.split('\n') if 'error' in l))
     label = '+'.join(sorted(features)) or 'base'
     print(f'  {label}: {errors} of {len(queries)} queries fail to parse')
-    if errors > 0.01 * len(queries):
+    allowance = max([0.01] + [PARSE_ALLOWANCE.get(f, 0.01) for f in features])
+    if errors > allowance * len(queries):
         failures.append(f'{label}: {errors} of {len(queries)} queries fail to parse, e.g. '
                         + ' | '.join(examples))
 
@@ -138,7 +154,7 @@ def main():
 
     failures = []
     for features in [frozenset(), frozenset({'areas', 'complete'}),
-                     frozenset({'history', 'users', 'complete'}), frozenset({'poi'})]:
+                     frozenset({'history', 'users', 'complete'}), frozenset({'evaluators'}), frozenset({'poi'})]:
         queries = [fuzz.generate(VOCAB, 7, i, features) for i in range(COUNT)]
         check_coverage(features, queries, failures)
         # Same seed and index, same query.

@@ -135,6 +135,13 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
   that supports them: areas need the area rules run (`osm3s_query --rules < rules/areas.osm3s`),
   and history and users need a database built with `--keep-attic` from diffs with metadata.
   `fuzz_vocab.py --osc-dir DIR` adds the users and edit times from such diffs to the vocabulary.
+- **Evaluators:** `--features evaluators` (any database) adds `convert`, `make`, `for` (also over
+  `keys()`), `if`/`else` and richer `(if:)` filters, from a typed expression grammar in
+  `fuzz_eval.py`: every function the parser registers, arithmetic, comparison, logical and ternary
+  operators, list (`lrs_*`), string and date functions, geometry constructors (`pt`, `lstr`,
+  `poly`, `hull`, `trace`, `center`, `gcat`), `per_member` and `per_vertex`, and set aggregates
+  (`u`, `set`, `sum`, `min`, `max`, `count`) combined with operators. About 1% of the queries carry
+  a deliberately malformed expression, for the error paths. Seeds without it are unchanged.
 - **POI lookups:** `--features poi` makes half of the queries point-of-interest lookups: a JSON
   union of 2–15 statements around one point with realistic radii (0.5–25 km, including radii from
   miles), filters mixing values, keys and alternations (some case-insensitive), and `out center
