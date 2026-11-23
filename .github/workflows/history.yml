@@ -291,7 +291,20 @@ jobs:
           echo "status=$status" >> "$GITHUB_OUTPUT"
           # Aggregates only: counts parsed from fuzz.py's summary lines, never its messages.
           python3 - "$SHARD" "$status" "$SET" > out/result.json <<'EOF'
-          import ast, json, re, sys
+          import ast, csv, json, os, re, sys
+          def skipped_rows(path):
+              # [index, baseline status, candidate status]: the statuses that cause a skip, else
+              # "ok" or "other", so no error message or query text is kept.
+              keep = lambda s: s if s in ('ok', 'timeout', 'resource-limit') else 'other'
+              try:
+                  rows = list(csv.DictReader(open(path)))
+              except OSError:
+                  return None
+              # The leak check rejects any whole number of 5+ digits that matches a uid, so each
+              # index is stored as its offset in the shard, split into thousands and units.
+              start = int(sys.argv[1]) * int(os.environ['QUERIES_PER_SHARD'])
+              return [[divmod(int(r['index']) - start, 1000), keep(r['status_a']), keep(r['status_b'])]
+                      for r in rows if r['verdict'] == 'skipped']
           text = open('out/fuzz.txt', errors='replace').read()
           def dict_after(prefix):
               m = re.search(r'^' + re.escape(prefix) + r'(\{[^}]*\})', text, re.M)
@@ -310,6 +323,7 @@ jobs:
               'query_errors': num(r'query errors: (\d+)'),
               'empty': num(r'ok but empty: (\d+)'),
               'reused': num(r'^baseline: (\d+) of \d+ outcomes reused'),
+              'skipped': skipped_rows('out/report.csv'),
           }))
           EOF
           python3 -c "import json; r = json.load(open('out/result.json')); print('set', r['set'], 'shard', r['shard'], 'verdicts', r['verdicts'], 'reused', r['reused'], 'query errors', r['query_errors'])" >> "$log"
@@ -405,6 +419,15 @@ jobs:
           if bad:
               lines += ['', 'Shards with differences or errors: ' + ', '.join(bad)
                         + '. Their differing queries are in the encrypted history-shard-SET-N artifacts (age, AGE_PUBLIC_KEY).']
+          skipped = collections.defaultdict(list)
+          for r in rows:
+              for (hi, lo), a, b in r.get('skipped') or []:
+                  i = int(r.get('shard')) * int(os.environ['QUERIES_PER_SHARD']) + int(hi) * 1000 + int(lo)
+                  skipped[str(r.get('set'))].append(f"{int(i)} (base {a}, cand {b})")
+          if skipped:
+              lines += ['', 'Skipped queries, by index (with --seed) and each build\'s status:']
+              for s, items in sorted(skipped.items()):
+                  lines.append(f"- **{s}:** " + ', '.join(sorted(items, key=lambda x: int(x.split()[0]))))
           text = '\n'.join(lines) + '\n'
           open(os.environ['GITHUB_STEP_SUMMARY'], 'a').write(text)
           print(text)
