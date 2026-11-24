@@ -22,6 +22,7 @@
 
 #include <map>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 
@@ -283,6 +284,42 @@ public:
 };
 
 
+// Tests tag index entries against a key and a value regex. The entries come sorted by key and value,
+// so consecutive entries mostly repeat both: only evaluate the regexes when one of them changes.
+template< typename Key_Regex, typename Val_Regex >
+class Tag_Entry_Matcher
+{
+public:
+  Tag_Entry_Matcher(const Key_Regex& key_regex, const Val_Regex& val_regex)
+    : key_regex_(key_regex), val_regex_(val_regex), valid_(false), matches_(false) {}
+
+  template< typename Index >
+  bool matches(const Index& index)
+  {
+    // Without regexes (key=value lookups) there is nothing worth remembering.
+    if (std::is_same< Key_Regex, Trivial_Regex >::value && std::is_same< Val_Regex, Trivial_Regex >::value)
+      return index.value != void_tag_value();
+
+    if (!valid_ || index.value != value_ || index.key != key_)
+    {
+      key_ = index.key;
+      value_ = index.value;
+      matches_ = key_regex_.matches(key_) && value_ != void_tag_value() && val_regex_.matches(value_);
+      valid_ = true;
+    }
+    return matches_;
+  }
+
+private:
+  const Key_Regex& key_regex_;
+  const Val_Regex& val_regex_;
+  std::string key_;
+  std::string value_;
+  bool valid_;
+  bool matches_;
+};
+
+
 template< typename Id_Type, typename Iterator, typename Key_Regex, typename Val_Regex >
 void filter_id_list(
     std::vector< std::pair< Id_Type, Uint31_Index > >& new_ids, bool& filtered,
@@ -291,11 +328,11 @@ void filter_id_list(
 {
   std::vector< std::pair< Id_Type, Uint31_Index > > old_ids;
   old_ids.swap(new_ids);
+  Tag_Entry_Matcher< Key_Regex, Val_Regex > matcher(key_regex, val_regex);
 
   for (Iterator it = begin; !(it == end); ++it)
   {
-    if (key_regex.matches(it.index().key) && it.index().value != void_tag_value()
-        && val_regex.matches(it.index().value) && (!filtered ||
+    if (matcher.matches(it.index()) && (!filtered ||
 	std::binary_search(old_ids.begin(), old_ids.end(), std::make_pair(it.object().id, Uint31_Index(0u)))))
       new_ids.push_back(std::make_pair(it.object().id, it.object().idx));
 
@@ -320,11 +357,11 @@ void filter_id_list(
 {
   std::vector< Id_Type > old_ids;
   old_ids.swap(new_ids);
+  Tag_Entry_Matcher< Key_Regex, Val_Regex > matcher(key_regex, val_regex);
 
   for (Iterator it = begin; !(it == end); ++it)
   {
-    if (key_regex.matches(it.index().key) && it.index().value != void_tag_value()
-        && val_regex.matches(it.index().value) &&
+    if (matcher.matches(it.index()) &&
 	(!filtered || std::binary_search(old_ids.begin(), old_ids.end(), it.object())))
       new_ids.push_back(it.object());
   }
