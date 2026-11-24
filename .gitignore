@@ -1,4 +1,5 @@
 /bin/
 /cgi-bin/
 /test-bin/
-
+/src/ar-lib
+/src/compile
