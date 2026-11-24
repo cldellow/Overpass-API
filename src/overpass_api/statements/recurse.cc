@@ -374,6 +374,11 @@ Timeless< Uint31_Index, Relation_Skeleton > collect_relations
     current_ids.swap(children_ids);
   }
 
+  // Without input relations no relation can have one as a member: skip the scan of all relations
+  // (and at a past date, the reconstruction of all their old versions).
+  if (current_ids.empty())
+    return result;
+
   Request_Context context(&stmt, rman);
   if (!invert_ids)
     collect_items_flat(context,
@@ -421,6 +426,10 @@ Timeless< Uint31_Index, Relation_Skeleton > collect_relations
                   std::back_inserter(children_ids));
     current_ids.swap(children_ids);
   }
+
+  // Without input relations no relation can have one as a member.
+  if (current_ids.empty())
+    return result;
 
   if (!invert_ids)
     collect_items_flat(context,
