@@ -198,13 +198,41 @@ void filter_relations_expensive(const Bbox_Filter& filter,
 }
 
 
+// Whether the whole area of a way or relation index lies in the bbox. Every node of a way
+// with that index is then in the bbox, so the way matches without loading its geometry.
+bool contains_index_area(const Bbox_Double& bbox, Uint31_Index idx)
+{
+  if (bbox.west > bbox.east || bbox.east - bbox.west >= 180.)
+    return false;
+
+  std::pair< Uint32_Index, Uint32_Index > bounds = calc_bbox_bounds(idx);
+  uint32 south_west = bounds.first.val();
+  uint32 north_east = bounds.second.val() - 1;
+  return bbox.south <= ::lat(south_west, 0u) && ::lat(north_east, 0xffffffffu) <= bbox.north
+      && bbox.west <= ::lon(south_west, 0u) && ::lon(north_east, 0xffffffffu) <= bbox.east;
+}
+
+
 void Bbox_Filter::filter(const Statement& query, Resource_Manager& rman, Set& into) const
 {
   if (!bbox.valid())
     return;
 
-  //Process ways
+  //Process ways: only those whose index area isn't inside the bbox need their geometry
+  std::map< Uint31_Index, std::vector< Way_Skeleton > > ways_inside;
+  for (auto it = into.ways.begin(); it != into.ways.end(); )
+  {
+    if (contains_index_area(bbox, it->first))
+    {
+      ways_inside[it->first].swap(it->second);
+      it = into.ways.erase(it);
+    }
+    else
+      ++it;
+  }
   filter_ways_expensive(*this, Way_Geometry_Store(into.ways, query, rman), into.ways);
+  for (auto it = ways_inside.begin(); it != ways_inside.end(); ++it)
+    into.ways[it->first].swap(it->second);
 
   Request_Context context(&query, rman);
   {
