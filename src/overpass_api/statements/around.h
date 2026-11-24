@@ -219,6 +219,7 @@ class Around_Statement : public Output_Statement
     uint64 comparisons_per_test() const
     { return std::min< uint64 >(simple_lat_lons.size() + simple_segments.size() + 1, 1024); }
 
+    bool contains_index_area(Uint31_Index idx) const;
     double get_radius() const { return radius; }
 
     template< typename Node_Skeleton >
