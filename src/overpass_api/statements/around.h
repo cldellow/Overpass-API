@@ -91,6 +91,7 @@ class Around_Statement : public Output_Statement
     bool is_inside(const std::vector< Quad_Coord >& way_geometry) const;
 
     double get_radius() const { return radius; }
+    bool has_coordinates() const { return !points.empty(); }
 
     template< typename Node_Skeleton >
     void add_nodes(const std::map< Uint32_Index, std::vector< Node_Skeleton > >& nodes);

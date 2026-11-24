@@ -71,7 +71,12 @@ class Union_Statement : public Output_Statement
     }
 
   private:
+    void merge_key_filters();
+
     std::vector< Statement* > substatements;
+    std::vector< Statement* > merged_substatements;
+    Parsed_Query* global_settings;
+    bool key_filters_merged;
 };
 
 

@@ -28,7 +28,9 @@
 #include "../data/regular_expression.h"
 #include "../data/tags_global_reader.h"
 #include "area_query.h"
+#include "around.h"
 #include "bbox_query.h"
+#include "polygon_query.h"
 #include "query.h"
 
 #include <algorithm>
@@ -94,6 +96,82 @@ Query_Statement::Query_Statement
 Query_Statement::~Query_Statement()
 {
   delete global_bbox_statement;
+}
+
+
+bool Query_Statement::reads_only_database() const
+{
+  for (std::vector< Statement* >::const_iterator it = substatements.begin(); it != substatements.end(); ++it)
+  {
+    if (dynamic_cast< Has_Kv_Statement* >(*it) || dynamic_cast< Bbox_Query_Statement* >(*it)
+        || dynamic_cast< Polygon_Query_Statement* >(*it))
+      continue;
+    const Around_Statement* around = dynamic_cast< Around_Statement* >(*it);
+    if (!around || !around->has_coordinates())
+      return false;
+  }
+  return true;
+}
+
+
+std::string Query_Statement::sole_key_filter() const
+{
+  if (keys.size() != 1 || !key_values.empty() || !key_regexes.empty() || !regkey_regexes.empty()
+      || !key_nvalues.empty() || !key_nregexes.empty() || !regkey_nregexes.empty())
+    return "";
+  return keys.front();
+}
+
+
+std::string Query_Statement::filter_signature() const
+{
+  std::string result = to_string(type);
+  for (std::vector< Statement* >::const_iterator it = substatements.begin(); it != substatements.end(); ++it)
+  {
+    if (!dynamic_cast< Has_Kv_Statement* >(*it))
+      result += (*it)->dump_ql_in_query("");
+  }
+  return result;
+}
+
+
+namespace
+{
+  std::string escape_regex(const std::string& s)
+  {
+    std::string result;
+    for (std::string::size_type i = 0; i < s.size(); ++i)
+    {
+      if (std::string("\\.^$*+?()[]{}|").find(s[i]) != std::string::npos)
+        result += '\\';
+      result += s[i];
+    }
+    return result;
+  }
+}
+
+
+void Query_Statement::match_any_key(const std::vector< std::string >& keys_, Parsed_Query& global_settings)
+{
+  std::string regk = "^(";
+  for (std::vector< std::string >::const_iterator it = keys_.begin(); it != keys_.end(); ++it)
+    regk += (it == keys_.begin() ? "" : "|") + escape_regex(*it);
+  regk += ")$";
+
+  for (std::vector< Statement* >::iterator it = substatements.begin(); it != substatements.end(); ++it)
+  {
+    if (dynamic_cast< Has_Kv_Statement* >(*it))
+    {
+      substatements.erase(it);
+      break;
+    }
+  }
+  keys.clear();
+
+  std::map< std::string, std::string > attributes;
+  attributes["regk"] = regk;
+  attributes["regv"] = ".*";
+  add_statement(new Has_Kv_Statement(get_line_number(), attributes, global_settings), "");
 }
 
 
