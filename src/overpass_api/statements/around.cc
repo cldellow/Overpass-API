@@ -489,7 +489,22 @@ void Around_Constraint::filter(const Statement& query, Resource_Manager& rman, S
   around->calc_lat_lons(input ? *input : empty, *around, rman);
 
   filter_nodes_expensive(*around, into.nodes);
+
+  // Only the ways whose index area isn't within the radius need their geometry
+  std::map< Uint31_Index, std::vector< Way_Skeleton > > ways_inside;
+  for (auto it = into.ways.begin(); it != into.ways.end(); )
+  {
+    if (around->contains_index_area(it->first))
+    {
+      ways_inside[it->first].swap(it->second);
+      it = into.ways.erase(it);
+    }
+    else
+      ++it;
+  }
   filter_ways_expensive(*around, Way_Geometry_Store(into.ways, query, rman), into.ways);
+  for (auto it = ways_inside.begin(); it != ways_inside.end(); ++it)
+    into.ways[it->first].swap(it->second);
 
   Request_Context context(&query, rman);
   {
@@ -1255,6 +1270,53 @@ bool Around_Statement::matches_bboxes(const Prepared_BBox & bbox) const
 {
   return bbox.intersects(node_bboxes) ||
          bbox.intersects(way_bboxes);
+}
+
+
+// Whether the whole area of a way or relation index lies within the radius of one of the points.
+// Every node of a way with that index is then inside, so the way matches without its geometry.
+// Over a lat/lon box narrower than 180 degrees, the distance to a point is greatest at a corner:
+// along a parallel or a meridian it grows towards the ends.
+bool Around_Statement::contains_index_area(Uint31_Index idx) const
+{
+  if (radius <= 1. || !simple_segments.empty() || simple_lat_lons.empty() || simple_lat_lons.size() > 64)
+    return false;
+
+  std::pair< Uint32_Index, Uint32_Index > bounds = calc_bbox_bounds(idx);
+  uint32 south_west = bounds.first.val();
+  uint32 north_east = bounds.second.val() - 1;
+  double south = ::lat(south_west, 0u);
+  double north = ::lat(north_east, 0xffffffffu);
+  double west = ::lon(south_west, 0u);
+  double east = ::lon(north_east, 0xffffffffu);
+  if (east - west >= 180. || east < west)
+    return false;
+
+  // A margin of 1 m against rounding.
+  double limit = radius - 1.;
+  for (std::vector< std::pair< Prepared_BBox, Prepared_Point > >::const_iterator pit = simple_lat_lons.begin();
+      pit != simple_lat_lons.end(); ++pit)
+  {
+    const Prepared_Point* it = &pit->second;
+    // is_inside only finds a point in the tiles add_coord registered it for: those of this bbox.
+    double point_south = it->lat - radius*(360.0/(40000.0*1000.0));
+    double point_north = it->lat + radius*(360.0/(40000.0*1000.0));
+    double scale_lat = it->lat > 0.0 ? point_north : point_south;
+    if (std::abs(scale_lat) >= 89.9)
+      continue;
+    double point_west = it->lon - radius*(360.0/(40000.0*1000.0))/cos(scale_lat/90.0*acos(0));
+    double point_east = it->lon + radius*(360.0/(40000.0*1000.0))/cos(scale_lat/90.0*acos(0));
+    if (point_west < -180. || point_east > 180.
+        || south < point_south || north > point_north || west < point_west || east > point_east)
+      continue;
+
+    if (great_circle_dist(it->lat, it->lon, south, west) <= limit
+        && great_circle_dist(it->lat, it->lon, south, east) <= limit
+        && great_circle_dist(it->lat, it->lon, north, west) <= limit
+        && great_circle_dist(it->lat, it->lon, north, east) <= limit)
+      return true;
+  }
+  return false;
 }
 
 
