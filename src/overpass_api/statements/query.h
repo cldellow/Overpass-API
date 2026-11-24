@@ -86,12 +86,14 @@ class Query_Statement : public Output_Statement
     // Whether the query reads nothing but the database: tag filters, and at most bboxes, polygons
     // and around filters with coordinates.
     bool reads_only_database() const;
-    // The key of the query's only tag filter if it is [key], or "" otherwise.
-    std::string sole_key_filter() const;
     // The query's type and its filters other than tag filters, as QL.
     std::string filter_signature() const;
-    // Replaces the query's only tag filter, [key], with one that matches any of the keys.
-    void match_any_key(const std::vector< std::string >& keys, Parsed_Query& global_settings);
+    // For each [key] filter: its key, and the query's type and all its other filters as QL. Queries
+    // with the same signature differ only in that one [key] filter.
+    std::vector< std::pair< std::string, std::string > > key_filter_variants() const;
+    // Replaces the query's filter [key] with one that matches any of the keys.
+    void match_any_key(const std::string& key, const std::vector< std::string >& keys,
+        Parsed_Query& global_settings);
 
     static std::string to_string(int type)
     {

@@ -64,49 +64,71 @@ void Union_Statement::add_statement(Statement* statement, std::string text)
 }
 
 
-// Query statements of one type that differ only in a [key] filter, e.g. node["tourism"](around:...)
-// and node["historic"](around:...), become one statement matching any of the keys, so their
-// blocks are read once. Only when every statement reads nothing but the database and writes to
-// "_", so that no statement can see another's result and order doesn't matter. Done at the
-// first execution, so dumps of the query show it as written.
+// Query statements of one type that differ only in one [key] filter, e.g. node["tourism"](around:...)
+// and node["historic"](around:...), or way["maxheight"]["highway"] and way["maxheight"]["bridge"],
+// become one statement whose filter matches any of the keys, so their blocks are read once. Only
+// when every statement reads nothing but the database and writes to "_", so that no statement can
+// see another's result and order doesn't matter. Done at the first execution, so dumps of the
+// query show it as written.
 void Union_Statement::merge_key_filters()
 {
   key_filters_merged = true;
-  for (std::vector< Statement* >::const_iterator it = substatements.begin(); it != substatements.end(); ++it)
-  {
-    const Query_Statement* query = dynamic_cast< const Query_Statement* >(*it);
-    if (!query || query->get_result_name() != "_" || !query->reads_only_database())
-      return;
-  }
-
-  std::map< std::string, Query_Statement* > first_by_signature;
-  std::map< Query_Statement*, std::vector< std::string > > keys_by_first;
-  std::vector< Statement* > kept;
+  std::vector< Query_Statement* > queries;
   for (std::vector< Statement* >::const_iterator it = substatements.begin(); it != substatements.end(); ++it)
   {
     Query_Statement* query = dynamic_cast< Query_Statement* >(*it);
-    std::string key = query->sole_key_filter();
-    if (key.empty())
-    {
-      kept.push_back(*it);
-      continue;
-    }
-    Query_Statement*& first = first_by_signature[query->filter_signature()];
-    if (!first)
-    {
-      first = query;
-      kept.push_back(*it);
-    }
-    else
-      merged_substatements.push_back(*it);
-    keys_by_first[first].push_back(key);
+    if (!query || query->get_result_name() != "_" || !query->reads_only_database())
+      return;
+    queries.push_back(query);
   }
 
-  for (std::map< Query_Statement*, std::vector< std::string > >::const_iterator it = keys_by_first.begin();
-      it != keys_by_first.end(); ++it)
+  // A query with several [key] filters could merge on any of them: take the one whose signature
+  // the most queries share.
+  std::vector< std::vector< std::pair< std::string, std::string > > > variants;
+  std::map< std::string, int > queries_by_signature;
+  for (std::vector< Query_Statement* >::const_iterator it = queries.begin(); it != queries.end(); ++it)
   {
-    if (it->second.size() > 1)
-      it->first->match_any_key(it->second, *global_settings);
+    variants.push_back((*it)->key_filter_variants());
+    for (std::vector< std::pair< std::string, std::string > >::const_iterator vit = variants.back().begin();
+        vit != variants.back().end(); ++vit)
+      ++queries_by_signature[vit->second];
+  }
+
+  std::map< std::string, Query_Statement* > first_by_signature;
+  std::map< Query_Statement*, std::pair< std::string, std::vector< std::string > > > keys_by_first;
+  std::vector< Statement* > kept;
+  for (std::vector< Query_Statement* >::size_type i = 0; i < queries.size(); ++i)
+  {
+    const std::pair< std::string, std::string >* best = 0;
+    for (std::vector< std::pair< std::string, std::string > >::const_iterator it = variants[i].begin();
+        it != variants[i].end(); ++it)
+    {
+      if (queries_by_signature[it->second] >= 2
+          && (!best || queries_by_signature[it->second] > queries_by_signature[best->second]))
+        best = &*it;
+    }
+    if (!best)
+    {
+      kept.push_back(queries[i]);
+      continue;
+    }
+    Query_Statement*& first = first_by_signature[best->second];
+    if (!first)
+    {
+      first = queries[i];
+      keys_by_first[first].first = best->first;
+      kept.push_back(queries[i]);
+    }
+    else
+      merged_substatements.push_back(queries[i]);
+    keys_by_first[first].second.push_back(best->first);
+  }
+
+  for (std::map< Query_Statement*, std::pair< std::string, std::vector< std::string > > >::const_iterator
+      it = keys_by_first.begin(); it != keys_by_first.end(); ++it)
+  {
+    if (it->second.second.size() > 1)
+      it->first->match_any_key(it->second.first, it->second.second, *global_settings);
   }
   substatements.swap(kept);
 }
