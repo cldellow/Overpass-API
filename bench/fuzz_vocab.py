@@ -84,7 +84,7 @@ def sample_objects(pbf, per_type, rng):
 def area_names(pbf, limit=300):
     """Names and ids of named relations that the standard area rules turn into areas."""
     out = subprocess.run(
-        'osmium tags-filter -O -f opl -o - "%s" r/boundary r/admin_level r/type=multipolygon' % pbf,
+        'osmium tags-filter -R -O -f opl -o - "%s" r/boundary r/admin_level r/type=multipolygon' % pbf,
         shell=True, check=True, stdout=subprocess.PIPE, text=True).stdout
     names = collections.Counter()
     ids = []
@@ -136,22 +136,38 @@ def edits_from_history(pbf):
     proc.wait()
 
 
-def history_vocab(edits):
-    """Users, user ids and edit timestamps from (user, uid, timestamp) triples."""
+def history_vocab(edits, sample_size=200000):
+    """Users, user ids and edit timestamps from (user, uid, timestamp) triples.
+
+    Edit times come from a uniform random sample of at most sample_size timestamps (reservoir
+    sampling), so memory stays bounded on large full-history files; the range is exact."""
     users, uids, times = collections.Counter(), collections.Counter(), []
+    rng = random.Random(1)
+    seen = 0
+    first = last = None
     for user, uid, ts in edits:
         if user and '"' not in user and '\\' not in user:
             users[user] += 1
         if uid:
             uids[int(uid)] += 1
         if ts:
-            times.append(ts)
+            seen += 1
+            if first is None or ts < first:
+                first = ts
+            if last is None or ts > last:
+                last = ts
+            if len(times) < sample_size:
+                times.append(ts)
+            else:
+                j = rng.randrange(seen)
+                if j < sample_size:
+                    times[j] = ts
     times.sort()
     return {
         'users': [u for u, _ in users.most_common(200)],
         'uids': [u for u, _ in uids.most_common(200)],
         'edit_times': times[::max(1, len(times) // 500)],
-        'time_range': [times[0], times[-1]] if times else [],
+        'time_range': [first, last] if times else [],
     }
 
 
