@@ -508,9 +508,6 @@ void Query_Statement::filter_by_tags
   if (attic_items)
     cell_attic_it = attic_items->begin();
 
-  // formulate range query
-  Ranges< Tag_Index_Local > ranges = formulate_range_query(ids_by_coarse);
-
   // prepare straight keys
   std::map< std::string, std::pair< std::string, std::vector< Regular_Expression* > > > key_union;
   for (std::vector< std::string >::const_iterator it = keys.begin(); it != keys.end();
@@ -522,6 +519,10 @@ void Query_Statement::filter_by_tags
   for (std::vector< std::pair< std::string, Regular_Expression* > >::const_iterator
       it = key_regexes.begin(); it != key_regexes.end(); ++it)
     key_union[it->first].second.push_back(it->second);
+
+  // formulate range query: read only the entries of these keys, unless a key regex must see every key
+  Ranges< Tag_Index_Local > ranges = regkey_regexes.empty()
+      ? formulate_range_query(ids_by_coarse, key_union) : formulate_range_query(ids_by_coarse);
 
   // iterate over the result
   std::map< TIndex, std::vector< TObject > > result;
@@ -586,7 +587,8 @@ void Query_Statement::filter_by_tags
   result.clear();
   attic_result.clear();
   coarse_count = 0;
-  auto ntag_it = items_db.range_begin(ranges);
+  Ranges< Tag_Index_Local > nranges = formulate_range_query(ids_by_coarse, nkey_union);
+  auto ntag_it = items_db.range_begin(nranges);
 
   if (timestamp == NOW)
   {
@@ -605,7 +607,7 @@ void Query_Statement::filter_by_tags
   {
     Block_Backend< Tag_Index_Local, Attic< typename TObject::Id_Type > > attic_items_db
         (transaction.data_index(attic_file_prop));
-    auto attic_ntag_it = attic_items_db.range_begin(ranges);
+    auto attic_ntag_it = attic_items_db.range_begin(nranges);
 
     for (typename std::map< uint32, std::vector< typename TObject::Id_Type > >::iterator
         it = ids_by_coarse.begin(); it != ids_by_coarse.end(); ++it)
