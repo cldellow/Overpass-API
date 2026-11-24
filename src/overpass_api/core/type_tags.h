@@ -277,6 +277,22 @@ Ranges< Tag_Index_Local > formulate_range_query(const std::map< uint32, Value >&
 }
 
 
+// The tag entries of only the given keys, which must be sorted, in the given coarse indices.
+// key + '\0' sorts after every entry of key and before any longer key that starts with it.
+template< class Value, class Key_Container >
+Ranges< Tag_Index_Local > formulate_range_query(
+    const std::map< uint32, Value >& coarse_indices, const Key_Container& keys)
+{
+  Ranges< Tag_Index_Local > ranges;
+  for (typename std::map< uint32, Value >::const_iterator it = coarse_indices.begin(); it != coarse_indices.end(); ++it)
+  {
+    for (typename Key_Container::const_iterator kit = keys.begin(); kit != keys.end(); ++kit)
+      ranges.push_back({ it->first, kit->first, "" }, { it->first, kit->first + std::string(1, '\0'), "" });
+  }
+  return ranges;
+}
+
+
 template< class TIndex, class TObject >
 void generate_ids_by_coarse
   (std::map< uint32, std::vector< typename TObject::Id_Type > >& ids_by_coarse,
