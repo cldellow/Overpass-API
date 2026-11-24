@@ -124,7 +124,7 @@ python3 bench/fuzz.py --vocab vocab.json --seed 2 --show 1234
 - **Import changes:** `--db-b` runs `--b` against a second database. With the same build for `--a`
   and `--b`, this compares two databases, e.g. one imported by the baseline and one by a changed
   `update_database`, or the same file imported with two `--flush-size` values.
-- **Failures** are written to `--out-dir` as `<seed>-<index>/{query.ql,a.out,b.out}`, and the exit
+- **Failures** are written to `--out-dir` as `<seed>-<index>/{query.ql,a.out,b.out,a.status,b.status}` (each build's status is `ok`, `exit-N` or its first error message, so a difference in errors alone is visible), and the exit
   status is 1.
 - **Spatial filters:** bboxes, the global `[bbox:]` setting, `around` points and `poly:` polygons
   (star-shaped, 3 to 400 vertices, double or single quotes, as client tools send them).

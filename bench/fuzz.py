@@ -19,7 +19,9 @@ generated query never printed that set. Queries with [diff:] or [adiff:] are lef
 time or memory limit on the baseline: both builds then run the query as generated. --no-observe
 turns this off.
 
-Differences are written to --out-dir as <seed>-<index>/{query.ql,a.out,b.out}. Exit status is 1
+Differences are written to --out-dir as <seed>-<index>/{query.ql,a.out,b.out,a.status,b.status}:
+the query, each build's output, and each build's status (ok, exit-N or the first error message).
+Outputs can be identical when only the errors differ. Exit status is 1
 if any query's output differs. Use the same build as --a and --b to check that the outputs are
 deterministic before blaming a change.
 
@@ -727,7 +729,8 @@ def main():
             if verdict == 'DIFFERENT':
                 path = os.path.join(args.out_dir, f'{args.seed}-{index}')
                 os.makedirs(path, exist_ok=True)
-                for name, data in (('query.ql', query.encode()), ('a.out', out_a), ('b.out', out_b)):
+                for name, data in (('query.ql', query.encode()), ('a.out', out_a), ('b.out', out_b),
+                                   ('a.status', status_a.encode() + b'\n'), ('b.status', status_b.encode() + b'\n')):
                     with open(os.path.join(path, name), 'wb') as f:
                         f.write(data)
                 print(f'DIFFERENT: seed {args.seed} query {index} ({status_a} vs {status_b}) -> {path}')
