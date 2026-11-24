@@ -357,8 +357,29 @@ void Around_Constraint::filter(Resource_Manager& rman, Set& into)
 }
 
 
+class Periodic_Health_Check
+{
+public:
+  Periodic_Health_Check(Resource_Manager& rman_, const Statement& stmt_) : rman(rman_), stmt(stmt_) {}
+  void tick(uint64 work = 1)
+  {
+    work_done += work;
+    if (work_done >= 64*1024)
+    {
+      work_done = 0;
+      rman.health_check(stmt);
+    }
+  }
+
+private:
+  Resource_Manager& rman;
+  const Statement& stmt;
+  uint64 work_done = 0;
+};
+
+
 template< typename Node_Skeleton >
-void filter_nodes_expensive(const Around_Statement& around,
+void filter_nodes_expensive(const Around_Statement& around, Periodic_Health_Check& check,
                             std::map< Uint32_Index, std::vector< Node_Skeleton > >& nodes)
 {
   for (typename std::map< Uint32_Index, std::vector< Node_Skeleton > >::iterator it = nodes.begin();
@@ -368,6 +389,7 @@ void filter_nodes_expensive(const Around_Statement& around,
     for (typename std::vector< Node_Skeleton >::const_iterator iit = it->second.begin();
         iit != it->second.end(); ++iit)
     {
+      check.tick(around.comparisons_per_test());
       double lat(::lat(it->first.val(), iit->ll_lower));
       double lon(::lon(it->first.val(), iit->ll_lower));
       if (around.matches_bboxes(lat, lon) && around.is_inside(lat, lon))
@@ -379,7 +401,7 @@ void filter_nodes_expensive(const Around_Statement& around,
 
 
 template< typename Way_Skeleton >
-void filter_ways_expensive(const Around_Statement& around,
+void filter_ways_expensive(const Around_Statement& around, Periodic_Health_Check& check,
                            const Way_Geometry_Store& way_geometries,
                            std::map< Uint31_Index, std::vector< Way_Skeleton > >& ways)
 {
@@ -390,9 +412,10 @@ void filter_ways_expensive(const Around_Statement& around,
     for (typename std::vector< Way_Skeleton >::const_iterator iit = it->second.begin();
         iit != it->second.end(); ++iit)
     {
+      check.tick(around.comparisons_per_test());
       const std::vector< Quad_Coord >& way_geometry = way_geometries.get_geometry(*iit);
       if (around.matches_bboxes(::way_geometry_bbox(way_geometry)) &&
-          around.is_inside(way_geometry))
+          around.is_inside(way_geometry, check))
 	local_into.push_back(*iit);
     }
     it->second.swap(local_into);
@@ -401,7 +424,7 @@ void filter_ways_expensive(const Around_Statement& around,
 
 
 template< typename Relation_Skeleton >
-void filter_relations_expensive(const Around_Statement& around,
+void filter_relations_expensive(const Around_Statement& around, Periodic_Health_Check& check,
                                 const std::vector< std::pair< Uint32_Index, const Node_Skeleton* > > node_members_by_id,
                                 const std::vector< std::pair< Uint31_Index, const Way_Skeleton* > > way_members_by_id,
                                 const Way_Geometry_Store& way_geometries,
@@ -417,6 +440,7 @@ void filter_relations_expensive(const Around_Statement& around,
       for (std::vector< Relation_Entry >::const_iterator nit = iit->members.begin();
 	  nit != iit->members.end(); ++nit)
       {
+        check.tick(around.comparisons_per_test());
 	if (nit->type == Relation_Entry::NODE)
 	{
           const std::pair< Uint32_Index, const Node_Skeleton* >* second_nd =
@@ -440,7 +464,7 @@ void filter_relations_expensive(const Around_Statement& around,
 	    continue;
 	  const std::vector< Quad_Coord >& way_geometry = way_geometries.get_geometry(*second_nd->second);
 	  if (around.matches_bboxes(::way_geometry_bbox(way_geometry)) &&
-	      around.is_inside(way_geometry))
+	      around.is_inside(way_geometry, check))
 	  {
 	    local_into.push_back(*iit);
 	    break;
@@ -455,12 +479,13 @@ void filter_relations_expensive(const Around_Statement& around,
 
 void Around_Constraint::filter(const Statement& query, Resource_Manager& rman, Set& into)
 {
+  Periodic_Health_Check check(rman, query);
   const Set* input = rman.get_set(around->get_source_name());
   const Set empty;
   around->calc_lat_lons(input ? *input : empty, *around, rman);
 
-  filter_nodes_expensive(*around, into.nodes);
-  filter_ways_expensive(*around, Way_Geometry_Store(into.ways, query, rman), into.ways);
+  filter_nodes_expensive(*around, check, into.nodes);
+  filter_ways_expensive(*around, check, Way_Geometry_Store(into.ways, query, rman), into.ways);
 
   Request_Context context(&query, rman);
   {
@@ -485,15 +510,15 @@ void Around_Constraint::filter(const Statement& query, Resource_Manager& rman, S
         = order_by_id(way_members_.current, Order_By_Way_Id());
 
     // Retrieve all nodes referred by the ways.
-    filter_relations_expensive(*around, node_members_by_id, way_members_by_id,
+    filter_relations_expensive(*around, check, node_members_by_id, way_members_by_id,
         Way_Geometry_Store(way_members_.current, query, rman), into.relations);
   }
 
   if (!into.attic_nodes.empty())
-    filter_nodes_expensive(*around, into.attic_nodes);
+    filter_nodes_expensive(*around, check, into.attic_nodes);
 
   if (!into.attic_ways.empty())
-    filter_ways_expensive(*around, Way_Geometry_Store(into.attic_ways, query, rman), into.attic_ways);
+    filter_ways_expensive(*around, check, Way_Geometry_Store(into.attic_ways, query, rman), into.attic_ways);
 
   if (!into.attic_relations.empty())
   {
@@ -515,7 +540,7 @@ void Around_Constraint::filter(const Statement& query, Resource_Manager& rman, S
     std::vector< std::pair< Uint31_Index, const Way_Skeleton* > > way_members_by_id
         = order_attic_by_id(way_members_, Order_By_Way_Id());
 
-    filter_relations_expensive(*around, node_members_by_id, way_members_by_id,
+    filter_relations_expensive(*around, check, node_members_by_id, way_members_by_id,
         Way_Geometry_Store(way_members_, query, rman), into.attic_relations);
   }
 
@@ -1111,7 +1136,7 @@ bool Around_Statement::is_inside
 }
 
 
-bool Around_Statement::is_inside(const std::vector< Quad_Coord >& way_geometry) const
+bool Around_Statement::is_inside(const std::vector< Quad_Coord >& way_geometry, Periodic_Health_Check& check) const
 {
   std::vector< Quad_Coord >::const_iterator nit = way_geometry.begin();
   if (nit == way_geometry.end())
@@ -1123,6 +1148,7 @@ bool Around_Statement::is_inside(const std::vector< Quad_Coord >& way_geometry) 
     double second_lat(::lat(it->ll_upper, it->ll_lower));
     double second_lon(::lon(it->ll_upper, it->ll_lower));
 
+    check.tick(comparisons_per_test());
     if (is_inside(second_lat, second_lon))
       return true;
   }
@@ -1135,6 +1161,7 @@ bool Around_Statement::is_inside(const std::vector< Quad_Coord >& way_geometry) 
     double second_lat(::lat(nit->ll_upper, nit->ll_lower));
     double second_lon(::lon(nit->ll_upper, nit->ll_lower));
 
+    check.tick(comparisons_per_test());
     if (is_inside(first_lat, first_lon, second_lat, second_lon))
       return true;
 
