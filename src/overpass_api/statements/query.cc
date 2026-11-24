@@ -97,6 +97,18 @@ Query_Statement::~Query_Statement()
 }
 
 
+std::string Query_Statement::block_signature() const
+{
+  std::string result = to_string(type);
+  for (std::vector< Statement* >::const_iterator it = substatements.begin(); it != substatements.end(); ++it)
+  {
+    if (*it && !dynamic_cast< Has_Kv_Statement* >(*it))
+      result += (*it)->dump_ql_in_query("");
+  }
+  return result;
+}
+
+
 void Query_Statement::add_statement(Statement* statement, std::string text)
 {
   assure_no_text(text, this->get_name());
