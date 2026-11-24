@@ -263,7 +263,7 @@ std::string process_members(const std::string& raw_template, uint32 id, const Re
     else if (raw_template.substr(new_pos, 10) == "{{{role}}}")
     {
       std::map< uint32, std::string >::const_iterator rit = roles.find(entry.role);
-      result<<escape_xml(rit != roles.end() ? rit->second : "???");
+      result<<Xml_Escaped(rit != roles.end() ? rit->second : "???");
     }
     else if (raw_template.substr(new_pos, 8) == "{{first:")
       ;
