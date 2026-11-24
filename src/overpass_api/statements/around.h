@@ -104,6 +104,7 @@ class Around_Statement : public Output_Statement
     bool is_inside(double first_lat, double first_lon, double second_lat, double second_lon) const;
     bool is_inside(const std::vector< Quad_Coord >& way_geometry) const;
 
+    bool contains_index_area(Uint31_Index idx) const;
     double get_radius() const { return radius; }
 
     template< typename Node_Skeleton >
