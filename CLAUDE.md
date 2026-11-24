@@ -73,6 +73,10 @@ Before giving the compare link for a change upstream may merge, prepare its bran
 - **Upstream PR description:** no fork-relative references (`#N` links to upstream's own
   issues and PRs there), and no fork-only tools (`bench/...`) a reviewer can't run.
 - Show the user the draft message before rewriting the commit.
+- **After review:** squash review fixes into the commit they fix and force-push the PR branch.
+  Never add fix-up commits to an upstream PR.
+- **Catching up:** rebase the PR branch onto `upstream/master`; never merge `upstream/master`
+  into it.
 
 ## Testing changes
 
