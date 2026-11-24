@@ -111,6 +111,18 @@ FEATURES = {
         ('case-insensitive alternation', r'~"[^"]*\|[^"]*",i\]', 0.05),
     ],
 }
+FEATURES['regex'] = [
+    ('wildcard or character class', r'~"[^"]*(\.\*|\.\+|\.\?|\[[^"\]]*\])', 0.02),
+    ('suffix anchor only', r'~"[^"^]*\$"', 0.02),
+    ('partly anchored list', r'~"\^\([^"]*\)"|~"\([^"]*\)\$"|~"\^[^"(]*\|[^"]*"', 0.02),
+    ('special pattern "." or ".*"', r'~"\.\*?"', 0.03),
+    ('multivalue idiom', r'\(\^\|;\)', 0.02),
+    ('case-insensitive in changed case', r'~"[^"]*[A-Z][^"]*",i\]', 0.02),
+    ('key alternation', r'\[~"\^\([^"]*\|', 0.01),
+    # The synthetic vocabulary has 12 tag values, so lists stop there; real ones reach 25-70.
+    ('long list', r'~"(?:[^"|]*\|){11,}', 0.01),
+    ('empty value', r'~"\^\$"', 0.002),
+]
 FEATURES['output'] = [
     ('csv header', r'\[out:csv\(', 0.2),
     ('csv count field', r'::"count:(nodes|ways|relations|areas)"', 0.02),
@@ -186,7 +198,7 @@ def main():
                      frozenset({'output'}), frozenset({'statements', 'areas'}),
                      frozenset({'history', 'users', 'statements'}),
                      frozenset({'evaluators', 'output', 'statements', 'poi', 'areas', 'complete'}),
-                     frozenset({'poi'})]:
+                     frozenset({'poi'}), frozenset({'regex'}), frozenset({'regex', 'poi'})]:
         queries = [fuzz.generate(VOCAB, 7, i, features) for i in range(COUNT)]
         # The rules' shares assume one new family at a time; the combined set only gets parsed.
         if len(features & {'evaluators', 'output', 'statements'}) <= 1:
