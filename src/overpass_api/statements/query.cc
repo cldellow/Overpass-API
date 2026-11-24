@@ -119,7 +119,7 @@ std::string Query_Statement::filter_signature() const
   std::string result = to_string(type);
   for (std::vector< Statement* >::const_iterator it = substatements.begin(); it != substatements.end(); ++it)
   {
-    if (!dynamic_cast< Has_Kv_Statement* >(*it))
+    if (*it && !dynamic_cast< Has_Kv_Statement* >(*it))
       result += (*it)->dump_ql_in_query("");
   }
   return result;

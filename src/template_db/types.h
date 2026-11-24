@@ -71,8 +71,13 @@ struct File_Properties_Exception
 };
 
 
+class Block_Cache;
+
+
 struct File_Blocks_Index_Base
 {
+  File_Blocks_Index_Base() : block_cache(0) {}
+
   virtual bool empty() const = 0;
   virtual ~File_Blocks_Index_Base() {}
 
@@ -88,6 +93,9 @@ struct File_Blocks_Index_Base
   static const int ZLIB_COMPRESSION = 1;
   static const int LZ4_COMPRESSION = 2;
   static const unsigned int IDX_HEADER_LENGTH = 8;
+
+  // Set by the transaction for read-only files.
+  Block_Cache* block_cache;
 };
 
 
