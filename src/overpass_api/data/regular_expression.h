@@ -100,11 +100,12 @@ class Regular_Expression
 
   private:
     // Patterns that are only plain ASCII words separated by '|', either unanchored
-    // ("cafe|bar": the value contains one of them) or anchored as a whole ("^(cafe|bar)$"
-    // or "^cafe$": the value is one of them), are matched without the library for ASCII
-    // values. For those, the result is the same, also with REG_ICASE. Other values go to
+    // ("cafe|bar": the value contains one of them), anchored as a whole ("^(cafe|bar)$"
+    // or "^cafe$": the value is one of them), or framed as items of a ';'-separated list
+    // ("(^|;)cafe(;|$)" or "(^|;)(cafe|bar)(;|$)": one of them occurs between ';' or the
+    // ends of the value), are matched without the library for ASCII values. For those, the result is the same, also with REG_ICASE. Other values go to
     // the library, so its handling of non-ASCII text is unchanged.
-    enum Literal_Mode { no_literals, contains_literal, equals_literal };
+    enum Literal_Mode { no_literals, contains_literal, equals_literal, list_item_literal };
 
     static bool is_literal_char(char c)
     {
@@ -136,7 +137,21 @@ class Regular_Expression
     {
       std::string body = regex;
       Literal_Mode mode = contains_literal;
-      if (body.size() >= 2 && body[0] == '^' && body[body.size()-1] == '$')
+      static const std::string list_start = "(^|;)";
+      static const std::string list_end = "(;|$)";
+      if (body.size() > list_start.size() + list_end.size()
+          && body.compare(0, list_start.size(), list_start) == 0
+          && body.compare(body.size() - list_end.size(), list_end.size(), list_end) == 0)
+      {
+        body = body.substr(list_start.size(), body.size() - list_start.size() - list_end.size());
+        if (body.size() >= 2 && body[0] == '(' && body[body.size()-1] == ')')
+          body = body.substr(1, body.size() - 2);
+        else if (body.find('|') != std::string::npos)
+          // "(^|;)a|b(;|$)" means "(^|;)a" or "b(;|$)".
+          return no_literals;
+        mode = list_item_literal;
+      }
+      else if (body.size() >= 2 && body[0] == '^' && body[body.size()-1] == '$')
       {
         body = body.substr(1, body.size() - 2);
         if (body.size() >= 2 && body[0] == '(' && body[body.size()-1] == ')')
@@ -176,7 +191,16 @@ class Regular_Expression
     {
       for (std::vector< std::string >::const_iterator it = literals.begin(); it != literals.end(); ++it)
       {
-        if (literal_mode == equals_literal ? value == *it : value.find(*it) != std::string::npos)
+        if (literal_mode == list_item_literal)
+        {
+          for (std::string::size_type pos = value.find(*it); pos != std::string::npos; pos = value.find(*it, pos + 1))
+          {
+            std::string::size_type end = pos + it->size();
+            if ((pos == 0 || value[pos-1] == ';') && (end == value.size() || value[end] == ';'))
+              return true;
+          }
+        }
+        else if (literal_mode == equals_literal ? value == *it : value.find(*it) != std::string::npos)
           return true;
       }
       return false;
