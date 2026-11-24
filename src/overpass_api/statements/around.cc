@@ -872,6 +872,11 @@ void Around_Statement::calc_lat_lons(const Set& input, Statement& query, Resourc
 
 bool Around_Statement::is_inside(double lat, double lon) const
 {
+  // A great-circle distance is at least the difference in latitude, which great_circle_dist
+  // counts as 10,000 km per 90 degrees. Points farther apart than radius + 1 m in latitude
+  // can't match; the metre covers rounding in great_circle_dist.
+  const double max_lat_diff = (radius + 1.)*(90./(10.*1000.*1000.));
+
   std::map< Uint32_Index, std::vector< Point_Double > >::const_iterator mit
       = radius_lat_lons.find(::ll_upper_(lat, lon));
   if (mit != radius_lat_lons.end())
@@ -879,6 +884,8 @@ bool Around_Statement::is_inside(double lat, double lon) const
     for (std::vector< Point_Double >::const_iterator cit = mit->second.begin();
         cit != mit->second.end(); ++cit)
     {
+      if (std::abs(cit->lat - lat) > max_lat_diff)
+        continue;
       if ((radius > 0 && great_circle_dist(cit->lat, cit->lon, lat, lon) <= radius)
           || (std::abs(cit->lat - lat) < 1e-7 && std::abs(cit->lon - lon) < 1e-7))
         return true;
