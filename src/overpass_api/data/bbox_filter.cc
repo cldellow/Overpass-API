@@ -153,35 +153,6 @@ void filter_ways_expensive(const Bbox_Filter& filter, const Way_Geometry_Store& 
 }
 
 
-/* A way whose index is a single tile (bit 31 clear) has all its nodes in that tile. If
-   the tile lies inside the bbox, so do all of the way's nodes, and Bbox_Filter::matches
-   accepts any way with a node inside the bbox (single nodes via contains(), segments via
-   intersects()). Such ways can be kept without loading their geometry.
-
-   Moves the vectors of those ways from ways to kept. A tile's bounds are the positions
-   decoded with the lowest and highest ll_lower; every node position in the tile lies
-   between them. Boxes crossing the antimeridian are left to the exact test. */
-template< typename Way_Skeleton >
-void move_ways_in_inner_tiles(const Bbox_Double& bbox,
-    std::map< Uint31_Index, std::vector< Way_Skeleton > >& ways,
-    std::map< Uint31_Index, std::vector< Way_Skeleton > >& kept)
-{
-  if (!(bbox.west <= bbox.east))
-    return;
-
-  for (typename std::map< Uint31_Index, std::vector< Way_Skeleton > >::iterator it = ways.begin();
-      it != ways.end(); ++it)
-  {
-    uint32 idx = it->first.val();
-    if ((idx & 0x80000000) || it->second.empty())
-      continue;
-    if (::lat(idx, 0) >= bbox.south && ::lat(idx, 0xffffffff) <= bbox.north
-        && ::lon(idx, 0) >= bbox.west && ::lon(idx, 0xffffffff) <= bbox.east)
-      kept[it->first].swap(it->second);
-  }
-}
-
-
 template< typename Relation_Skeleton >
 void filter_relations_expensive(const Bbox_Filter& filter,
     const std::vector< std::pair< Uint32_Index, const Node_Skeleton* > > node_members_by_id,
@@ -233,19 +204,41 @@ void filter_relations_expensive(const Bbox_Filter& filter,
 }
 
 
+// Whether the whole area of a way or relation index lies in the bbox. Every node of a way
+// with that index is then in the bbox, so the way matches without loading its geometry.
+bool contains_index_area(const Bbox_Double& bbox, Uint31_Index idx)
+{
+  if (bbox.west > bbox.east || bbox.east - bbox.west >= 180.)
+    return false;
+
+  std::pair< Uint32_Index, Uint32_Index > bounds = calc_bbox_bounds(idx);
+  uint32 south_west = bounds.first.val();
+  uint32 north_east = bounds.second.val() - 1;
+  return bbox.south <= ::lat(south_west, 0u) && ::lat(north_east, 0xffffffffu) <= bbox.north
+      && bbox.west <= ::lon(south_west, 0u) && ::lon(north_east, 0xffffffffu) <= bbox.east;
+}
+
+
 void Bbox_Filter::filter(const Statement& query, Resource_Manager& rman, Set& into) const
 {
   if (!bbox.valid())
     return;
 
-  //Process ways. Ways entirely within inner tiles need no geometry.
+  //Process ways: only those whose index area isn't inside the bbox need their geometry
+  std::map< Uint31_Index, std::vector< Way_Skeleton > > ways_inside;
+  for (auto it = into.ways.begin(); it != into.ways.end(); )
   {
-    std::map< Uint31_Index, std::vector< Way_Skeleton > > kept;
-    move_ways_in_inner_tiles(bbox, into.ways, kept);
-    filter_ways_expensive(*this, Way_Geometry_Store(into.ways, query, rman), into.ways);
-    for (std::map< Uint31_Index, std::vector< Way_Skeleton > >::iterator it = kept.begin(); it != kept.end(); ++it)
-      into.ways[it->first].swap(it->second);
+    if (contains_index_area(bbox, it->first))
+    {
+      ways_inside[it->first].swap(it->second);
+      it = into.ways.erase(it);
+    }
+    else
+      ++it;
   }
+  filter_ways_expensive(*this, Way_Geometry_Store(into.ways, query, rman), into.ways);
+  for (auto it = ways_inside.begin(); it != ways_inside.end(); ++it)
+    into.ways[it->first].swap(it->second);
 
   Request_Context context(&query, rman);
   {
