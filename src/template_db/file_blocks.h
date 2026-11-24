@@ -19,6 +19,7 @@
 #ifndef DE__OSM3S___TEMPLATE_DB__FILE_BLOCKS_H
 #define DE__OSM3S___TEMPLATE_DB__FILE_BLOCKS_H
 
+#include "block_cache.h"
 #include "file_blocks_index.h"
 #include "types.h"
 #include "lz4_wrapper.h"
@@ -818,6 +819,21 @@ uint64* File_Blocks< TIndex, TIterator >::read_block_
   if (sigterm_status())
     throw File_Error(0, "-", "SIGTERM received");
 
+  // Blocks read without the index check continue a large object and don't start with their size.
+  Block_Cache* cache = rd_idx && check_idx && compression_method != File_Blocks_Index_Base::NO_COMPRESSION
+      ? rd_idx->block_cache : 0;
+  if (cache)
+  {
+    const std::vector< uint8 >* cached = cache->find(rd_idx, block.pos());
+    if (cached)
+    {
+      memcpy(buffer_, &(*cached)[0], cached->size());
+      ++read_count_;
+      ++global_read_counter();
+      return buffer_;
+    }
+  }
+
   if (compression_method == File_Blocks_Index_Base::NO_COMPRESSION)
   {
     data_file.seek((int64)(block.pos()) * block_size, "File_Blocks::read_block::1");
@@ -871,6 +887,10 @@ uint64* File_Blocks< TIndex, TIterator >::read_block_
     out<<"File_Blocks::read_block: Index inconsistent at offset "<<((int64)(block.pos()) * block_size + 8);
     throw File_Error(block.pos(), rd_idx ? rd_idx->get_data_file_name() : wr_idx->get_data_file_name(), out.str());
   }
+  if (cache)
+    // Readers stop at the block's used size, its first word; keep only those bytes.
+    cache->offer(rd_idx, block.pos(), (const uint8*)buffer_,
+        std::min< uint64 >(std::max< uint32 >(*(uint32*)buffer_, 8), (uint64)block_size * compression_factor));
   ++read_count_;
   ++global_read_counter();
   return buffer_;
