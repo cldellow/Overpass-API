@@ -45,9 +45,19 @@ This fork's `master` only adds fork-specific files (this file, the README); neve
   change, cherry-picked onto `upstream/master`) and its PR current instead. Import changes get their
   own issues and PRs like any other change.
 
+## Code comments
+
+Upstream prefers few inline comments: explain a change in its commit message, which `git blame`
+finds. Add a comment only where the code would mislead a reader without it, such as an invariant
+the code relies on but doesn't show, and keep it to a line or two. Don't restate the commit
+message, describe what the code plainly does, or record measurements, alternatives tried or
+history.
+
 ## Proposing a change upstream
 
 Before giving the compare link for a change upstream may merge, prepare its branch:
+
+- **Comments** follow "Code comments" above; trim older code to it as it goes upstream.
 
 - **One commit**, rebased onto `upstream/master`. Squash iterations so the reviewer reads only
   the design that ships. Rebuild with `git cherry-pick` or the diff from the merge base
