@@ -16,31 +16,82 @@
  * along with Overpass_API.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <ostream>
 #include <string>
 
 #include "escape_json.h"
 
 
+namespace
+{
+
+struct Replacements
+{
+  Replacements()
+  {
+    for (int c = 0; c < 256; ++c)
+      replacement[c] = c < 32 ? "?" : 0;
+    replacement[(unsigned char)'\"'] = "\\\"";
+    replacement[(unsigned char)'\\'] = "\\\\";
+    replacement[(unsigned char)'\n'] = "\\n";
+    replacement[(unsigned char)'\t'] = "\\t";
+    replacement[(unsigned char)'\r'] = "\\r";
+  }
+
+  // What each byte is written as, or 0 if it is written as it is.
+  const char* replacement[256];
+};
+
+
+const Replacements& replacements()
+{
+  static const Replacements result;
+  return result;
+}
+
+
+struct Stream_Sink
+{
+  std::ostream& out;
+  void append(const char* s, std::string::size_type n) { out.write(s, n); }
+  void append(const char* s) { out<<s; }
+};
+
+
+template< typename Sink >
+void write_escaped(const std::string& s, Sink& sink)
+{
+  const Replacements& table = replacements();
+  const char* run = s.data();
+  const char* end = s.data() + s.size();
+  for (const char* pos = run; pos != end; ++pos)
+  {
+    const char* replacement = table.replacement[(unsigned char)*pos];
+    if (replacement)
+    {
+      sink.append(run, pos - run);
+      sink.append(replacement);
+      run = pos + 1;
+    }
+  }
+  sink.append(run, end - run);
+}
+
+}
+
+
 std::string escape_cstr(const std::string& s)
 {
   std::string result;
-  result.reserve(s.length()*2);
-  for (std::string::size_type i(0); i < s.size(); ++i)
-  {
-    if (s[i] == '\"')
-      result += "\\\"";
-    else if (s[i] == '\\')
-      result += "\\\\";
-    else if (s[i] == '\n')
-      result += "\\n";
-    else if (s[i] == '\t')
-      result += "\\t";
-    else if (s[i] == '\r')
-      result += "\\r";
-    else if ((unsigned char)s[i] < 32)
-      result += '?';
-    else
-      result += s[i];
-  }
+  result.reserve(s.size());
+  write_escaped(s, result);
   return result;
+}
+
+
+std::ostream& operator<<(std::ostream& out, const Json_Escaped& e)
+{
+  Stream_Sink sink{out};
+  write_escaped(e.s, sink);
+  return out;
 }
