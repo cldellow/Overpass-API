@@ -19,10 +19,21 @@
 #ifndef DE__OSM3S___EXPAT__ESCAPE_XML_H
 #define DE__OSM3S___EXPAT__ESCAPE_XML_H
 
+#include <ostream>
 #include <string>
 
 
 std::string escape_xml(const std::string& s);
+
+
+// Writes escape_xml(s) to a stream without building the escaped copy. s must outlive the expression.
+struct Xml_Escaped
+{
+  explicit Xml_Escaped(const std::string& s_) : s(s_) {}
+  const std::string& s;
+};
+
+std::ostream& operator<<(std::ostream& out, const Xml_Escaped& e);
 
 
 #endif
