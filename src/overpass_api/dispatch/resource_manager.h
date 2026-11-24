@@ -159,6 +159,8 @@ public:
 
   bool health_check(const Statement& stmt, uint32 extra_time = 0, uint64 extra_space = 0);
 
+  uint64 get_max_allowed_space() const { return max_allowed_space; }
+
   void set_limits(uint32 max_allowed_time_, uint64 max_allowed_space_)
   {
     max_allowed_time = max_allowed_time_;

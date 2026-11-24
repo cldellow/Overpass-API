@@ -26,6 +26,9 @@
 
 #include "../data/abstract_processing.h"
 #include "../data/utils.h"
+#include "../../template_db/block_cache.h"
+#include "../../template_db/transaction.h"
+#include "query.h"
 #include "union.h"
 
 
@@ -63,8 +66,53 @@ void Union_Statement::add_statement(Statement* statement, std::string text)
 }
 
 
+namespace
+{
+  // Query statements of one type with the same filters apart from tag filters read the same blocks.
+  bool rereads_expected(const std::vector< Statement* >& substatements)
+  {
+    std::map< std::string, int > count;
+    for (std::vector< Statement* >::const_iterator it = substatements.begin(); it != substatements.end(); ++it)
+    {
+      const Query_Statement* query = dynamic_cast< const Query_Statement* >(*it);
+      if (query && ++count[query->block_signature()] >= 2)
+        return true;
+    }
+    return false;
+  }
+
+  struct Rereads_Expected_Guard
+  {
+    Rereads_Expected_Guard(Resource_Manager& rman, bool active)
+    {
+      if (!active)
+        return;
+      // A quarter of [maxsize:], outside its accounting like other auxiliary structures.
+      uint64 limit = rman.get_max_allowed_space() > 0 ? rman.get_max_allowed_space()/4 : 32ull*1024*1024;
+      Transaction* transactions[] = { rman.get_transaction(), rman.get_area_transaction() };
+      for (Transaction* transaction : transactions)
+      {
+        Block_Cache* cache = transaction ? transaction->block_cache() : 0;
+        if (cache)
+        {
+          cache->begin_rereads(limit);
+          caches.push_back(cache);
+        }
+      }
+    }
+    ~Rereads_Expected_Guard()
+    {
+      for (Block_Cache* cache : caches)
+        cache->end_rereads();
+    }
+    std::vector< Block_Cache* > caches;
+  };
+}
+
+
 void Union_Statement::execute(Resource_Manager& rman)
 {
+  Rereads_Expected_Guard guard(rman, rereads_expected(substatements));
   rman.push_stack_frame();
   rman.move_outward(get_result_name(), get_result_name());
 

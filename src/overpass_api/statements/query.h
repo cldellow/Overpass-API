@@ -83,6 +83,9 @@ class Query_Statement : public Output_Statement
 
     static bool area_query_exists() { return area_query_exists_; }
 
+    // The query's type and its filters other than tag filters, as QL, e.g. "node(around:100,51.0,7.0)".
+    std::string block_signature() const;
+
     static std::string to_string(int type)
     {
       if (type == QUERY_NODE)
