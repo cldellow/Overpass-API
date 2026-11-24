@@ -12,6 +12,13 @@ on its own, whatever --jobs is:
   fuzz.py --vocab V.json --seed 7 --show 1234            # print query 1234 of seed 7
   fuzz.py --a OLD/bin --b NEW/bin --db DB --vocab V.json --seed 7 --count 5000
 
+Every named set is printed: each query gets `.X out count; .X out ids 1000;` appended for each set
+X it assigns, so a statement that computes a different result changes the output even when the
+generated query never printed that set. Queries with [diff:] or [adiff:] are left as generated
+(printing a large set there can exhaust memory), and so is any query whose printed version hits a
+time or memory limit on the baseline: both builds then run the query as generated. --no-observe
+turns this off.
+
 Differences are written to --out-dir as <seed>-<index>/{query.ql,a.out,b.out}. Exit status is 1
 if any query's output differs. Use the same build as --a and --b to check that the outputs are
 deterministic before blaming a change.
@@ -461,6 +468,24 @@ def generate(vocab, seed, index, features=frozenset()):
     return Generator(vocab, random.Random(f'{seed}-{index}'), features).query()
 
 
+# A named set: `->.X`.
+ASSIGNED_SET = re.compile(r'->\s*\.([A-Za-z_][A-Za-z0-9_]*)')
+
+
+def observe(query):
+    """The query with `.X out count; .X out ids 1000;` appended for each set X it assigns, in order of
+    first assignment, so every set's result reaches the output. Queries with [diff:] or [adiff:] are
+    returned unchanged: there, printing a set compares it at two dates, which for a large set can
+    run out of memory."""
+    head = query.split(';', 1)[0]
+    if '[diff:' in head or '[adiff:' in head:
+        return query
+    names = list(dict.fromkeys(ASSIGNED_SET.findall(query)))
+    if not names:
+        return query
+    return query.rstrip() + '\n' + ''.join(f'.{n} out count;\n.{n} out ids 1000;\n' for n in names)
+
+
 def child_cpu():
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)
     return usage.ru_utime + usage.ru_stime
@@ -558,19 +583,27 @@ def cache_store(path, status, digest, out, cpu, rss_kb):
 
 
 def check(args_tuple):
-    a, b, db, db_b, vocab, seed, index, timeout, features, rss, cache_dir, cache_prefix = args_tuple
-    query = generate(vocab, seed, index, features)
-    path = cache_path(cache_dir, cache_prefix, query) if cache_dir else None
-    entry = cache_load(path, rss) if path else None
-    stale = False
-    if entry:
-        status_a, digest_a, out_a, cpu_a, rss_a = entry['status'], entry['digest'], None, entry['cpu'], entry['rss_kb']
-        out_bytes_a, empty = entry['out_bytes'], entry['empty']
-    else:
-        status_a, digest_a, out_a, cpu_a, rss_a = run(a, db, query, timeout, rss)
+    a, b, db, db_b, vocab, seed, index, timeout, features, rss, cache_dir, cache_prefix, observing = args_tuple
+    generated = generate(vocab, seed, index, features)
+    query = observe(generated) if observing else generated
+
+    def baseline(query):
+        path = cache_path(cache_dir, cache_prefix, query) if cache_dir else None
+        entry = cache_load(path, rss) if path else None
+        if entry:
+            return (path, entry, entry['status'], entry['digest'], None, entry['cpu'], entry['rss_kb'],
+                    entry['out_bytes'], entry['empty'])
+        status, digest, out, cpu, peak = run(a, db, query, timeout, rss)
         if path:
-            cache_store(path, status_a, digest_a, out_a, cpu_a, rss_a)
-        out_bytes_a, empty = len(out_a), status_a == 'ok' and out_a.count(b'\n') <= 6
+            cache_store(path, status, digest, out, cpu, peak)
+        return path, None, status, digest, out, cpu, peak, len(out), status == 'ok' and out.count(b'\n') <= 6
+
+    path, entry, status_a, digest_a, out_a, cpu_a, rss_a, out_bytes_a, empty = baseline(query)
+    if query != generated and status_a in UNCACHEABLE:
+        # Printing every set pushed the baseline over a limit: compare the query as generated.
+        query = generated
+        path, entry, status_a, digest_a, out_a, cpu_a, rss_a, out_bytes_a, empty = baseline(query)
+    stale = False
     status_b, digest_b, out_b, cpu_b, rss_b = run(b, db_b, query, timeout, rss)
     if 'timeout' in (status_a, status_b) or 'resource-limit' in (status_a, status_b):
         verdict = 'skipped'
@@ -595,6 +628,8 @@ def check(args_tuple):
                 verdict = 'skipped'
             elif digest_a == digest_b:
                 verdict = 'same'
+    # Printed sets always produce output, so emptiness is only told for queries run as generated.
+    empty = empty and query == generated
     return (index, verdict, status_a, status_b, empty, query, out_a, out_b, cpu_a, cpu_b, rss_a, rss_b,
             out_bytes_a, entry is not None and out_a is None, stale)
 
@@ -627,6 +662,8 @@ def main():
     parser.add_argument('--no-cache', action='store_true',
                         help='run the baseline for every query, and neither read nor write the cache')
     parser.add_argument('--clear-cache', action='store_true', help='empty --cache-dir before running')
+    parser.add_argument('--no-observe', action='store_true',
+                        help="run queries as generated, without printing every named set")
     args = parser.parse_args()
 
     with open(args.vocab, 'rb') as f:
@@ -637,7 +674,8 @@ def main():
     if unknown:
         parser.error('unknown features: ' + ', '.join(sorted(unknown)))
     if args.show is not None:
-        sys.stdout.write(generate(vocab, args.seed, args.show, features))
+        query = generate(vocab, args.seed, args.show, features)
+        sys.stdout.write(query if args.no_observe else observe(query))
         return 0
     if not (args.a and args.b and args.db):
         parser.error('--a, --b and --db are required unless --show is given')
@@ -645,7 +683,7 @@ def main():
         check_rss_support()
 
     print(f'seed {args.seed}, features {",".join(sorted(features)) or "none"}, queries {args.start}..{args.start + args.count - 1}, '
-          f'vocab sha256 {hashlib.sha256(raw).hexdigest()[:12]}')
+          f'vocab sha256 {hashlib.sha256(raw).hexdigest()[:12]}, every set printed: {"no" if args.no_observe else "yes"}')
     cache_dir = cache_prefix = None
     if args.clear_cache and os.path.isdir(args.cache_dir):
         shutil.rmtree(args.cache_dir)
@@ -657,7 +695,7 @@ def main():
     empty = 0
     reused = stale = 0
     tasks = [(args.a, args.b, args.db, args.db_b or args.db, vocab, args.seed, i, args.timeout, features,
-              args.rss, cache_dir, cache_prefix)
+              args.rss, cache_dir, cache_prefix, not args.no_observe)
              for i in range(args.start, args.start + args.count)]
     report = None
     if args.report:
@@ -703,7 +741,8 @@ def main():
               + (f'; {stale} stale entries replaced' if stale else ''))
     plain = collections.Counter({k: v for k, v in statuses.items() if not k.startswith('query-error')})
     errs = {k: v for k, v in statuses.items() if k.startswith('query-error')}
-    print(f'baseline outcomes: {dict(plain)}, query errors: {sum(errs.values())}; ok but empty: {empty}')
+    print(f'baseline outcomes: {dict(plain)}, query errors: {sum(errs.values())}; ok but empty: {empty}'
+          + ('' if args.no_observe else ' (counted only for queries run as generated)'))
     for k, v in sorted(errs.items(), key=lambda kv: -kv[1])[:8]:
         print(f'  {v:5}  {k}')
     return 1 if verdicts['DIFFERENT'] else 0
