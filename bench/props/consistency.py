@@ -159,6 +159,89 @@ def gen_consistency_checks(data, seed):
             add(f'foreach around rel = around rels ({kind}s)',
                 f'relation(id:{ids})->.r; ()->.acc; foreach.r->.it {{ {kind}(around.it:{r})->.x; (.acc; .x;)->.acc; }} .acc;',
                 f'relation(id:{ids})->.r; {kind}(around.r:{r});')
+    checks += gen_equivalence_checks(data, seed)
+    return checks
+
+
+# Element types a statement can ask for, and the single types they stand for.
+COMBINED = {'nwr': ('node', 'way', 'rel'), 'nw': ('node', 'way'), 'wr': ('way', 'rel'), 'nr': ('node', 'rel')}
+# Tag filters: key only, key and value, value regex, key regex, negation.
+TAG_FILTERS = ['[amenity]', '[amenity=cafe]', '[highway]', '[highway=path]', '[type=route]', '[name]',
+               '[highway~"^(path|residential)$"]', '[~"^(amenity|highway|type)$"~"."]', '[highway!=path]']
+
+
+def gen_equivalence_checks(data, seed):
+    """Equivalent spellings of one query, which run through different code:
+
+    - type decomposition: nwr, nw, wr and nr with a filter equal the union of the single-type
+      statements with the same filter;
+    - filter placement: a filter in the statement equals the same filter applied to a result
+      set, in both orders (t F g = t F->.x; t.x g = t g->.y; t.y F). A recursion or around filter
+      alone is a statement of its own; with a tag filter it becomes a filter inside a query
+      statement, which is separate code.
+
+    Own random stream, so the other checks of a seed are unchanged."""
+    rnd = random.Random(seed * 7333 + 29)
+    checks = []
+    special = getattr(data, 'special', set())
+    plain = [i for i in data.nodes if i not in special]
+    coords = [data.nodes[i] for i in plain]
+
+    def box():
+        ys = sorted(rnd.choice(coords)[0] for _ in range(2))
+        xs = sorted(rnd.choice(coords)[1] for _ in range(2))
+        return bbox_str(ys[0], xs[0], ys[1], xs[1])
+
+    # Input sets: nodes on ways and relations, ways, and all relations.
+    member_nodes = sorted({n for nds in data.ways.values() for n in nds}
+                          | {ref for mems in data.rels.values() for t, ref, _ in mems if t == 'node'})
+    n_ids = ','.join(map(str, rnd.sample(member_nodes, min(8, len(member_nodes)))))
+    w_ids = ','.join(map(str, rnd.sample(list(data.ways), min(4, len(data.ways)))))
+    r_ids = ','.join(map(str, sorted(data.rels)))
+    pre = f'node(id:{n_ids})->.n; way(id:{w_ids})->.w; relation(id:{r_ids})->.r; '
+    uid = rnd.choice(props.USERS)[0]
+    ts = rnd.choice(props.TIMESTAMPS[:2])
+    p = rnd.choice(coords)
+    aid = props.AREA_ID_OFFSET + rnd.choice(sorted(data.areas)) if data.areas else None
+    ring = rnd.choice(data.polygons)
+
+    # Filters valid for every type, as (name, filter, prelude).
+    general = [('bbox', f'({box()})', ''), ('poly', f'(poly:"{poly_str(ring)}")', ''),
+               ('around point', f'(around:{rnd.choice([0, 20, 150])},{deg(p[0])},{deg(p[1])})', ''),
+               ('around set', f'(around.n:{rnd.choice([0, 30])})', ''),
+               ('uid', f'(uid:{uid})', ''), ('newer', f'(newer:"{ts}")', ''),
+               ('input set', '.w', ''), ('relation members', '(r.r)', '')]
+    if aid:
+        general.append(('area', '(area.a)', f'area({aid})->.a; '))
+
+    # Type decomposition.
+    for t, singles in COMBINED.items():
+        always = [('relation members', '(r.r)', '')]
+        if t == 'wr':
+            always.append(('nodes\' members', '(bn.n)', ''))
+        for name, f, fpre in rnd.sample([x for x in general if x[0] != 'relation members'], 4) + always:
+            for g in ('', rnd.choice(TAG_FILTERS)):
+                a = f'{pre}{fpre}{t}{f}{g};'
+                b = f'{pre}{fpre}(' + ' '.join(f'{s}{f}{g};' for s in singles) + ');'
+                checks.append((f'type decomposition: {t} {name}{" + tag" if g else ""}', a, b, 'equal'))
+
+    # Filter placement, for recursion and around (each a statement of its own when alone) and
+    # some others.
+    placement = [('way', 'nodes\' members', '(bn.n)'), ('rel', 'nodes\' members', '(bn.n)'),
+                 ('rel', 'ways\' members', '(bw.w)'), ('node', 'way nodes', '(w.w)'),
+                 ('node', 'relation members', '(r.r)'), ('way', 'relation members', '(r.r)'),
+                 ('wr', 'nodes\' members', '(bn.n)'), ('nwr', 'relation members', '(r.r)')]
+    placement += [(rnd.choice(['node', 'way', 'nwr']), name, f) for name, f, fpre in general
+                  if not fpre and name in ('around set', 'around point', 'bbox')]
+    for t, name, f in placement:
+        # A negated tag filter alone is too weak a query, so the tags-first form takes a positive one.
+        g = rnd.choice([x for x in TAG_FILTERS if '!=' not in x])
+        a = f'{pre}{t}{f}{g};'
+        checks.append((f'filter placement: {t} {name}, then tags', a, f'{pre}{t}{f}->.x; {t}.x{g};', 'equal'))
+        checks.append((f'filter placement: tags, then {t} {name}', a, f'{pre}{t}{g}->.y; {t}.y{f};', 'equal'))
+        g = rnd.choice(TAG_FILTERS)
+        checks.append((f'filter placement: {t} {name}, then tags', f'{pre}{t}{f}{g};',
+                       f'{pre}{t}{f}->.x; {t}.x{g};', 'equal'))
     return checks
 
 
