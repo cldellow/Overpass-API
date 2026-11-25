@@ -260,7 +260,7 @@ Extra_Data::~Extra_Data()
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Node_Skeleton& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Node_Skeleton::Id_Type >* meta = 0)
 {
   output.print_item(skel, Point_Geometry(::lat(ll_upper, skel.ll_lower), ::lon(ll_upper, skel.ll_lower)),
@@ -269,7 +269,7 @@ void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper,
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Way_Skeleton& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Way_Skeleton::Id_Type >* meta = 0)
 {
   Geometry_From_Quad_Coords broker;
@@ -280,7 +280,7 @@ void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper,
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Attic< Way_Skeleton >& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Way_Skeleton::Id_Type >* meta = 0)
 {
   Geometry_From_Quad_Coords broker;
@@ -291,7 +291,7 @@ void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper,
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Relation_Skeleton& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Relation_Skeleton::Id_Type >* meta = 0)
 {
   Geometry_From_Quad_Coords broker;
@@ -302,7 +302,7 @@ void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper,
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Attic< Relation_Skeleton >& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Relation_Skeleton::Id_Type >* meta = 0)
 {
   Geometry_From_Quad_Coords broker;
@@ -313,7 +313,7 @@ void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper,
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Area_Skeleton& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Area_Skeleton::Id_Type >* meta = 0)
 {
   Derived_Skeleton derived("area", Uint64(skel.id.val()));
@@ -322,7 +322,7 @@ void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper,
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Derived_Structure& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Derived_Skeleton::Id_Type >* meta = 0)
 {
   if (skel.get_geometry())
@@ -377,7 +377,7 @@ void tags_quadtile_
     {
       if (++element_count > limit)
         return;
-      print_item(extra_data, output, item_it->first.val(), *it2, tag_store.get(item_it->first, *it2),
+      print_item(extra_data, output, item_it->first.val(), *it2, tag_store.get_refs(item_it->first, *it2),
           meta_printer.get(item_it->first, it2->id));
     }
     ++item_it;
@@ -405,7 +405,7 @@ void tags_quadtile_attic_
     {
       if (++element_count > limit)
         return;
-      print_item(extra_data, output, item_it->first.val(), *it2, tag_store.get(item_it->first, *it2),
+      print_item(extra_data, output, item_it->first.val(), *it2, tag_store.get_refs(item_it->first, *it2),
                  meta_printer.get(item_it->first, it2->id, it2->timestamp));
     }
     ++item_it;
@@ -635,7 +635,7 @@ void tags_by_id
           = metadata.lower_bound(OSM_Element_Metadata_Skeleton< typename Object::Id_Type >
               (items_by_id[i.val()].first->id));
       print_item(extra_data, output, items_by_id[i.val()].second, *(items_by_id[i.val()].first),
-		 tag_store.get(Index(items_by_id[i.val()].second), *items_by_id[i.val()].first),
+		 tag_store.get_refs(Index(items_by_id[i.val()].second), *items_by_id[i.val()].first),
 		 (meta_it != metadata.end() && meta_it->ref == items_by_id[i.val()].first->id) ?
 		     &*meta_it : 0);
     }
@@ -701,7 +701,7 @@ void tags_by_id_attic
             = only_current_metadata.lower_bound(OSM_Element_Metadata_Skeleton< typename Object::Id_Type >
                 (items_by_id[i.val()].obj->id));
         print_item(extra_data, output, items_by_id[i.val()].idx.val(), *items_by_id[i.val()].obj,
-		 current_tag_store.get(items_by_id[i.val()].idx, *items_by_id[i.val()].obj),
+		 current_tag_store.get_refs(items_by_id[i.val()].idx, *items_by_id[i.val()].obj),
 		 (meta_it != only_current_metadata.end() && meta_it->ref == items_by_id[i.val()].obj->id) ?
 		     &*meta_it : 0);
       }
@@ -712,7 +712,7 @@ void tags_by_id_attic
                   items_by_id[i.val()].obj->id, items_by_id[i.val()].timestamp);
         print_item(extra_data, output, items_by_id[i.val()].idx.val(),
 		   Attic< Object >(*items_by_id[i.val()].obj, items_by_id[i.val()].timestamp),
-		 attic_tag_store.get(items_by_id[i.val()].idx, *items_by_id[i.val()].obj),
+		 attic_tag_store.get_refs(items_by_id[i.val()].idx, *items_by_id[i.val()].obj),
                  meta_it != attic_metadata.end() ? &*meta_it : 0);
       }
     }
