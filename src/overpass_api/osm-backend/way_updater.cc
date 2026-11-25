@@ -44,10 +44,12 @@ Way_Updater::Way_Updater(Transaction& transaction_, Database_Meta_State::Mode me
 
 Way_Updater::Way_Updater(std::string db_dir_, Database_Meta_State::Mode meta_)
   : update_counter(0), transaction(0),
-    external_transaction(false), partial_possible(true), db_dir(db_dir_), meta(meta_),
-    keys(*osm_base_settings().WAY_KEYS)
+    external_transaction(false),
+    partial_possible(meta_ == Database_Meta_State::only_data || meta_ == Database_Meta_State::keep_meta),
+    db_dir(db_dir_), meta(meta_), keys(*osm_base_settings().WAY_KEYS)
 {
-  partial_possible = !file_exists
+  // As for nodes: the relation updater needs the new attic way skeletons, which partial updates clear.
+  partial_possible = partial_possible && !file_exists
       (db_dir +
        osm_base_settings().WAYS->get_file_name_trunk() +
        osm_base_settings().WAYS->get_data_suffix() +
@@ -68,6 +70,7 @@ void compute_idx_and_geometry
          std::vector< std::pair< Node::Index, Attic< Node_Skeleton > > > >& nodes_by_id)
 {
   std::vector< Quad_Coord > geometry;
+  std::vector< uint32 > nd_idxs;
 
   for (std::vector< Node_Skeleton::Id_Type >::const_iterator it = skeleton.nds.begin();
        it != skeleton.nds.end(); ++it)
@@ -78,18 +81,23 @@ void compute_idx_and_geometry
       auto it2 = nit->second.begin();
       while (it2 != nit->second.end() && it2->second.timestamp < expiration_timestamp)
         ++it2;
-      if (it2 != nit->second.end())
-        geometry.push_back(Quad_Coord(it2->first.val(), it2->second.ll_lower));
-      // Otherwise the node has expired before our way - something has gone wrong seriously.
+      // If the node has expired before our way, the way refers to a deleted node.
+      // History data has such ways, e.g. if a node is deleted shortly before its way.
+      // Use the last known position, to keep one coordinate per nd.
+      if (it2 == nit->second.end())
+        --it2;
+      geometry.push_back(Quad_Coord(it2->first.val(), it2->second.ll_lower));
+      nd_idxs.push_back(it2->first.val());
     }
     else
+    {
+      // The node has no known position, e.g. if an extract has only its deletion.
+      // Like compute_geometry, keep one coordinate per nd, so that the deltas of
+      // older versions can still be expanded, but leave it out of the index.
       std::cerr<<"compute_idx_and_geometry: Node "<<it->val()<<" used in way "<<skeleton.id.val()<<" not found.\n";
-    // Otherwise the node is not contained in our list - something has gone wrong seriously.
+      geometry.push_back(Quad_Coord(0, 0));
+    }
   }
-
-  std::vector< uint32 > nd_idxs;
-  for (std::vector< Quad_Coord >::const_iterator it = geometry.begin(); it != geometry.end(); ++it)
-    nd_idxs.push_back(it->ll_upper);
 
   idx = Way::calc_index(nd_idxs);
 
@@ -943,6 +951,30 @@ void Way_Updater::update(Osm_Backend_Callback* callback, Cpu_Stopwatch* cpu_stop
 
     callback->compute_attic_started();
     // Compute which objects really have changed
+    // An import without dispatcher may have written the nodes in earlier batches.
+    // Their attic versions are then only in the database, but older way versions need them.
+    std::map< Node::Index, std::set< Attic< Node_Skeleton > > > stored_and_new_attic_nodes;
+    const std::map< Node::Index, std::set< Attic< Node_Skeleton > > >* attic_nodes = &new_attic_node_skeletons;
+    if (!external_transaction)
+    {
+      std::vector< Node_Skeleton::Id_Type > node_ids;
+      for (auto it = new_data.data.begin(); it != new_data.data.end(); ++it)
+        node_ids.insert(node_ids.end(), it->elem.nds.begin(), it->elem.nds.end());
+      for (auto it = implicitly_moved_skeletons.begin(); it != implicitly_moved_skeletons.end(); ++it)
+      {
+        for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
+          node_ids.insert(node_ids.end(), it2->nds.begin(), it2->nds.end());
+      }
+      std::sort(node_ids.begin(), node_ids.end());
+      node_ids.erase(std::unique(node_ids.begin(), node_ids.end()), node_ids.end());
+      remove_ids_with_attic_in_memory(node_ids, new_attic_node_skeletons);
+
+      stored_and_new_attic_nodes = new_attic_node_skeletons;
+      add_stored_attic_skeletons< Node::Index, Node_Skeleton >(node_ids, *transaction,
+          *attic_settings().NODES, *attic_settings().NODE_IDX_LIST, stored_and_new_attic_nodes);
+      attic_nodes = &stored_and_new_attic_nodes;
+    }
+
     new_attic_skeletons.clear();
     std::map< Way_Skeleton::Id_Type, std::set< Uint31_Index > > new_attic_idx_lists = existing_idx_lists;
     std::map< Uint31_Index, std::set< Attic< Way_Skeleton::Id_Type > > > new_undeleted;
@@ -950,7 +982,7 @@ void Way_Updater::update(Osm_Backend_Callback* callback, Cpu_Stopwatch* cpu_stop
     compute_new_attic_skeletons(new_data, implicitly_moved_skeletons,
                                 existing_map_positions, existing_attic_map_positions, attic_skeletons,
 				existing_attic_skeleton_timestamps,
-                                new_node_idx_by_id, new_attic_node_skeletons,
+                                new_node_idx_by_id, *attic_nodes,
                                 new_attic_skeletons, new_undeleted, new_attic_idx_lists, attic_skeletons_to_delete);
 
     std::map< Way_Skeleton::Id_Type, std::vector< Attic< Uint31_Index > > > new_attic_idx_by_id_and_time =
@@ -971,7 +1003,7 @@ void Way_Updater::update(Osm_Backend_Callback* callback, Cpu_Stopwatch* cpu_stop
     std::map< Timestamp, std::vector< Way_Skeleton::Id_Type > > changelog
         = compute_changelog(new_data, implicitly_moved_skeletons,
                             existing_map_positions, existing_attic_map_positions, attic_skeletons,
-                            new_node_idx_by_id, new_attic_node_skeletons);
+                            new_node_idx_by_id, *attic_nodes);
 
     strip_single_idxs(existing_idx_lists);
     std::vector< std::pair< Way_Skeleton::Id_Type, Uint31_Index > > new_attic_map_positions
