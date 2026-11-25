@@ -104,7 +104,66 @@ class Generator:
             return f'[{self.quote(key)}!~{self.quote(alternation)}]'
         return f'[{self.quote(key)}~{self.quote("^(" + alternation + ")$")}{",i" if self.r.random() < 0.3 else ""}]'
 
+    def regex_filter(self):
+        """Regex shapes real clients write that the other generators don't: wildcards and
+        character classes, suffix anchors, partly anchored lists (^a|b$ is (^a)|(b$)), the
+        special patterns "." and ".*", the multivalue idiom (^|;)v(;|$), case-insensitive
+        patterns in another case than the data, key alternations, long lists, plain substrings
+        and the empty value."""
+        key, value = self.tag()
+        others = self.values_of(key) or [value]
+        k = self.quote(key)
+        ci = ',i' if self.r.random() < 0.3 else ''
+        neg = '!' if self.r.random() < 0.15 else ''
+        esc = re.escape
+        half = max(1, len(value) // 2)
+        form = self.r.random()
+        if form < 0.12:
+            # Wildcards, quantifiers and character classes built from a real value.
+            c = value[0]
+            pat = self.r.choice([
+                '^' + esc(value[:half]) + '.*' + esc(value[-1:]) + '$',
+                esc(value[:half]) + '.+',
+                esc(value[:half]) + '.?' + esc(value[half:]),
+                '^' + (f'[{c.upper()}{c.lower()}]' if c.isalpha() else esc(c)) + esc(value[1:]),
+                '^' + esc(value[:half]) + '[a-z_]*$',
+                '^' + '.' * len(value) + '$'])
+            return f'[{k}{neg}~{self.quote(pat)}{ci}]'
+        if form < 0.22:
+            return f'[{k}{neg}~{self.quote(esc(value[-half:]) + "$")}{ci}]'
+        if form < 0.34:
+            vals = sorted({value} | {self.pick(others) for _ in range(self.r.randint(1, 5))})
+            alt = '|'.join(esc(v) for v in vals)
+            pat = self.r.choice(['^' + alt + '$', '^(' + alt + ')', '(' + alt + ')$', '^' + alt])
+            return f'[{k}{neg}~{self.quote(pat)}{ci}]'
+        if form < 0.48:
+            return self.r.choice([f'[{k}~"."]', f'[{k}~".*"]', f'[{k}!~"."]', f'[{k}!~".*"]',
+                                  f'[~{self.quote("^" + esc(key) + "$")}~"."]', f'[~"."~{self.quote(esc(value))}]'])
+        if form < 0.58:
+            return f'[{k}{neg}~{self.quote("(^|;)" + esc(value) + "(;|$)")}{ci}]'
+        if form < 0.70:
+            # Case-insensitive, with the pattern in another case than the data.
+            changed = self.r.choice([value.upper(), value.title(), value.swapcase()])
+            pat = self.r.choice([esc(changed), '^' + esc(changed) + '$', esc(changed[:half])])
+            return f'[{k}{neg}~{self.quote(pat)},i]'
+        if form < 0.78:
+            keys = sorted({key} | {self.pick(self.v['keys']) for _ in range(self.r.randint(1, 3))})
+            vpat = self.r.choice(['.', esc(value[:half]), '^' + esc(value) + '$'])
+            return f'[~{self.quote("^(" + "|".join(esc(x) for x in keys) + ")$")}~{self.quote(vpat)}{ci}]'
+        if form < 0.86:
+            # A long list, like a client's list of brands or categories.
+            pool = [v for _, v in self.v['common_tags'] + self.v['rare_tags']]
+            vals = sorted({value} | {self.pick(pool) for _ in range(self.r.randint(25, 70))})
+            alt = '|'.join(esc(v) for v in vals)
+            return f'[{k}{neg}~{self.quote(self.r.choice([alt, "^(" + alt + ")$"]))}{ci}]'
+        if form < 0.96:
+            word = value[self.r.randint(0, half - 1):][:self.r.randint(2, 8)] if len(value) > 2 else value
+            return f'[{k}{neg}~{self.quote(esc(word))}{ci}]'
+        return f'[{k}{neg}~"^$"]'
+
     def tag_filter(self):
+        if 'regex' in self.features and self.r.random() < 0.35:
+            return self.regex_filter()
         if self.r.random() < 0.08:
             return self.alternation_filter()
         key, value = self.tag()
@@ -363,6 +422,8 @@ class Generator:
     def poi_filter(self):
         """Tag filters as POI lookups write them: exact values, keys, and alternations over a
         key's values, unanchored or anchored and often case-insensitive."""
+        if 'regex' in self.features and self.r.random() < 0.3:
+            return self.regex_filter()
         key, value = self.tag()
         values = sorted({value} | {self.pick(self.values_of(key) or [value]) for _ in range(self.r.randint(1, 8))})
         form = self.r.random()
@@ -652,7 +713,7 @@ def main():
     parser.add_argument('--timeout', type=int, default=30, help='seconds per run before giving up')
     parser.add_argument('--out-dir', default='fuzz-failures')
     parser.add_argument('--features', default='',
-                        help='comma-separated optional statement families: areas, history, users, complete, evaluators, output, statements, poi')
+                        help='comma-separated optional statement families: areas, history, users, complete, evaluators, output, statements, poi, regex')
     parser.add_argument('--report', metavar='CSV',
                         help='write one row per query: status, CPU time per build, output size '
                              '(for finding slow or degenerate queries)')
@@ -672,7 +733,7 @@ def main():
         raw = f.read()
     vocab = json.loads(raw)
     features = frozenset(f for f in args.features.split(',') if f)
-    unknown = features - {'areas', 'history', 'users', 'complete', 'evaluators', 'output', 'statements', 'poi'}
+    unknown = features - {'areas', 'history', 'users', 'complete', 'evaluators', 'output', 'statements', 'poi', 'regex'}
     if unknown:
         parser.error('unknown features: ' + ', '.join(sorted(unknown)))
     if args.show is not None:
