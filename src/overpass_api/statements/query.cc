@@ -144,69 +144,84 @@ namespace
 
 namespace
 {
-  bool is_key_filter(Has_Kv_Statement* has_kv)
+  bool is_plain(Has_Kv_Statement* has_kv)
   {
-    return has_kv->get_value().empty() && !has_kv->get_regex() && !has_kv->get_key_regex()
-        && has_kv->get_straight();
+    return !has_kv->get_regex() && !has_kv->get_key_regex() && has_kv->get_straight();
+  }
+
+
+  std::string alternation(const std::vector< std::string >& alternatives)
+  {
+    std::string result = "^(";
+    for (std::vector< std::string >::const_iterator it = alternatives.begin(); it != alternatives.end(); ++it)
+      result += (it == alternatives.begin() ? "" : "|") + escape_regex(*it);
+    return result + ")$";
   }
 }
 
 
-std::vector< std::pair< std::string, std::string > > Query_Statement::key_filter_variants() const
+std::vector< Query_Statement::Mergeable_Filter > Query_Statement::mergeable_filters() const
 {
   std::string other_filters = filter_signature();
-  std::vector< std::pair< std::string, std::string > > tag_filters;
+  std::vector< std::pair< Has_Kv_Statement*, std::string > > tag_filters;
   for (std::vector< Statement* >::const_iterator it = substatements.begin(); it != substatements.end(); ++it)
   {
     Has_Kv_Statement* has_kv = dynamic_cast< Has_Kv_Statement* >(*it);
     if (has_kv)
-      tag_filters.push_back(std::make_pair(is_key_filter(has_kv) ? has_kv->get_key() : "",
-          has_kv->dump_ql_in_query("")));
+      tag_filters.push_back(std::make_pair(has_kv, has_kv->dump_ql_in_query("")));
   }
 
-  std::vector< std::pair< std::string, std::string > > result;
-  for (std::vector< std::pair< std::string, std::string > >::size_type i = 0; i < tag_filters.size(); ++i)
+  std::vector< Mergeable_Filter > result;
+  for (std::vector< std::pair< Has_Kv_Statement*, std::string > >::size_type i = 0; i < tag_filters.size(); ++i)
   {
-    if (tag_filters[i].first.empty())
+    if (!is_plain(tag_filters[i].first))
       continue;
     std::vector< std::string > others;
-    for (std::vector< std::pair< std::string, std::string > >::size_type j = 0; j < tag_filters.size(); ++j)
+    for (std::vector< std::pair< Has_Kv_Statement*, std::string > >::size_type j = 0; j < tag_filters.size(); ++j)
     {
       if (j != i)
         others.push_back(tag_filters[j].second);
     }
     std::sort(others.begin(), others.end());
-    std::string signature = other_filters;
+    Mergeable_Filter filter;
+    filter.key = tag_filters[i].first->get_key();
+    filter.value = tag_filters[i].first->get_value();
+    filter.signature = other_filters;
     for (std::vector< std::string >::const_iterator it = others.begin(); it != others.end(); ++it)
-      signature += *it;
-    result.push_back(std::make_pair(tag_filters[i].first, signature));
+      filter.signature += *it;
+    filter.signature += filter.value.empty() ? "\n[key]" : "\n[" + filter.key + "=value]";
+    result.push_back(filter);
   }
   return result;
 }
 
 
-void Query_Statement::match_any_key(const std::string& key, const std::vector< std::string >& keys_,
+void Query_Statement::merge_filter(const Mergeable_Filter& filter, const std::vector< std::string >& alternatives,
     Parsed_Query& global_settings)
 {
-  std::string regk = "^(";
-  for (std::vector< std::string >::const_iterator it = keys_.begin(); it != keys_.end(); ++it)
-    regk += (it == keys_.begin() ? "" : "|") + escape_regex(*it);
-  regk += ")$";
-
   for (std::vector< Statement* >::iterator it = substatements.begin(); it != substatements.end(); ++it)
   {
     Has_Kv_Statement* has_kv = dynamic_cast< Has_Kv_Statement* >(*it);
-    if (has_kv && is_key_filter(has_kv) && has_kv->get_key() == key)
+    if (has_kv && is_plain(has_kv) && has_kv->get_key() == filter.key && has_kv->get_value() == filter.value)
     {
       substatements.erase(it);
       break;
     }
   }
-  keys.erase(std::find(keys.begin(), keys.end(), key));
 
   std::map< std::string, std::string > attributes;
-  attributes["regk"] = regk;
-  attributes["regv"] = ".*";
+  if (filter.value.empty())
+  {
+    keys.erase(std::find(keys.begin(), keys.end(), filter.key));
+    attributes["regk"] = alternation(alternatives);
+    attributes["regv"] = ".*";
+  }
+  else
+  {
+    key_values.erase(std::find(key_values.begin(), key_values.end(), std::make_pair(filter.key, filter.value)));
+    attributes["k"] = filter.key;
+    attributes["regv"] = alternation(alternatives);
+  }
   add_statement(new Has_Kv_Statement(get_line_number(), attributes, global_settings), "");
 }
 
