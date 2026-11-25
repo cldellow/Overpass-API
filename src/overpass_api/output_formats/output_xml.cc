@@ -141,7 +141,7 @@ void append_action(const Output_Handler::Feature_Action& action, bool is_new = f
 }
 
 
-void print_tags(const std::vector< std::pair< std::string, std::string > >* tags,
+void print_tags(const Tag_List* tags,
 		Output_Mode mode, bool& inner_tags_printed)
 {
   if ((mode.mode & Output_Mode::TAGS) && tags && !tags->empty())
@@ -151,7 +151,7 @@ void print_tags(const std::vector< std::pair< std::string, std::string > >* tags
       std::cout<<">\n";
       inner_tags_printed = true;
     }
-    for (std::vector< std::pair< std::string, std::string > >::const_iterator it = tags->begin();
+    for (Tag_List::const_iterator it = tags->begin();
 	 it != tags->end(); ++it)
       std::cout<<"    <tag k=\""<<Xml_Escaped(it->first)<<"\" v=\""<<Xml_Escaped(it->second)<<"\"/>\n";
   }
@@ -368,7 +368,7 @@ void print_members(const Relation_Skeleton& skel, const Opaque_Geometry& geometr
 
 void print_node(const Node_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Node::Id_Type >* meta,
       const std::map< uint32, std::string >* users,
       Output_Mode mode)
@@ -394,7 +394,7 @@ void print_node(const Node_Skeleton& skel,
 
 void print_way(const Way_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Way::Id_Type >* meta,
       const std::map< uint32, std::string >* users,
       Output_Mode mode)
@@ -418,7 +418,7 @@ void print_way(const Way_Skeleton& skel,
 
 void print_relation(const Relation_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Relation::Id_Type >* meta,
       const std::map< uint32, std::string >* roles,
       const std::map< uint32, std::string >* users,
@@ -464,14 +464,14 @@ void print_deleted(const std::string& type_name, const Id_Type& id,
 
 void Output_XML::print_item(const Node_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Node::Id_Type >* meta,
       const std::map< uint32, std::string >* users,
       Output_Mode mode,
       const Feature_Action& action,
       const Node_Skeleton* new_skel,
       const Opaque_Geometry* new_geometry,
-      const std::vector< std::pair< std::string, std::string > >* new_tags,
+      const Tag_List* new_tags,
       const OSM_Element_Metadata_Skeleton< Node::Id_Type >* new_meta)
 {
   prepend_action(action);
@@ -494,14 +494,14 @@ void Output_XML::print_item(const Node_Skeleton& skel,
 
 void Output_XML::print_item(const Way_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Way::Id_Type >* meta,
       const std::map< uint32, std::string >* users,
       Output_Mode mode,
       const Feature_Action& action,
       const Way_Skeleton* new_skel,
       const Opaque_Geometry* new_geometry,
-      const std::vector< std::pair< std::string, std::string > >* new_tags,
+      const Tag_List* new_tags,
       const OSM_Element_Metadata_Skeleton< Way::Id_Type >* new_meta)
 {
   prepend_action(action);
@@ -524,7 +524,7 @@ void Output_XML::print_item(const Way_Skeleton& skel,
 
 void Output_XML::print_item(const Relation_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Relation::Id_Type >* meta,
       const std::map< uint32, std::string >* roles,
       const std::map< uint32, std::string >* users,
@@ -532,7 +532,7 @@ void Output_XML::print_item(const Relation_Skeleton& skel,
       const Feature_Action& action,
       const Relation_Skeleton* new_skel,
       const Opaque_Geometry* new_geometry,
-      const std::vector< std::pair< std::string, std::string > >* new_tags,
+      const Tag_List* new_tags,
       const OSM_Element_Metadata_Skeleton< Relation::Id_Type >* new_meta)
 {
   prepend_action(action);
@@ -555,7 +555,7 @@ void Output_XML::print_item(const Relation_Skeleton& skel,
 
 void Output_XML::print_item(const Derived_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       Output_Mode mode,
       const Feature_Action& action)
 {

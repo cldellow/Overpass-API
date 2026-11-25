@@ -226,6 +226,7 @@ nobase_dist_HEADERS = \
   overpass_api/core/index_computations.h\
   overpass_api/core/parsed_query.h\
   overpass_api/core/settings.h\
+  overpass_api/core/tag_list.h\
   overpass_api/core/type_area.h\
   overpass_api/core/type_node.h\
   overpass_api/core/type_relation.h\

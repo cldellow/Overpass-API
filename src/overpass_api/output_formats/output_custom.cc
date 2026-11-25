@@ -438,7 +438,7 @@ std::string antiprocess_coords(const std::string& raw_template)
 
 std::string process_template(const std::string& raw_template, unsigned long long id, std::string type,
 			double south, double west, double north, double east, uint zoom,
-			const std::vector< std::pair< std::string, std::string > >* tags,
+			const Tag_List* tags,
 			const std::vector< Node::Id_Type >* nds,
 			const std::vector< Relation_Entry >* members,
 			const std::map< uint32, std::string >* roles)
@@ -479,7 +479,7 @@ std::string process_template(const std::string& raw_template, unsigned long long
     {
       if (tags != 0 && !tags->empty())
       {
-	std::vector< std::pair< std::string, std::string > >::const_iterator it = tags->begin();
+	Tag_List::const_iterator it = tags->begin();
 
 	std::string first = extract_first(raw_template.substr(new_pos + 7, old_pos - new_pos - 9));
 	if (first != "" && it != tags->end())
@@ -562,14 +562,14 @@ void Output_Custom::write_footer()
 
 void Output_Custom::print_item(const Node_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Node::Id_Type >* meta,
       const std::map< uint32, std::string >* users,
       Output_Mode mode,
       const Feature_Action& action,
       const Node_Skeleton* new_skel,
       const Opaque_Geometry* new_geometry,
-      const std::vector< std::pair< std::string, std::string > >* new_tags,
+      const Tag_List* new_tags,
       const OSM_Element_Metadata_Skeleton< Node::Id_Type >* new_meta)
 {
   if (count == 0)
@@ -640,14 +640,14 @@ unsigned int detect_zoom(const Opaque_Geometry& geometry)
 
 void Output_Custom::print_item(const Way_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Way::Id_Type >* meta,
       const std::map< uint32, std::string >* users,
       Output_Mode mode,
       const Feature_Action& action,
       const Way_Skeleton* new_skel,
       const Opaque_Geometry* new_geometry,
-      const std::vector< std::pair< std::string, std::string > >* new_tags,
+      const Tag_List* new_tags,
       const OSM_Element_Metadata_Skeleton< Way::Id_Type >* new_meta)
 {
   if (count == 0)
@@ -678,7 +678,7 @@ void Output_Custom::print_item(const Way_Skeleton& skel,
 
 void Output_Custom::print_item(const Relation_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Relation::Id_Type >* meta,
       const std::map< uint32, std::string >* roles,
       const std::map< uint32, std::string >* users,
@@ -686,7 +686,7 @@ void Output_Custom::print_item(const Relation_Skeleton& skel,
       const Feature_Action& action,
       const Relation_Skeleton* new_skel,
       const Opaque_Geometry* new_geometry,
-      const std::vector< std::pair< std::string, std::string > >* new_tags,
+      const Tag_List* new_tags,
       const OSM_Element_Metadata_Skeleton< Relation::Id_Type >* new_meta)
 {
   if (count == 0)
@@ -717,7 +717,7 @@ void Output_Custom::print_item(const Relation_Skeleton& skel,
 
 void Output_Custom::print_item(const Derived_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       Output_Mode mode,
       const Feature_Action& action)
 {
