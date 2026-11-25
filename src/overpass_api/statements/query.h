@@ -88,11 +88,18 @@ class Query_Statement : public Output_Statement
     bool reads_only_database() const;
     // The query's type and its filters other than tag filters, as QL.
     std::string filter_signature() const;
-    // For each [key] filter: its key, and the query's type and all its other filters as QL. Queries
-    // with the same signature differ only in that one [key] filter.
-    std::vector< std::pair< std::string, std::string > > key_filter_variants() const;
-    // Replaces the query's filter [key] with one that matches any of the keys.
-    void match_any_key(const std::string& key, const std::vector< std::string >& keys,
+    // A [key] or [key=value] filter that queries can merge on. Queries with the same signature
+    // (type, all other filters, and the key for [key=value]) differ only in this filter.
+    struct Mergeable_Filter
+    {
+      std::string key;
+      std::string value;
+      std::string signature;
+    };
+    std::vector< Mergeable_Filter > mergeable_filters() const;
+    // Replaces the filter with one that matches any of the keys for [key], or any of the values for
+    // [key=value].
+    void merge_filter(const Mergeable_Filter& filter, const std::vector< std::string >& alternatives,
         Parsed_Query& global_settings);
 
     static std::string to_string(int type)
