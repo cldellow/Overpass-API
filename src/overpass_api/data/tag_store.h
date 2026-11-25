@@ -25,6 +25,7 @@
 #include "../../template_db/block_backend.h"
 #include "../../template_db/transaction.h"
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <vector>
@@ -276,15 +277,34 @@ void collect_tags_framed
   while ((!(tag_it == items_db.range_end())) &&
       ((tag_coarse_index(tag_it)) < coarse_index))
     ++tag_it;
+  std::vector< std::pair< std::string, std::string > > key_values;
+  std::vector< std::pair< Id_Type, uint32 > > found;
   while ((!(tag_it == items_db.range_end())) &&
       ((tag_coarse_index(tag_it)) == coarse_index))
   {
     if (!(tag_it.object() < lower_id_bound) &&
       (tag_it.object() < upper_id_bound) &&
       contains_from_cursor(ids, cursor, tag_it.object()))
-      tags_by_id[tag_it.object()].push_back
-          (std::make_pair(tag_it.index().key, tag_it.index().value));
+    {
+      const Tag_Index_Local& idx = tag_it.index();
+      if (key_values.empty() || key_values.back().second != idx.value || key_values.back().first != idx.key)
+        key_values.push_back(std::make_pair(idx.key, idx.value));
+      found.push_back(std::make_pair(tag_it.object(), uint32(key_values.size() - 1)));
+    }
     ++tag_it;
+  }
+
+  std::stable_sort(found.begin(), found.end(),
+      [](const std::pair< Id_Type, uint32 >& a, const std::pair< Id_Type, uint32 >& b) { return a.first < b.first; });
+  for (typename std::vector< std::pair< Id_Type, uint32 > >::const_iterator it = found.begin(); it != found.end(); )
+  {
+    typename std::vector< std::pair< Id_Type, uint32 > >::const_iterator end = it;
+    while (end != found.end() && end->first == it->first)
+      ++end;
+    std::vector< std::pair< std::string, std::string > >& tags = tags_by_id[it->first];
+    tags.reserve(tags.size() + (end - it));
+    for (; it != end; ++it)
+      tags.push_back(key_values[it->second]);
   }
 }
 
