@@ -457,5 +457,14 @@
   "new": "std::min< uint64 >(std::max< uint32 >(*(uint32*)buffer_ - 8, 8), (uint64)block_size * compression_factor));",
   "note": "the cache keeps the block without its last 8 bytes, so a block's later reads see stale bytes at its end",
   "expect_caught": "maybe"
+ },
+ {
+  "commit": "fd86271",
+  "subject": "area queries: skip the way-area pass when the input holds no way-areas",
+  "file": "src/overpass_api/statements/area_query.cc",
+  "old": "  Tilewise_Way_Iterator twi(ways, std::map< Uint31_Index, std::vector< Attic< Way_Skeleton > > >(), stmt, rman);\n  while (!twi.is_end())\n  {\n    while (!tai.is_end() && tai.get_idx() < twi.get_idx())\n      tai.next();\n    if (tai.is_end())\n      break;",
+  "new": "  Tilewise_Way_Iterator twi(ways, std::map< Uint31_Index, std::vector< Attic< Way_Skeleton > > >(), stmt, rman);\n  while (!twi.is_end())\n  {\n    while (!tai.is_end() && tai.get_idx() < twi.get_idx())\n      tai.next();\n    if (tai.is_end() || twi.get_idx() < tai.get_idx())\n      break;",
+  "note": "leaves the way-area loop at the first way tile before the next area tile, so ways in later tiles are never tested against the input way-areas",
+  "expect_caught": "yes"
  }
 ]

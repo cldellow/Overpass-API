@@ -490,6 +490,16 @@ def gen_checks(data, seed):
         must, must_not = classify_all(((('way', i), classify_line(data.way_pts(i), ring)) for i in ways))
         add('area ways', f'area({aid})->.a; way(area.a);', must, must_not)
 
+    # The same polygons as closed ways, which an area filter also takes as areas.
+    for rid, ring in data.areas.items():
+        outer = [m[1] for m in data.rels[rid] if m[0] == 'way']
+        if len(outer) != 1:
+            continue
+        must, must_not = classify_all(((('node', i), classify_point(p, ring)) for i, p in nodes.items()))
+        add('way-area nodes', f'way({outer[0]})->.c; node(area.c);', must, must_not)
+        must, must_not = classify_all(((('way', i), classify_line(data.way_pts(i), ring)) for i in ways))
+        add('way-area ways', f'way({outer[0]})->.c; way(area.c);', must, must_not)
+
     # is_in at nodes and polygon vertices.
     for p in rnd.sample(coords, 6):
         must, must_not = set(), set()
