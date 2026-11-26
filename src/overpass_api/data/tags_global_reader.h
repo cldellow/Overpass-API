@@ -361,7 +361,64 @@ void filter_id_list(
 class Statement;
 
 
-template< typename Skeleton, typename Id_Type >
+// Blocks a late tag check of these candidates reads: their cells' skeletons and local tags.
+template< typename Skeleton, typename Id_Type, typename Index >
+uint64 count_late_check_blocks(const std::vector< std::pair< Id_Type, Uint31_Index > >& ids, Resource_Manager& rman)
+{
+  std::vector< uint32 > cells;
+  cells.reserve(ids.size());
+  for (auto it = ids.begin(); it != ids.end(); ++it)
+    cells.push_back(it->second.val() & 0x7fffff00);
+  std::sort(cells.begin(), cells.end());
+  cells.erase(std::unique(cells.begin(), cells.end()), cells.end());
+
+  Ranges< Tag_Index_Local > tag_ranges;
+  Ranges< Index > skeleton_ranges;
+  for (auto it = cells.begin(); it != cells.end(); ++it)
+  {
+    tag_ranges.push_back({ *it, "", "" }, { *it + 0x100, "", "" });
+    skeleton_ranges.push_back(Index(*it), Index(*it + 0x100));
+  }
+  tag_ranges.sort();
+  skeleton_ranges.sort();
+  Block_Backend< Tag_Index_Local, Id_Type > local_tags_db
+      (rman.get_transaction()->data_index(current_local_tags_file_properties< Skeleton >()));
+  Block_Backend< Index, Skeleton > skeletons_db
+      (rman.get_transaction()->data_index(current_skeleton_file_properties< Skeleton >()));
+  return local_tags_db.count_blocks(tag_ranges) + skeletons_db.count_blocks(skeleton_ranges);
+}
+
+
+// The global tag index stores coarse indices (multiples of 0x100): keep ids whose cell overlaps ranges.
+template< typename Id_Type, typename Index >
+void keep_ids_inside(std::vector< std::pair< Id_Type, Uint31_Index > >& ids, const Ranges< Index >& ranges)
+{
+  std::vector< std::pair< Index, Index > > bounds;
+  for (auto it = ranges.begin(); it != ranges.end(); ++it)
+    bounds.push_back(std::make_pair(it.lower_bound(), it.upper_bound()));
+  std::sort(bounds.begin(), bounds.end());
+  std::vector< std::pair< Index, Index > > merged;
+  for (auto it = bounds.begin(); it != bounds.end(); ++it)
+  {
+    if (!merged.empty() && !(merged.back().second < it->first))
+      merged.back().second = std::max(merged.back().second, it->second);
+    else
+      merged.push_back(*it);
+  }
+  std::vector< std::pair< Id_Type, Uint31_Index > > kept;
+  for (auto it = ids.begin(); it != ids.end(); ++it)
+  {
+    Index idx(it->second.val());
+    auto b = std::upper_bound(merged.begin(), merged.end(), idx,
+        [](const Index& x, const std::pair< Index, Index >& r) { return x < r.second; });
+    if (b != merged.end() && b->first < Index(idx.val() + 0x100))
+      kept.push_back(*it);
+  }
+  kept.swap(ids);
+}
+
+
+template< typename Skeleton, typename Id_Type, typename Index >
 std::vector< std::pair< Id_Type, Uint31_Index > > collect_ids(
     const std::vector< std::string >& keys,
     const std::vector< std::pair< std::string, std::string > >& key_values,
@@ -369,8 +426,10 @@ std::vector< std::pair< Id_Type, Uint31_Index > > collect_ids(
     const std::vector< std::pair< Regular_Expression*, Regular_Expression* > >& regkey_regexes,
     const File_Properties& file_prop, const File_Properties& attic_file_prop,
     Resource_Manager& rman, const Statement& stmt,
-    uint64 timestamp, Query_Filter_Strategy check_keys_late, bool& result_valid)
+    uint64 timestamp, Query_Filter_Strategy check_keys_late, bool& result_valid, bool& check_rest_late,
+    const Ranges< Index >* spatial_ranges)
 {
+  check_rest_late = false;
   if (key_values.empty() && keys.empty() && key_regexes.empty() && regkey_regexes.empty())
     return std::vector< std::pair< Id_Type, Uint31_Index > >();
 
@@ -381,10 +440,85 @@ std::vector< std::pair< Id_Type, Uint31_Index > > collect_ids(
         new Block_Backend< Tag_Index_Global, Attic< Tag_Object_Global< Id_Type > > >
         (rman.get_transaction()->data_index(&attic_file_prop)));
 
-  // Handle simple Key-Value pairs
   std::vector< std::pair< Id_Type, Uint31_Index > > new_ids;
   bool filtered = false;
   result_valid = false;
+
+  if (timestamp == NOW)
+  {
+    // Smallest lookups first; stop when checking the remaining tags late reads fewer blocks.
+    struct Lookup
+    {
+      Ranges< Tag_Index_Global > ranges;
+      Regular_Expression* value_regex;
+      bool limit_size;
+      uint64 blocks;
+    };
+    std::vector< Lookup > lookups;
+    for (auto it = key_values.begin(); it != key_values.end(); ++it)
+      lookups.push_back(Lookup{ get_kv_req(it->first, it->second), 0,
+          check_keys_late == prefer_ranges || check_keys_late == ids_useful, 0 });
+    if (check_keys_late != prefer_ranges)
+    {
+      for (auto it = keys.begin(); it != keys.end(); ++it)
+        lookups.push_back(Lookup{ get_k_req(*it), 0, check_keys_late == ids_useful, 0 });
+      for (auto it = key_regexes.begin(); it != key_regexes.end(); ++it)
+        lookups.push_back(Lookup{ get_k_req(it->first), it->second, check_keys_late == ids_useful, 0 });
+    }
+    uint64 remaining_blocks = 0;
+    for (auto it = lookups.begin(); it != lookups.end(); ++it)
+    {
+      it->blocks = tags_db.count_blocks(it->ranges);
+      remaining_blocks += it->blocks;
+    }
+    std::stable_sort(lookups.begin(), lookups.end(),
+        [](const Lookup& lhs, const Lookup& rhs) { return lhs.blocks < rhs.blocks; });
+
+    for (auto it = lookups.begin(); it != lookups.end(); ++it)
+    {
+      if (filtered && count_late_check_blocks< Skeleton, Id_Type, Index >(new_ids, rman) < remaining_blocks)
+      {
+        check_rest_late = true;
+        result_valid = true;
+        return new_ids;
+      }
+      if (it->value_regex)
+        filter_id_list(new_ids, filtered, tags_db.range_begin(it->ranges), tags_db.range_end(),
+            Trivial_Regex(), *it->value_regex, it->limit_size);
+      else
+        filter_id_list(new_ids, filtered, tags_db.range_begin(it->ranges), tags_db.range_end(),
+            Trivial_Regex(), Trivial_Regex(), it->limit_size);
+      if (!filtered)
+        return new_ids;
+      if (spatial_ranges)
+        keep_ids_inside(new_ids, *spatial_ranges);
+      if (new_ids.empty())
+      {
+        result_valid = true;
+        return new_ids;
+      }
+      remaining_blocks -= it->blocks;
+      rman.health_check(stmt);
+    }
+
+    if (check_keys_late != prefer_ranges)
+    {
+      for (auto it = regkey_regexes.begin(); it != regkey_regexes.end(); ++it)
+      {
+        Ranges< Tag_Index_Global > ranges = get_regk_req< Skeleton >(it->first, rman, stmt);
+        filter_id_list(new_ids, filtered, tags_db.range_begin(ranges), tags_db.range_end(),
+            *it->first, *it->second, check_keys_late == ids_useful);
+        if (!filtered)
+          return new_ids;
+        rman.health_check(stmt);
+      }
+    }
+
+    result_valid = true;
+    return new_ids;
+  }
+
+  // Handle simple Key-Value pairs
 
   for (std::vector< std::pair< std::string, std::string > >::const_iterator kvit = key_values.begin();
        kvit != key_values.end(); ++kvit)
@@ -771,7 +905,7 @@ void progress_1(
     const std::vector< std::pair< Regular_Expression*, Regular_Expression* > >& regkey_nregexes,
     Id_Constraint< Id_Type >& ids, std::vector< Index >& range_vec,
     uint64 timestamp, Query_Filter_Strategy& check_keys_late,
-    Resource_Manager& rman, const Statement& stmt)
+    Resource_Manager& rman, const Statement& stmt, const Ranges< Index >* spatial_ranges = 0)
 {
   File_Properties* file_prop = current_global_tags_file_properties< Skeleton >();
   File_Properties* attic_file_prop = attic_global_tags_file_properties< Skeleton >();
@@ -783,11 +917,13 @@ void progress_1(
           && (!keys.empty() || !key_regexes.empty() || !regkey_regexes.empty())))
   {
     bool result_valid = true;
+    bool check_rest_late = false;
     std::vector< std::pair< Id_Type, Uint31_Index > > id_idxs =
-        collect_ids< Skeleton, Id_Type >(
+        collect_ids< Skeleton, Id_Type, Index >(
             keys, key_values, key_regexes, regkey_regexes,
-            *file_prop, *attic_file_prop, rman, stmt, timestamp, check_keys_late, result_valid);
-    if (check_keys_late == ids_useful && !result_valid)
+            *file_prop, *attic_file_prop, rman, stmt, timestamp, check_keys_late, result_valid, check_rest_late,
+            spatial_ranges);
+    if ((check_keys_late == ids_useful && !result_valid) || check_rest_late)
       check_keys_late = prefer_ranges;
     ids.invert = !result_valid;
 
