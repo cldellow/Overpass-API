@@ -222,6 +222,14 @@ class Changed_Constraint : public Query_Constraint
 
   private:
     Changed_Statement* stmt;
+    // The ids get_*_ids_within found, kept for filter(): elements outside the known ids fail
+    // another constraint anyway, so filter() needn't read the changelog again.
+    std::vector< Node_Skeleton::Id_Type > node_ids_within;
+    std::vector< Way_Skeleton::Id_Type > way_ids_within;
+    std::vector< Relation_Skeleton::Id_Type > relation_ids_within;
+    bool node_ids_within_valid = false;
+    bool way_ids_within_valid = false;
+    bool relation_ids_within_valid = false;
 };
 
 
@@ -229,6 +237,7 @@ bool Changed_Constraint::get_node_ids(Resource_Manager& rman, std::vector< Node_
 {
   ids = collect_changed_elements< Uint32_Index, Node_Skeleton >(
       stmt->get_since(rman), stmt->get_until(rman), Trivial_Id_Predicate< Node_Skeleton::Id_Type >(), rman);
+  node_ids_within_valid = false;
   return true;
 }
 
@@ -237,6 +246,7 @@ bool Changed_Constraint::get_way_ids(Resource_Manager& rman, std::vector< Way_Sk
 {
   ids = collect_changed_elements< Uint31_Index, Way_Skeleton >(
       stmt->get_since(rman), stmt->get_until(rman), Trivial_Id_Predicate< Way_Skeleton::Id_Type >(), rman);
+  way_ids_within_valid = false;
   return true;
 }
 
@@ -245,6 +255,7 @@ bool Changed_Constraint::get_relation_ids(Resource_Manager& rman, std::vector< R
 {
   ids = collect_changed_elements< Uint31_Index, Relation_Skeleton >(
       stmt->get_since(rman), stmt->get_until(rman), Trivial_Id_Predicate< Relation_Skeleton::Id_Type >(), rman);
+  relation_ids_within_valid = false;
   return true;
 }
 
@@ -254,6 +265,8 @@ bool Changed_Constraint::get_node_ids_within(Resource_Manager& rman,
 {
   ids = collect_changed_elements< Uint32_Index, Node_Skeleton >(
       stmt->get_since(rman), stmt->get_until(rman), Known_Ids_Predicate< Node_Skeleton::Id_Type >(known), rman);
+  node_ids_within = ids;
+  node_ids_within_valid = true;
   return true;
 }
 
@@ -263,6 +276,8 @@ bool Changed_Constraint::get_way_ids_within(Resource_Manager& rman,
 {
   ids = collect_changed_elements< Uint31_Index, Way_Skeleton >(
       stmt->get_since(rman), stmt->get_until(rman), Known_Ids_Predicate< Way_Skeleton::Id_Type >(known), rman);
+  way_ids_within = ids;
+  way_ids_within_valid = true;
   return true;
 }
 
@@ -272,6 +287,8 @@ bool Changed_Constraint::get_relation_ids_within(Resource_Manager& rman,
 {
   ids = collect_changed_elements< Uint31_Index, Relation_Skeleton >(
       stmt->get_since(rman), stmt->get_until(rman), Known_Ids_Predicate< Relation_Skeleton::Id_Type >(known), rman);
+  relation_ids_within = ids;
+  relation_ids_within_valid = true;
   return true;
 }
 
@@ -280,7 +297,7 @@ void Changed_Constraint::filter(Resource_Manager& rman, Set& into)
 {
   if (!stmt->trivial())
   {
-    std::vector< Node_Skeleton::Id_Type > ids =
+    std::vector< Node_Skeleton::Id_Type > ids = node_ids_within_valid ? node_ids_within :
         collect_changed_elements< Uint32_Index, Node_Skeleton >
         (stmt->get_since(rman), stmt->get_until(rman),
             Ids_In_Set_Predicate< Uint32_Index, Node_Skeleton >(into.nodes, into.attic_nodes), rman);
@@ -291,7 +308,7 @@ void Changed_Constraint::filter(Resource_Manager& rman, Set& into)
 
   if (!stmt->trivial())
   {
-    std::vector< Way_Skeleton::Id_Type > ids =
+    std::vector< Way_Skeleton::Id_Type > ids = way_ids_within_valid ? way_ids_within :
         collect_changed_elements< Uint31_Index, Way_Skeleton >
         (stmt->get_since(rman), stmt->get_until(rman),
             Ids_In_Set_Predicate< Uint31_Index, Way_Skeleton >(into.ways, into.attic_ways), rman);
@@ -302,7 +319,7 @@ void Changed_Constraint::filter(Resource_Manager& rman, Set& into)
 
   if (!stmt->trivial())
   {
-    std::vector< Relation_Skeleton::Id_Type > ids =
+    std::vector< Relation_Skeleton::Id_Type > ids = relation_ids_within_valid ? relation_ids_within :
         collect_changed_elements< Uint31_Index, Relation_Skeleton >
         (stmt->get_since(rman), stmt->get_until(rman),
             Ids_In_Set_Predicate< Uint31_Index, Relation_Skeleton >(into.relations, into.attic_relations), rman);
