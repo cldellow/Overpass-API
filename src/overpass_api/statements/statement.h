@@ -124,6 +124,7 @@ class Query_Constraint
     // their geometry. Such filters run before the others: reading metadata costs far
     // less than building geometry, so they shrink the set before geometry is built.
     virtual bool filter_reads_only_metadata() const { return false; }
+    virtual bool filter_needs_geometry() const { return false; }
 
     virtual ~Query_Constraint() {}
 };
