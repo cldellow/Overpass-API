@@ -20,6 +20,7 @@
 #define DE__OSM3S___OVERPASS_API__DATA__TAG_STORE_H
 
 
+#include "abstract_processing.h"
 #include "filenames.h"
 #include "../core/datatypes.h"
 #include "../../template_db/block_backend.h"
@@ -294,6 +295,8 @@ void collect_tags_framed
 {
   const std::vector< Id_Type >& ids = ids_by_coarse[coarse_index];
   typename std::vector< Id_Type >::const_iterator cursor = ids.begin();
+  // Most of a cell's tag entries belong to other elements: reject those with one bit test.
+  Id_Bit_Filter id_filter(ids);
   while ((!(tag_it == items_db.range_end())) &&
       ((tag_coarse_index(tag_it)) < coarse_index))
     ++tag_it;
@@ -302,7 +305,8 @@ void collect_tags_framed
   while ((!(tag_it == items_db.range_end())) &&
       ((tag_coarse_index(tag_it)) == coarse_index))
   {
-    if (!(tag_it.object() < lower_id_bound) &&
+    if (id_filter.maybe_contains(tag_it.object().val()) &&
+      !(tag_it.object() < lower_id_bound) &&
       (tag_it.object() < upper_id_bound) &&
       contains_from_cursor(ids, cursor, tag_it.object()))
     {
