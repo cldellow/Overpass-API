@@ -35,6 +35,28 @@ inline uint64 timestamp_of(const Way_Skeleton& skel) { return NOW; }
 inline uint64 timestamp_of(const Relation_Skeleton& skel) { return NOW; }
 
 
+
+// Appends to std::map< Index, std::vector< Object > > entries, remembering the last slot:
+// block iterators deliver runs of objects with the same index.
+template< typename Index, typename Object >
+struct Indexed_Appender
+{
+  Indexed_Appender(std::map< Index, std::vector< Object > >& target_)
+      : target(&target_), last(target_.end()) {}
+
+  void push_back(const Index& idx, const Object& obj)
+  {
+    if (last == target->end() || !(last->first == idx))
+      last = target->insert(target->end(), std::make_pair(idx, std::vector< Object >()));
+    last->second.push_back(obj);
+  }
+
+private:
+  std::map< Index, std::vector< Object > >* target;
+  typename std::map< Index, std::vector< Object > >::iterator last;
+};
+
+
 template < class Index, class Object, class Iterator, class Predicate >
 void reconstruct_items(
     Iterator& it, const Iterator& end, Index index,
@@ -431,10 +453,11 @@ void collect_items_discrete(Transaction& transaction,
 {
   Block_Backend< Index, Object, typename Container::const_iterator > db
       (transaction.data_index(&file_properties));
+  Indexed_Appender< Index, Object > append(result);
   for (auto it = db.discrete_begin(req.begin(), req.end()); !(it == db.discrete_end()); ++it)
   {
     if (predicate.match(it.handle()))
-      result[it.index()].push_back(it.object());
+      append.push_back(it.index(), it.object());
   }
 }
 
@@ -450,10 +473,11 @@ void collect_items_discrete(Request_Context& context,
       context.data_index(current_skeleton_file_properties< Object >()));
   if (timestamp == NOW)
   {
+    Indexed_Appender< Index, Object > append(result);
     for (auto it = current_db.discrete_begin(req.begin(), req.end()); !(it == current_db.discrete_end()); ++it)
     {
       if (predicate.match(it.handle()))
-        result[it.index()].push_back(it.object());
+        append.push_back(it.index(), it.object());
     }
   }
   else
@@ -491,10 +515,11 @@ Timeless< Index, Object > collect_items_range(Request_Context& context,
       (context.data_index(current_skeleton_file_properties< Object >()));
   if (context.get_desired_timestamp() == NOW)
   {
+    Indexed_Appender< Index, Object > append(result.current);
     for (auto it = current_db.range_begin(ranges); !(it == current_db.range_end()); ++it)
     {
       if (predicate.match(it.handle()))
-        result.current[it.index()].push_back(it.object());
+        append.push_back(it.index(), it.object());
     }
   }
   else
@@ -525,6 +550,7 @@ bool collect_items_range(Request_Context& context,
     uint32 count = 0;
     bool too_much_data = false;
 
+    Indexed_Appender< Index, Object > append(result);
     for (auto it = current_db.range_begin(shortened); !(it == current_db.range_end()); ++it)
     {
       if (too_much_data && !(cur_idx == it.index()))
@@ -539,7 +565,7 @@ bool collect_items_range(Request_Context& context,
         cur_idx = it.index();
       }
       if (predicate.match(it.handle()))
-        result[it.index()].push_back(it.object());
+        append.push_back(it.index(), it.object());
     }
 
     return false;
@@ -565,6 +591,7 @@ void collect_items_flat(Request_Context& context,
 {
   uint32 count = 0;
   Block_Backend< Index, Object > db(context.data_index(&file_properties));
+  Indexed_Appender< Index, Object > append(result);
   for (typename Block_Backend< Index, Object >::Flat_Iterator
       it(db.flat_begin()); !(it == db.flat_end()); ++it)
   {
@@ -574,7 +601,7 @@ void collect_items_flat(Request_Context& context,
       context.get_health_guard().check(0, eval_map(result));
     }
     if (predicate.match(it.handle()))
-      result[it.index()].push_back(it.object());
+      append.push_back(it.index(), it.object());
   }
 }
 
@@ -591,6 +618,7 @@ void collect_items_flat(
   if (context.get_desired_timestamp() == NOW)
   {
     uint32 count = 0;
+    Indexed_Appender< Index, Object > append(result);
     for (auto it = current_db.flat_begin(); !(it == current_db.flat_end()); ++it)
     {
       if (++count >= 256*1024)
@@ -599,7 +627,7 @@ void collect_items_flat(
         context.get_health_guard().check(0, eval_map(result));
       }
       if (predicate.match(it.handle()))
-        result[it.index()].push_back(it.object());
+        append.push_back(it.index(), it.object());
     }
   }
   else
