@@ -998,7 +998,7 @@ bool Derived_Structure_Handle::operator<(const Derived_Structure_Handle& rhs) co
 }
 
 
-void Set_Comparison::compute_deriveds(std::map< Uint31_Index, std::vector< Derived_Structure > > rhs_deriveds)
+void Set_Comparison::compute_deriveds(const std::map< Uint31_Index, std::vector< Derived_Structure > >& rhs_deriveds)
 {
   std::vector< Derived_Structure_Handle > lhs_handles;
   for (std::map< Uint31_Index, std::vector< Derived_Structure > >::const_iterator
