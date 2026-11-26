@@ -43,7 +43,7 @@ struct Node_With_Context
       uint64 expiration_date_, OSM_Element_Metadata_Skeleton< Node_Skeleton::Id_Type > meta_
           = OSM_Element_Metadata_Skeleton< Node_Skeleton::Id_Type >(),
       Tag_Container tags_ = Tag_Container())
-  : idx(idx_), elem(elem_), expiration_date(expiration_date_), meta(meta_), tags(tags_) {}
+  : idx(idx_), elem(elem_), expiration_date(expiration_date_), meta(meta_), tags(std::move(tags_)) {}
 
   bool operator<(const Node_With_Context& e) const
   {
@@ -65,11 +65,12 @@ struct Way_With_Context
   Tag_Container tags;
   std::vector< Quad_Coord > geometry;
 
-  Way_With_Context(Uint31_Index idx_, Way_Skeleton elem_, const std::vector< Quad_Coord >& geometry_,
+  Way_With_Context(Uint31_Index idx_, Way_Skeleton elem_, std::vector< Quad_Coord > geometry_,
       uint64 expiration_date_, OSM_Element_Metadata_Skeleton< Way_Skeleton::Id_Type > meta_
           = OSM_Element_Metadata_Skeleton< Way_Skeleton::Id_Type >(),
       Tag_Container tags_ = Tag_Container())
-  : idx(idx_), elem(elem_), expiration_date(expiration_date_), meta(meta_), tags(tags_), geometry(geometry_) {}
+  : idx(idx_), elem(elem_), expiration_date(expiration_date_), meta(meta_),
+    tags(std::move(tags_)), geometry(std::move(geometry_)) {}
 
   bool operator<(const Way_With_Context& e) const
   {
@@ -92,11 +93,12 @@ struct Relation_With_Context
   std::vector< std::vector< Quad_Coord > > geometry;
 
   Relation_With_Context(Uint31_Index idx_, Relation_Skeleton elem_,
-      const std::vector< std::vector< Quad_Coord > >& geometry_,
+      std::vector< std::vector< Quad_Coord > > geometry_,
       uint64 expiration_date_, OSM_Element_Metadata_Skeleton< Relation_Skeleton::Id_Type > meta_
           = OSM_Element_Metadata_Skeleton< Relation_Skeleton::Id_Type >(),
       Tag_Container tags_ = Tag_Container())
-  : idx(idx_), elem(elem_), expiration_date(expiration_date_), meta(meta_), tags(tags_), geometry(geometry_) {}
+  : idx(idx_), elem(elem_), expiration_date(expiration_date_), meta(meta_),
+    tags(std::move(tags_)), geometry(std::move(geometry_)) {}
 
   bool operator<(const Relation_With_Context& e) const
   {
