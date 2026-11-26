@@ -34,6 +34,11 @@ class Filter_Constraint : public Query_Constraint
     bool get_ranges(Resource_Manager& rman, Ranges< Uint31_Index >& ranges) { return false; }
     void filter(Resource_Manager& rman, Set& into) {}
     void filter(const Statement& query, Resource_Manager& rman, Set& into);
+    bool filter_needs_geometry() const override
+    {
+      return stmt && stmt->get_criterion()
+          && (stmt->get_criterion()->request_context().object_usage & Set_Usage::GEOMETRY);
+    }
     virtual ~Filter_Constraint() {}
 
   private:
