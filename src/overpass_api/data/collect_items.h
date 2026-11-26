@@ -84,8 +84,8 @@ class Statement;
 
 // A chunk of collected elements also ends once its accounted size (as eval_map counts it) reaches
 // this, so a query whose filters drop most candidates doesn't hold all of them at once when its
-// [maxsize:] budget is large. 64 MiB accounted is 8M nodes or 512k ways.
-const uint64 MAX_CHUNK_ACCOUNTED_SIZE = 64ull*1024*1024;
+// [maxsize:] budget is large. 16 MiB accounted is 2M nodes or 128k ways.
+const uint64 MAX_CHUNK_ACCOUNTED_SIZE = 16ull*1024*1024;
 
 
 class Health_Guard
