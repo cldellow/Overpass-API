@@ -872,6 +872,42 @@ void Query_Statement::collect_elems(Answer_State& answer_state, Set& into, Resou
 }
 
 
+// The id map holds a fixed number of ids per block and decompresses one block at a time, so
+// looking ids up costs about one block per distinct block they fall in.
+template< typename Index, typename Skeleton >
+bool exact_indices_pay_off(const std::vector< typename Skeleton::Id_Type >& ids,
+    const Ranges< Index >& coarse_ranges, Resource_Manager& rman)
+{
+  if (ids.empty() || coarse_ranges.is_global())
+    return false;
+  Random_File_Index* map = rman.get_transaction()->random_index(current_skeleton_file_properties< Skeleton >());
+  uint64 ids_per_block = map->get_block_size() * map->get_compression_factor() / Index::max_size_of();
+  uint64 map_blocks = 0;
+  uint64 last_block = ~uint64(0);
+  for (auto it = ids.begin(); it != ids.end(); ++it)
+  {
+    uint64 block = it->val() / ids_per_block;
+    if (block != last_block)
+      ++map_blocks;
+    last_block = block;
+  }
+  Block_Backend< Index, Skeleton > skeletons_db
+      (rman.get_transaction()->data_index(current_skeleton_file_properties< Skeleton >()));
+  return 2*map_blocks < skeletons_db.count_blocks(coarse_ranges);
+}
+
+
+template< typename Index >
+Ranges< Index > exact_ranges(const std::vector< Index >& idxs)
+{
+  Ranges< Index > result;
+  for (auto it = idxs.begin(); it != idxs.end(); ++it)
+    result.push_back(*it, inc(*it));
+  result.sort();
+  return result;
+}
+
+
 template< typename Index >
 Ranges< Index > intersect_ranges(const Ranges< Index >& range_a, std::vector< Index >& range_vec)
 {
@@ -1176,12 +1212,26 @@ void Query_Statement::execute(Resource_Manager& rman)
       }
     }
 
+    // The global tag index gives only each candidate's coarse cell. Their exact indices from the
+    // id map narrow the blocks to read further, when the map blocks read are fewer than those saved.
     if ((type & QUERY_NODE) && node_answer_state < data_collected && !range_vec_32.empty())
+    {
       intersect_ranges(node_ranges, range_vec_32).swap(node_ranges);
+      if (timestamp == NOW && !node_ids.invert && exact_indices_pay_off< Uint32_Index, Node_Skeleton >(node_ids.ids, node_ranges, rman))
+        node_ranges.intersect(exact_ranges(get_indexes_< Uint32_Index, Node_Skeleton >(node_ids.ids, rman))).swap(node_ranges);
+    }
     if ((type & QUERY_WAY) && way_answer_state < data_collected && !way_range_vec_31.empty())
+    {
       intersect_ranges(way_ranges, way_range_vec_31).swap(way_ranges);
+      if (timestamp == NOW && !way_ids.invert && exact_indices_pay_off< Uint31_Index, Way_Skeleton >(way_ids.ids, way_ranges, rman))
+        way_ranges.intersect(exact_ranges(get_indexes_< Uint31_Index, Way_Skeleton >(way_ids.ids, rman))).swap(way_ranges);
+    }
     if ((type & QUERY_RELATION) && relation_answer_state < data_collected && !relation_range_vec_31.empty())
+    {
       intersect_ranges(rel_ranges, relation_range_vec_31).swap(rel_ranges);
+      if (timestamp == NOW && !relation_ids.invert && exact_indices_pay_off< Uint31_Index, Relation_Skeleton >(relation_ids.ids, rel_ranges, rman))
+        rel_ranges.intersect(exact_ranges(get_indexes_< Uint31_Index, Relation_Skeleton >(relation_ids.ids, rman))).swap(rel_ranges);
+    }
 
     set_progress(3);
     rman.health_check(*this);
