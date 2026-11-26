@@ -38,6 +38,7 @@ import xml.etree.ElementTree as ET
 sys.dont_write_bytecode = True   # don't leave __pycache__ in the checkout
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from osm3s_run import run_osm3s  # noqa: E402
+from wr_union import wr_as_union  # noqa: E402
 
 UNIT = 10 ** 7          # units per degree
 MARGIN = 2              # units: boundary zone left to the differential check
@@ -878,6 +879,19 @@ def describe_failure(out_dir, seed, k, data, query, cand, base, expected, proble
     return d
 
 
+def wr_bn_agrees(args, db, query, cand, runner, strip=False):
+    """Whether the candidate's (exit status, output) for query equals the baseline's for the query
+    with its wr(bn...) statements written as way and relation halves (see wr_union.py). The
+    baseline gets wr(bn...) with filters wrong (fork issue #192); False if nothing is rewritten."""
+    rewritten = wr_as_union(query)
+    if rewritten == query:
+        return False
+    rc, out, _ = runner(args.baseline, db, rewritten)
+    if strip:
+        return (rc, strip_generator(out)) == (cand[0], strip_generator(cand[1]))
+    return (rc, out) == tuple(cand)
+
+
 def run_checks(args, db, data, checks, seed, prefix=''):
     results = []
     for k, (name, query, must, must_not, exact) in enumerate(checks):
@@ -893,6 +907,8 @@ def run_checks(args, db, data, checks, seed, prefix=''):
         # A difference where the candidate gets an exact answer right and the baseline doesn't
         # is a fix, not a regression.
         fixed = differs and exact and not cand_problems and bool(base_problems)
+        if differs and not fixed and wr_bn_agrees(args, db, query, (rc, out), run_query):
+            fixed = True
         differs = differs and not fixed
         failed = bool(cand_problems) or differs
         where = None
@@ -978,6 +994,9 @@ def run_pairs(args, db_a, db_b, data, pairs, seed, prefix):
             base_problems = outs['base'][2]
             differs = outs['base'][:2] != outs['cand'][:2]
             fixed = differs and not cand_problems and bool(base_problems)
+            if differs and not fixed and not cand_problems:
+                fixed = (wr_bn_agrees(args, db_a, qa, outs['cand'][0], run_query)
+                         and wr_bn_agrees(args, db_b, qb, outs['cand'][1], run_query))
             differs = differs and not fixed
         where = None
         both = f'{qa}\n--- {relation} ---\n{qb}'
@@ -1003,6 +1022,8 @@ def run_output_checks(args, db, data, out_checks, seed, start, prefix=''):
             base_problems = check(data, base_out) if brc == 0 else [f'exit status {brc}']
             differs = (brc, strip_generator(base_out)) != (rc, strip_generator(out))
         fixed = differs and check is not no_verify and not cand_problems and bool(base_problems)
+        if differs and not fixed and not cand_problems:
+            fixed = wr_bn_agrees(args, db, query, (rc, out), run_raw, strip=True)
         differs = differs and not fixed
         where = None
         if cand_problems or differs:

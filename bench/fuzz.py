@@ -48,6 +48,8 @@ import subprocess
 import sys
 import tempfile
 
+from wr_union import wr_as_union
+
 from osm3s_run import check_rss_support, run_osm3s
 import fuzz_eval
 import fuzz_output
@@ -691,6 +693,15 @@ def check(args_tuple):
                 verdict = 'skipped'
             elif digest_a == digest_b:
                 verdict = 'same'
+    if verdict == 'DIFFERENT':
+        # The baseline gets wr(bn...) with filters wrong (fork issue #192); its answer for the same
+        # statements written as way and relation halves is the right one. Accept the difference
+        # only if the candidate gives exactly that (see wr_union.py).
+        rewritten = wr_as_union(query)
+        if rewritten != query:
+            status_r, digest_r, _, _, _ = run(a, db, rewritten, timeout)
+            if status_r == status_b and digest_r == digest_b:
+                verdict = 'expected-wr-bn'
     # Printed sets always produce output, so emptiness is only told for queries run as generated.
     empty = empty and query == generated
     return (index, verdict, status_a, status_b, empty, query, out_a, out_b, cpu_a, cpu_b, rss_a, rss_b,
