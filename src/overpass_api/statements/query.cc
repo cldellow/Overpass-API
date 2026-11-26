@@ -451,6 +451,23 @@ void filter_by_ids(
 
 
 template< class TIndex, class TObject >
+void fill_cell_ids(std::vector< typename TObject::Id_Type >& ids,
+    typename std::map< TIndex, std::vector< TObject > >::const_iterator& item_it,
+    const std::map< TIndex, std::vector< TObject > >& items, uint32 coarse_index)
+{
+  while (item_it != items.end() && (item_it->first.val() & 0x7fffff00) == coarse_index)
+  {
+    for (typename std::vector< TObject >::const_iterator eit = item_it->second.begin();
+        eit != item_it->second.end(); ++eit)
+      ids.push_back(eit->id);
+    ++item_it;
+  }
+  std::sort(ids.begin(), ids.end());
+  ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+}
+
+
+template< class TIndex, class TObject >
 void Query_Statement::filter_by_tags
     (std::map< TIndex, std::vector< TObject > >& items,
      std::map< TIndex, std::vector< Attic< TObject > > >* attic_items,
@@ -461,11 +478,23 @@ void Query_Statement::filter_by_tags
       && key_nregexes.empty() && key_nvalues.empty())
     return;
 
-  // generate set of relevant coarse indices
+  // One entry per coarse index, but its ids are filled in only when that cell is filtered, so the
+  // candidates' ids are never all held at once.
   std::map< uint32, std::vector< typename TObject::Id_Type > > ids_by_coarse;
-  generate_ids_by_coarse(ids_by_coarse, items);
+  for (typename std::map< TIndex, std::vector< TObject > >::const_iterator it = items.begin(); it != items.end(); ++it)
+    ids_by_coarse.insert(ids_by_coarse.end(), std::make_pair(it->first.val() & 0x7fffff00,
+        std::vector< typename TObject::Id_Type >()));
   if (timestamp != NOW)
-    generate_ids_by_coarse(ids_by_coarse, *attic_items);
+  {
+    for (typename std::map< TIndex, std::vector< Attic< TObject > > >::const_iterator it = attic_items->begin();
+        it != attic_items->end(); ++it)
+      ids_by_coarse.insert(std::make_pair(it->first.val() & 0x7fffff00,
+          std::vector< typename TObject::Id_Type >()));
+  }
+  typename std::map< TIndex, std::vector< TObject > >::const_iterator cell_item_it = items.begin();
+  typename std::map< TIndex, std::vector< Attic< TObject > > >::const_iterator cell_attic_it;
+  if (attic_items)
+    cell_attic_it = attic_items->begin();
 
   // formulate range query
   Ranges< Tag_Index_Local > ranges = formulate_range_query(ids_by_coarse);
@@ -501,6 +530,7 @@ void Query_Statement::filter_by_tags
         coarse_count = 0;
         rman.health_check(*this);
       }
+      fill_cell_ids(it->second, cell_item_it, items, it->first);
       filter_ids_by_tags(key_union, regkey_regexes, items_db, tag_it, it->first, it->second);
     }
   }
@@ -518,6 +548,8 @@ void Query_Statement::filter_by_tags
         coarse_count = 0;
         rman.health_check(*this);
       }
+      fill_cell_ids(it->second, cell_item_it, items, it->first);
+      fill_cell_ids(it->second, cell_attic_it, *attic_items, it->first);
       filter_ids_by_tags(key_union, regkey_regexes, timestamp, items_db, tag_it, attic_items_db, attic_tag_it,
                          it->first, it->second);
     }
