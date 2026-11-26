@@ -971,7 +971,8 @@ void Query_Statement::apply_all_filters(
   rman.health_check(*this);
 
   // All filters only remove elements, so their order does not change the result.
-  // Metadata-only filters go first, so that geometry is built for fewer elements.
+  // Metadata-only filters go first, so that geometry is built for fewer elements, and (if:)
+  // filters that need geometry go last, after the other filters have built theirs.
   for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
       it != constraints.end(); ++it)
   {
@@ -981,7 +982,13 @@ void Query_Statement::apply_all_filters(
   for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
       it != constraints.end(); ++it)
   {
-    if (!(*it)->filter_reads_only_metadata())
+    if (!(*it)->filter_reads_only_metadata() && !(*it)->filter_needs_geometry())
+      (*it)->filter(*this, rman, into);
+  }
+  for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
+      it != constraints.end(); ++it)
+  {
+    if (!(*it)->filter_reads_only_metadata() && (*it)->filter_needs_geometry())
       (*it)->filter(*this, rman, into);
   }
 }
