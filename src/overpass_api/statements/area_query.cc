@@ -190,12 +190,17 @@ std::map< Uint31_Index, std::vector< Way_Skeleton > > ways_contained_in(
   Tilewise_Const_Area_Iterator tai(potential_areas->ways, potential_areas->attic_ways, stmt, rman);
   std::map< Uint31_Index, std::vector< Way_Skeleton > > result;
 
+  if (tai.is_end())
+    return result;
+
   Tilewise_Way_Iterator twi(ways, std::map< Uint31_Index, std::vector< Attic< Way_Skeleton > > >(), stmt, rman);
   while (!twi.is_end())
   {
     while (!tai.is_end() && tai.get_idx() < twi.get_idx())
       tai.next();
-    if (tai.is_end() || twi.get_idx() < tai.get_idx())
+    if (tai.is_end())
+      break;
+    if (twi.get_idx() < tai.get_idx())
     {
       twi.next();
       continue;
@@ -230,12 +235,17 @@ std::map< Uint31_Index, std::vector< Attic< Way_Skeleton > > > ways_contained_in
   Tilewise_Const_Area_Iterator tai(potential_areas->ways, potential_areas->attic_ways, stmt, rman);
   std::map< Uint31_Index, std::vector< Attic< Way_Skeleton > > > result;
 
+  if (tai.is_end())
+    return result;
+
   Tilewise_Way_Iterator twi(std::map< Uint31_Index, std::vector< Way_Skeleton > >(), ways, stmt, rman);
   while (!twi.is_end())
   {
     while (!tai.is_end() && tai.get_idx() < twi.get_idx())
       tai.next();
-    if (tai.is_end() || twi.get_idx() < tai.get_idx())
+    if (tai.is_end())
+      break;
+    if (twi.get_idx() < tai.get_idx())
     {
       twi.next();
       continue;
