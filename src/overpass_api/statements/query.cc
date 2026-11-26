@@ -20,6 +20,7 @@
 #include "../../template_db/random_file.h"
 #include "../core/settings.h"
 #include "../data/abstract_processing.h"
+#include "../data/sorted_ids.h"
 #include "../data/collect_members.h"
 #include "../data/filenames.h"
 #include "../data/filter_by_tags.h"
@@ -301,11 +302,12 @@ void filter_ids_by_ntags
 
     bool valid = false;
     std::string last_value = void_tag_value() + " ";
+    typename std::vector< Id_Type >::size_type pos = 0;
     while ((!(tag_it == items_db.range_end())) &&
         ((tag_it.index().index) & 0x7fffff00) == coarse_index &&
         tag_it.index().key == key_it->first)
     {
-      if (monobound_binary_search(new_ids, tag_it.object()))
+      if (sorted_contains(new_ids, pos, tag_it.object()))
       {
         std::pair< uint64, uint64 >& timestamp_ref = timestamps[tag_it.object()];
         timestamp_ref.second = NOW;
@@ -333,7 +335,7 @@ void filter_ids_by_ntags
         ((attic_tag_it.index().index) & 0x7fffff00) == coarse_index &&
         attic_tag_it.index().key == key_it->first)
     {
-      if (monobound_binary_search(new_ids, Id_Type(attic_tag_it.object())))
+      if (sorted_contains(new_ids, pos, Id_Type(attic_tag_it.object())))
       {
         std::pair< uint64, uint64 >& timestamp_ref = timestamps[attic_tag_it.object()];
         if (timestamp < attic_tag_it.object().timestamp &&
@@ -397,13 +399,14 @@ void filter_by_ids(
     for (typename std::map< uint32, std::vector< typename TObject::Id_Type > >::const_iterator
         it = ids_by_coarse.begin(); it != ids_by_coarse.end(); ++it)
     {
+      typename std::vector< typename TObject::Id_Type >::size_type pos = 0;
       while ((item_it != items.end()) &&
           ((item_it->first.val() & 0x7fffff00) == it->first))
       {
         for (typename std::vector< TObject >::const_iterator eit = item_it->second.begin();
              eit != item_it->second.end(); ++eit)
         {
-          if (monobound_binary_search(it->second, eit->id))
+          if (sorted_contains(it->second, pos, eit->id))
             result[item_it->first.val()].push_back(*eit);
         }
         ++item_it;
@@ -418,13 +421,14 @@ void filter_by_ids(
     for (typename std::map< uint32, std::vector< typename TObject::Id_Type > >::const_iterator
         it = ids_by_coarse.begin(); it != ids_by_coarse.end(); ++it)
     {
+      typename std::vector< typename TObject::Id_Type >::size_type pos = 0;
       while ((item_it != items.end()) &&
           ((item_it->first.val() & 0x7fffff00) == it->first))
       {
         for (typename std::vector< TObject >::const_iterator eit = item_it->second.begin();
              eit != item_it->second.end(); ++eit)
         {
-          if (monobound_binary_search(it->second, eit->id))
+          if (sorted_contains(it->second, pos, eit->id))
             result[item_it->first.val()].push_back(*eit);
         }
         ++item_it;
@@ -436,7 +440,7 @@ void filter_by_ids(
         for (typename std::vector< Attic< TObject > >::const_iterator eit = attic_item_it->second.begin();
              eit != attic_item_it->second.end(); ++eit)
         {
-          if (monobound_binary_search(it->second, eit->id))
+          if (sorted_contains(it->second, pos, eit->id))
             attic_result[attic_item_it->first.val()].push_back(*eit);
         }
         ++attic_item_it;
@@ -634,13 +638,14 @@ void Query_Statement::filter_by_tags
 
       filter_ids_by_tags_old(ids_by_coarse_, key_union, regkey_regexes, items_db, tag_it, it->first);
 
+      typename std::vector< typename TObject::Id_Type >::size_type pos = 0;
       while ((item_it != items.end()) &&
           ((item_it->first.val() & 0x7fffff00) == it->first))
       {
         for (typename std::vector< TObject >::const_iterator eit = item_it->second.begin();
 	     eit != item_it->second.end(); ++eit)
         {
-          if (monobound_binary_search(ids_by_coarse_, eit->id))
+          if (sorted_contains(ids_by_coarse_, pos, eit->id))
 	    result[item_it->first.val()].push_back(*eit);
         }
         ++item_it;

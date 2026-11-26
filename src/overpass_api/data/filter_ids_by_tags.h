@@ -19,6 +19,8 @@
 #ifndef DE__OSM3S___OVERPASS_API__DATA__FILTER_IDS_BY_TAGS_H
 #define DE__OSM3S___OVERPASS_API__DATA__FILTER_IDS_BY_TAGS_H
 
+#include "sorted_ids.h"
+
 
 template< typename Id_Type >
 void filter_ids_by_tags
@@ -36,6 +38,7 @@ void filter_ids_by_tags
   std::map< std::string, std::pair< std::string, std::vector< Regular_Expression* > > >::const_iterator key_it = keys.begin();
 
   std::vector< Id_Type > old_ids;
+  typename std::vector< Id_Type >::size_type old_pos = 0;
   std::vector< uint64 > matched_by_key_regexes;
   std::vector< uint64 > matched_by_both_regexes;
   std::vector< std::vector< Id_Type > > matched_ids(key_regexes.size());
@@ -97,11 +100,11 @@ void filter_ids_by_tags
       }
     }
 
-    if (key_relevant && valid && monobound_binary_search(old_ids, tag_it.object()))
+    if (key_relevant && valid && sorted_contains(old_ids, old_pos, tag_it.object()))
       new_ids.push_back(tag_it.object());
 
     if (!matched_by_both_regexes.empty() &&
-	(monobound_binary_search(old_ids, tag_it.object()) ||
+	(sorted_contains(old_ids, old_pos, tag_it.object()) ||
 	 monobound_binary_search(new_ids, tag_it.object())))
     {
       for (std::vector< uint64 >::const_iterator reg_it = matched_by_both_regexes.begin();

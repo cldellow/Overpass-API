@@ -244,6 +244,7 @@ nobase_dist_HEADERS = \
   overpass_api/data/regular_expression.h\
   overpass_api/data/relation_geometry_store.h\
   overpass_api/data/set_comparison.h\
+  overpass_api/data/sorted_ids.h\
   overpass_api/data/tag_store.h\
   overpass_api/data/tags_global_reader.h\
   overpass_api/data/tilewise_geometry.h\

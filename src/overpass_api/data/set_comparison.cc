@@ -18,6 +18,7 @@
 
 #include "../statements/evaluator.h"
 #include "set_comparison.h"
+#include "sorted_ids.h"
 
 #include <algorithm>
 #include <map>
@@ -292,13 +293,14 @@ void Set_Comparison::tags_quadtile
 
   typename std::map< Index, std::vector< Object > >::const_iterator
       item_it(items.begin());
+  typename std::vector< typename Object::Id_Type >::size_type pos = 0;
   // print the result
   while (item_it != items.end())
   {
     for (typename std::vector< Object >::const_iterator it2(item_it->second.begin());
         it2 != item_it->second.end(); ++it2)
     {
-      if (monobound_binary_search(id_list, it2->id))
+      if (sorted_contains(id_list, pos, it2->id))
         print_item(extra_data, item_it->first.val(), *it2, tag_store.get(item_it->first, *it2),
             meta_printer.get(item_it->first, it2->id), extra_data.users);
     }
@@ -320,12 +322,13 @@ void Set_Comparison::tags_quadtile_attic
 
   typename std::map< Index, std::vector< Attic< Object > > >::const_iterator
       item_it(items.begin());
+  typename std::vector< typename Object::Id_Type >::size_type pos = 0;
   while (item_it != items.end())
   {
     for (typename std::vector< Attic< Object > >::const_iterator it2(item_it->second.begin());
         it2 != item_it->second.end(); ++it2)
     {
-      if (monobound_binary_search(id_list, it2->id))
+      if (sorted_contains(id_list, pos, it2->id))
         print_item(extra_data, item_it->first.val(), *it2, tag_store.get(item_it->first, *it2),
                  meta_printer.get(item_it->first, it2->id, it2->timestamp), extra_data.users);
     }
