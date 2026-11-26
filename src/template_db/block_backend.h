@@ -104,6 +104,10 @@ struct Block_Backend_Basic_Iterator
   {
     return idx_cache.object();
   }
+  uint8* index_raw() const
+  {
+    return idx_cache.get_ptr_to_raw();
+  }
   const Object& object()
   {
     return obj_cache.object();

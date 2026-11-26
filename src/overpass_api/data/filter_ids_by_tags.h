@@ -364,10 +364,10 @@ void filter_ids_by_tags
   while (true)
   {
     bool current_finished =
-        (tag_it == items_db.range_end() || ((tag_it.index().index) & 0x7fffff00) != coarse_index);
+        (tag_it == items_db.range_end() || (tag_coarse_index(tag_it)) != coarse_index);
     bool attic_finished =
         (attic_tag_it == attic_items_db.range_end()
-        || ((attic_tag_it.index().index) & 0x7fffff00) != coarse_index);
+        || (tag_coarse_index(attic_tag_it)) != coarse_index);
 
     if (!attic_finished && (current_finished || attic_tag_it.index().key < tag_it.index().key))
     {
