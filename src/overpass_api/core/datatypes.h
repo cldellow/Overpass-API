@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "basic_types.h"
+#include "monobound_search.h"
 #include "geometry.h"
 #include "type_node.h"
 #include "type_way.h"
@@ -102,23 +103,14 @@ struct Pair_Equal_Id {
 };
 
 
+// The callers look up node refs of ways and members of relations, in no particular order.
 template < class T >
 const T* binary_search_for_id(const std::vector< T >& vect, typename T::Id_Type id)
 {
-  uint32 lower(0);
-  uint32 upper(vect.size());
-
-  while (upper > lower)
-  {
-    uint32 pos((upper + lower)/2);
-    if (id < vect[pos].id)
-      upper = pos;
-    else if (vect[pos].id == id)
-      return &(vect[pos]);
-    else
-      lower = pos + 1;
-  }
-  return 0;
+  if (vect.empty())
+    return 0;
+  const T& found = vect[monobound_index(vect, id, [](const T& t) -> const typename T::Id_Type& { return t.id; })];
+  return found.id == id ? &found : 0;
 }
 
 
@@ -547,24 +539,16 @@ struct OSM_Element_Metadata_Skeleton
 };
 
 
+// The callers look up members of relations, in no particular order.
 template< class TIndex, class TObject >
 const std::pair< TIndex, const TObject* >* binary_search_for_pair_id
     (const std::vector< std::pair< TIndex, const TObject* > >& vect, typename TObject::Id_Type id)
 {
-  uint32 lower(0);
-  uint32 upper(vect.size());
-
-  while (upper > lower)
-  {
-    uint32 pos((upper + lower)/2);
-    if (id < vect[pos].second->id)
-      upper = pos;
-    else if (vect[pos].second->id == id)
-      return &(vect[pos]);
-    else
-      lower = pos + 1;
-  }
-  return 0;
+  if (vect.empty())
+    return 0;
+  const std::pair< TIndex, const TObject* >& found = vect[monobound_index(vect, id,
+      [](const std::pair< TIndex, const TObject* >& p) -> const typename TObject::Id_Type& { return p.second->id; })];
+  return found.second->id == id ? &found : 0;
 }
 
 
