@@ -209,7 +209,7 @@ void filter_ids_by_ntags
       key_it = keys.begin();
 
   while ((!(tag_it == items_db.range_end())) &&
-      (((tag_it.index().index) & 0x7fffff00) == coarse_index))
+      ((tag_coarse_index(tag_it)) == coarse_index))
   {
     if (tag_it.index().key != last_key)
     {
@@ -260,7 +260,7 @@ void filter_ids_by_ntags
     ++tag_it;
   }
   while ((!(tag_it == items_db.range_end())) &&
-      (((tag_it.index().index) & 0x7fffff00) == coarse_index))
+      ((tag_coarse_index(tag_it)) == coarse_index))
     ++tag_it;
 
   sort(removed_ids.begin(), removed_ids.end());
@@ -291,18 +291,18 @@ void filter_ids_by_ntags
       timestamps[*it];
 
     while ((!(tag_it == items_db.range_end())) &&
-        ((tag_it.index().index) & 0x7fffff00) == coarse_index &&
+        (tag_coarse_index(tag_it)) == coarse_index &&
         tag_it.index().key < key_it->first)
       ++tag_it;
     while ((!(attic_tag_it == attic_items_db.range_end())) &&
-        ((attic_tag_it.index().index) & 0x7fffff00) == coarse_index &&
+        (tag_coarse_index(attic_tag_it)) == coarse_index &&
         attic_tag_it.index().key < key_it->first)
       ++attic_tag_it;
 
     bool valid = false;
     std::string last_value = void_tag_value() + " ";
     while ((!(tag_it == items_db.range_end())) &&
-        ((tag_it.index().index) & 0x7fffff00) == coarse_index &&
+        (tag_coarse_index(tag_it)) == coarse_index &&
         tag_it.index().key == key_it->first)
     {
       if (std::binary_search(new_ids.begin(), new_ids.end(), tag_it.object()))
@@ -330,7 +330,7 @@ void filter_ids_by_ntags
 
     last_value = void_tag_value() + " ";
     while ((!(attic_tag_it == attic_items_db.range_end())) &&
-        ((attic_tag_it.index().index) & 0x7fffff00) == coarse_index &&
+        (tag_coarse_index(attic_tag_it)) == coarse_index &&
         attic_tag_it.index().key == key_it->first)
     {
       if (std::binary_search(new_ids.begin(), new_ids.end(), Id_Type(attic_tag_it.object())))
@@ -373,10 +373,10 @@ void filter_ids_by_ntags
     }
   }
   while ((!(tag_it == items_db.range_end())) &&
-      ((tag_it.index().index) & 0x7fffff00) == coarse_index)
+      (tag_coarse_index(tag_it)) == coarse_index)
     ++tag_it;
   while ((!(attic_tag_it == attic_items_db.range_end())) &&
-      ((attic_tag_it.index().index) & 0x7fffff00) == coarse_index)
+      (tag_coarse_index(attic_tag_it)) == coarse_index)
     ++attic_tag_it;
 }
 
