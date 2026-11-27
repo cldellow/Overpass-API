@@ -25,6 +25,7 @@
 #include "collect_items.h"
 #include "filenames.h"
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <vector>
@@ -229,6 +230,39 @@ bool Collect_Items< Index, Object >::get_chunk(
 }
 
 
+// Sorts entries by id and keeps only the last entry of each id, in the order they were added,
+// like repeated assignments to a std::map.
+template< typename Id_Type, typename Value >
+void sort_keeping_last_per_id(std::vector< std::pair< Id_Type, Value > >& entries)
+{
+  std::stable_sort(entries.begin(), entries.end(),
+      [](const std::pair< Id_Type, Value >& a, const std::pair< Id_Type, Value >& b)
+      { return a.first < b.first; });
+  typename std::vector< std::pair< Id_Type, Value > >::iterator kept = entries.begin();
+  for (typename std::vector< std::pair< Id_Type, Value > >::iterator it = entries.begin();
+      it != entries.end(); ++it)
+  {
+    if (it + 1 != entries.end() && (it + 1)->first == it->first)
+      continue;
+    *kept++ = *it;
+  }
+  entries.erase(kept, entries.end());
+}
+
+
+// Returns the value stored for id in entries sorted by sort_keeping_last_per_id, or 0.
+template< typename Id_Type, typename Value >
+Value* find_timestamps(std::vector< std::pair< Id_Type, Value > >& entries, const Id_Type& id)
+{
+  typename std::vector< std::pair< Id_Type, Value > >::iterator it = std::lower_bound(
+      entries.begin(), entries.end(), id,
+      [](const std::pair< Id_Type, Value >& a, const Id_Type& b) { return a.first < b; });
+  if (it != entries.end() && it->first == id)
+    return &it->second;
+  return 0;
+}
+
+
 template< typename Index, typename Skeleton >
 void filter_attic_elements
     (Resource_Manager& rman, uint64 timestamp,
@@ -294,26 +328,29 @@ void filter_attic_elements
     // Confirm elements that are backed by meta data
     // Update element's expiration timestamp if a meta exists that is older than the current
     // expiration date and younger than timestamp
-    std::map< Index, std::map< typename Skeleton::Id_Type, std::pair< uint64, uint64 > > >
-        timestamp_by_id_by_idx;
+    // Per index, the entries are sorted by id with one entry per id. A sorted vector takes
+    // 24 bytes per element where a std::map took a tree node of about 64 bytes.
+    typedef std::pair< typename Skeleton::Id_Type, std::pair< uint64, uint64 > > Timestamps_Entry;
+    std::map< Index, std::vector< Timestamps_Entry > > timestamp_by_id_by_idx;
     for (typename std::map< Index, std::vector< Skeleton > >::const_iterator it = current.begin();
          it != current.end(); ++it)
     {
-      std::map< typename Skeleton::Id_Type, std::pair< uint64, uint64 > >& entry
-          = timestamp_by_id_by_idx[it->first];
+      std::vector< Timestamps_Entry >& entry = timestamp_by_id_by_idx[it->first];
       for (typename std::vector< Skeleton >::const_iterator it2 = it->second.begin();
            it2 != it->second.end(); ++it2)
-        entry[it2->id] = std::make_pair(0, NOW);
+        entry.push_back(Timestamps_Entry(it2->id, std::make_pair(0, NOW)));
     }
     for (typename std::map< Index, std::vector< Attic< Skeleton > > >::const_iterator it = attic.begin();
          it != attic.end(); ++it)
     {
-      std::map< typename Skeleton::Id_Type, std::pair< uint64, uint64 > >& entry
-          = timestamp_by_id_by_idx[it->first];
+      std::vector< Timestamps_Entry >& entry = timestamp_by_id_by_idx[it->first];
       for (typename std::vector< Attic< Skeleton > >::const_iterator it2 = it->second.begin();
            it2 != it->second.end(); ++it2)
-        entry[it2->id] = std::make_pair(0, it2->timestamp);
+        entry.push_back(Timestamps_Entry(it2->id, std::make_pair(0, it2->timestamp)));
     }
+    for (typename std::map< Index, std::vector< Timestamps_Entry > >::iterator
+        it = timestamp_by_id_by_idx.begin(); it != timestamp_by_id_by_idx.end(); ++it)
+      sort_keeping_last_per_id(it->second);
 
     Block_Backend< Index, OSM_Element_Metadata_Skeleton< typename Skeleton::Id_Type >,
             typename std::vector< Index >::const_iterator >
@@ -322,13 +359,14 @@ void filter_attic_elements
     for (auto it = attic_meta_db.discrete_begin(idx_set.begin(), idx_set.end());
         !(it == attic_meta_db.discrete_end()); ++it)
     {
-      auto tit = timestamp_by_id_by_idx[it.index()].find(it.object().ref);
-      if (tit != timestamp_by_id_by_idx[it.index()].end())
+      std::pair< uint64, uint64 >* tit
+          = find_timestamps(timestamp_by_id_by_idx[it.index()], it.object().ref);
+      if (tit)
       {
         if (timestamp < it.object().timestamp)
-          tit->second.second = std::min(tit->second.second, it.object().timestamp);
+          tit->second = std::min(tit->second, it.object().timestamp);
         else
-          tit->second.first = std::max(tit->second.first, it.object().timestamp);
+          tit->first = std::max(tit->first, it.object().timestamp);
       }
     }
 
@@ -341,13 +379,14 @@ void filter_attic_elements
     for (auto it = meta_db.discrete_begin(idx_set.begin(), idx_set.end());
         !(it == meta_db.discrete_end()); ++it)
     {
-      auto tit = timestamp_by_id_by_idx[it.index()].find(it.object().ref);
-      if (tit != timestamp_by_id_by_idx[it.index()].end())
+      std::pair< uint64, uint64 >* tit
+          = find_timestamps(timestamp_by_id_by_idx[it.index()], it.object().ref);
+      if (tit)
       {
         if (timestamp < it.object().timestamp)
-          tit->second.second = std::min(tit->second.second, it.object().timestamp);
+          tit->second = std::min(tit->second, it.object().timestamp);
         else
-          tit->second.first = std::max(tit->second.first, it.object().timestamp);
+          tit->first = std::max(tit->first, it.object().timestamp);
       }
     }
 
@@ -356,18 +395,18 @@ void filter_attic_elements
          it != current.end(); ++it)
     {
       std::vector< Skeleton > result;
-      std::map< typename Skeleton::Id_Type, std::pair< uint64, uint64 > >& entry
-          = timestamp_by_id_by_idx[it->first];
+      std::vector< Timestamps_Entry >& entry = timestamp_by_id_by_idx[it->first];
 
       for (typename std::vector< Skeleton >::const_iterator it2 = it->second.begin();
            it2 != it->second.end(); ++it2)
       {
-        if (entry[it2->id].first > 0)
+        const std::pair< uint64, uint64 >* timestamps = find_timestamps(entry, it2->id);
+        if (timestamps && timestamps->first > 0)
         {
-          if (entry[it2->id].second == NOW)
+          if (timestamps->second == NOW)
             result.push_back(*it2);
           else
-            attic[it->first].push_back(Attic< Skeleton >(*it2, entry[it2->id].second));
+            attic[it->first].push_back(Attic< Skeleton >(*it2, timestamps->second));
         }
       }
 
@@ -379,16 +418,16 @@ void filter_attic_elements
          it != attic.end(); ++it)
     {
       std::vector< Attic< Skeleton > > result;
-      std::map< typename Skeleton::Id_Type, std::pair< uint64, uint64 > >& entry
-          = timestamp_by_id_by_idx[it->first];
+      std::vector< Timestamps_Entry >& entry = timestamp_by_id_by_idx[it->first];
 
       for (typename std::vector< Attic< Skeleton > >::const_iterator it2 = it->second.begin();
            it2 != it->second.end(); ++it2)
       {
-        if (entry[it2->id].first > 0)
+        const std::pair< uint64, uint64 >* timestamps = find_timestamps(entry, it2->id);
+        if (timestamps && timestamps->first > 0)
         {
           result.push_back(*it2);
-          result.back().timestamp = entry[it2->id].second;
+          result.back().timestamp = timestamps->second;
         }
       }
 
