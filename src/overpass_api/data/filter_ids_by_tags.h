@@ -217,8 +217,8 @@ public:
     std::vector< Id_Type > result;
     for (typename std::vector< Id_Type >::const_iterator it = new_ids.begin(); it != new_ids.end(); ++it)
     {
-      std::pair< uint64, uint64 >& timestamp_ref = timestamps[*it];
-      if (0 < timestamp_ref.first && timestamp_ref.first <= timestamp_ref.second)
+      typename std::map< Id_Type, std::pair< uint64, uint64 > >::const_iterator found = timestamps.find(*it);
+      if (found != timestamps.end() && 0 < found->second.first && found->second.first <= found->second.second)
         result.push_back(*it);
     }
     std::sort(result.begin(), result.end());
