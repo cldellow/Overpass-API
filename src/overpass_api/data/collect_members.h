@@ -123,7 +123,26 @@ bool add_way_to_area_blocks(const std::vector< Quad_Coord >& coords,
                             uint32 id, std::map< Uint31_Index, std::vector< Area_Block > >& areas);
 
 
-std::vector< Quad_Coord > make_geometry(const Way_Skeleton& way, const std::vector< Node >& nodes);
+// nodes must be sorted by id. Node_Type is Node or Node_Position.
+template< typename Node_Type >
+std::vector< Quad_Coord > make_geometry(const Way_Skeleton& way, const std::vector< Node_Type >& nodes)
+{
+  std::vector< Quad_Coord > result;
+
+  for (std::vector< Node::Id_Type >::const_iterator it3(way.nds.begin());
+      it3 != way.nds.end(); ++it3)
+  {
+    const Node_Type* node = binary_search_for_id(nodes, *it3);
+    if (node == 0)
+    {
+      result.clear();
+      return result;
+    }
+    result.push_back(Quad_Coord(node->index, node->ll_lower_));
+  }
+
+  return result;
+}
 
 
 void filter_ways_by_ranges(std::map< Uint31_Index, std::vector< Way_Skeleton > >& ways,
@@ -608,8 +627,32 @@ void keep_matching_skeletons
 }
 
 
+// Appends the nodes of skels to result as Node_Positions and empties skels as it goes,
+// so the two copies don't coexist in full. result is not sorted.
+template< typename Skeleton >
+void move_to_node_positions(
+    std::map< Uint32_Index, std::vector< Skeleton > >& skels, std::vector< Node_Position >& result)
+{
+  std::size_t count = 0;
+  for (typename std::map< Uint32_Index, std::vector< Skeleton > >::const_iterator it = skels.begin();
+      it != skels.end(); ++it)
+    count += it->second.size();
+  result.reserve(result.size() + count);
+
+  for (typename std::map< Uint32_Index, std::vector< Skeleton > >::iterator it = skels.begin();
+      it != skels.end(); ++it)
+  {
+    for (typename std::vector< Skeleton >::const_iterator iit = it->second.begin();
+        iit != it->second.end(); ++iit)
+      result.push_back(Node_Position(iit->id, it->first.val(), iit->ll_lower));
+    std::vector< Skeleton >().swap(it->second);
+  }
+  skels.clear();
+}
+
+
 void keep_matching_skeletons
-    (std::vector< Node >& result,
+    (std::vector< Node_Position >& result,
      const std::map< Uint32_Index, std::vector< Node_Skeleton > >& current,
      const std::map< Uint32_Index, std::vector< Attic< Node_Skeleton > > >& attic,
      uint64 timestamp);
