@@ -305,7 +305,7 @@ void filter_ids_by_ntags
         ((tag_it.index().index) & 0x7fffff00) == coarse_index &&
         tag_it.index().key == key_it->first)
     {
-      if (std::binary_search(new_ids.begin(), new_ids.end(), tag_it.object()))
+      if (monobound_binary_search(new_ids, tag_it.object()))
       {
         std::pair< uint64, uint64 >& timestamp_ref = timestamps[tag_it.object()];
         timestamp_ref.second = NOW;
@@ -333,7 +333,7 @@ void filter_ids_by_ntags
         ((attic_tag_it.index().index) & 0x7fffff00) == coarse_index &&
         attic_tag_it.index().key == key_it->first)
     {
-      if (std::binary_search(new_ids.begin(), new_ids.end(), Id_Type(attic_tag_it.object())))
+      if (monobound_binary_search(new_ids, Id_Type(attic_tag_it.object())))
       {
         std::pair< uint64, uint64 >& timestamp_ref = timestamps[attic_tag_it.object()];
         if (timestamp < attic_tag_it.object().timestamp &&
@@ -403,7 +403,7 @@ void filter_by_ids(
         for (typename std::vector< TObject >::const_iterator eit = item_it->second.begin();
              eit != item_it->second.end(); ++eit)
         {
-          if (std::binary_search(it->second.begin(), it->second.end(), eit->id))
+          if (monobound_binary_search(it->second, eit->id))
             result[item_it->first.val()].push_back(*eit);
         }
         ++item_it;
@@ -424,7 +424,7 @@ void filter_by_ids(
         for (typename std::vector< TObject >::const_iterator eit = item_it->second.begin();
              eit != item_it->second.end(); ++eit)
         {
-          if (std::binary_search(it->second.begin(), it->second.end(), eit->id))
+          if (monobound_binary_search(it->second, eit->id))
             result[item_it->first.val()].push_back(*eit);
         }
         ++item_it;
@@ -436,7 +436,7 @@ void filter_by_ids(
         for (typename std::vector< Attic< TObject > >::const_iterator eit = attic_item_it->second.begin();
              eit != attic_item_it->second.end(); ++eit)
         {
-          if (std::binary_search(it->second.begin(), it->second.end(), eit->id))
+          if (monobound_binary_search(it->second, eit->id))
             attic_result[attic_item_it->first.val()].push_back(*eit);
         }
         ++attic_item_it;
@@ -640,7 +640,7 @@ void Query_Statement::filter_by_tags
         for (typename std::vector< TObject >::const_iterator eit = item_it->second.begin();
 	     eit != item_it->second.end(); ++eit)
         {
-          if (std::binary_search(ids_by_coarse_.begin(), ids_by_coarse_.end(), eit->id))
+          if (monobound_binary_search(ids_by_coarse_, eit->id))
 	    result[item_it->first.val()].push_back(*eit);
         }
         ++item_it;
