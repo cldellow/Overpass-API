@@ -88,7 +88,15 @@ Output_Handler* Output_Popup_Generator::new_output_handler(const std::map< std::
           }
 	  clear_until_after(*token, error_output, "]");
 
-	  filter_conjunction.push_back(new Tag_Filter(key, value, straight));
+	  try
+	  {
+	    filter_conjunction.push_back(new Tag_Filter(key, value, straight));
+	  }
+	  catch (Regular_Expression_Error e)
+	  {
+	    if (error_output)
+	      error_output->add_parse_error("Invalid regular expression: \"" + value + "\"", token->line_col().first);
+	  }
 	}
 
         clear_until_after(*token, error_output, ";", true);
