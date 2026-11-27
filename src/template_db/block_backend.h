@@ -331,10 +331,9 @@ struct Discrete_Idx_Assessor
 
   bool is_relevant(uint8* ptr)
   {
-    Index idx((void*)ptr);
-    while (index_it != index_end && *index_it < idx)
+    while (index_it != index_end && index_it->less((void*)ptr))
       ++index_it;
-    return index_it != index_end && *index_it == idx;
+    return index_it != index_end && index_it->leq((void*)ptr);
   }
 
 private:
@@ -406,10 +405,9 @@ struct Range_Idx_Assessor
 
   bool is_relevant(uint8* ptr)
   {
-    Index idx((void*)ptr);
-    while (index_it != index_end && !(idx < index_it.upper_bound()))
+    while (index_it != index_end && index_it.upper_bound().leq((void*)ptr))
       ++index_it;
-    return index_it != index_end && !(idx < index_it.lower_bound()) && idx < index_it.upper_bound();
+    return index_it != index_end && index_it.lower_bound().leq((void*)ptr);
   }
 
 private:
