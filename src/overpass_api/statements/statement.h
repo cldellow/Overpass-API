@@ -120,6 +120,11 @@ class Query_Constraint
     // to minimize the number of elements that need to be processed.
     virtual void filter(const Statement& query, Resource_Manager& rman, Set& into) {}
 
+    // True if the expensive filter only looks at the elements' metadata, never at
+    // their geometry. Such filters run before the others: reading metadata costs far
+    // less than building geometry, so they shrink the set before geometry is built.
+    virtual bool filter_reads_only_metadata() const { return false; }
+
     virtual ~Query_Constraint() {}
 };
 
