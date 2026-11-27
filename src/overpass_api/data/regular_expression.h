@@ -25,6 +25,7 @@
 
 #include <iostream>
 #include <string>
+#include <vector>
 
 
 struct Regular_Expression_Error
@@ -55,6 +56,14 @@ class Regular_Expression
 
       if (strategy == call_library)
       {
+        literal_mode = parse_literals(regex, literals);
+        if (literal_mode != no_literals && !case_sensitive)
+        {
+          for (std::vector< std::string >::iterator it = literals.begin(); it != literals.end(); ++it)
+            *it = ascii_lower(*it);
+        }
+        literal_case_sensitive = case_sensitive;
+
         setlocale(LC_ALL, "C.UTF-8");
         int case_flag = case_sensitive ? 0 : REG_ICASE;
         int error_no = regcomp(&preg, regex.c_str(), REG_EXTENDED|REG_NOSUB|case_flag);
@@ -78,6 +87,8 @@ class Regular_Expression
 //       if (is_cache_available && line == prev_line)
 //         return prev_result;
 
+      if (literal_mode != no_literals && is_ascii(line))
+        return matches_literals(line);
       bool result = (regexec(&preg, line.c_str(), 0, 0, 0) == 0);
 
 //       is_cache_available = true;
@@ -88,11 +99,97 @@ class Regular_Expression
     }
 
   private:
+    // Patterns that are only plain ASCII words separated by '|', either unanchored
+    // ("cafe|bar": the value contains one of them) or anchored as a whole ("^(cafe|bar)$"
+    // or "^cafe$": the value is one of them), are matched without the library for ASCII
+    // values. For those, the result is the same, also with REG_ICASE. Other values go to
+    // the library, so its handling of non-ASCII text is unchanged.
+    enum Literal_Mode { no_literals, contains_literal, equals_literal };
+
+    static bool is_literal_char(char c)
+    {
+      return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+          || c == ' ' || c == '_' || c == '-' || c == ':' || c == ';' || c == ',' || c == '\'' || c == '&' || c == '/';
+    }
+
+    static bool is_ascii(const std::string& s)
+    {
+      for (std::string::const_iterator it = s.begin(); it != s.end(); ++it)
+      {
+        if ((unsigned char)*it >= 0x80 || *it == 0)
+          return false;
+      }
+      return true;
+    }
+
+    static std::string ascii_lower(std::string s)
+    {
+      for (std::string::iterator it = s.begin(); it != s.end(); ++it)
+      {
+        if (*it >= 'A' && *it <= 'Z')
+          *it += 'a' - 'A';
+      }
+      return s;
+    }
+
+    static Literal_Mode parse_literals(const std::string& regex, std::vector< std::string >& literals)
+    {
+      std::string body = regex;
+      Literal_Mode mode = contains_literal;
+      if (body.size() >= 2 && body[0] == '^' && body[body.size()-1] == '$')
+      {
+        body = body.substr(1, body.size() - 2);
+        if (body.size() >= 2 && body[0] == '(' && body[body.size()-1] == ')')
+          body = body.substr(1, body.size() - 2);
+        else if (body.find('|') != std::string::npos)
+          // "^a|b$" means "^a" or "b$".
+          return no_literals;
+        mode = equals_literal;
+      }
+      std::string::size_type start = 0;
+      while (true)
+      {
+        std::string::size_type end = body.find('|', start);
+        std::string literal = body.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        if (literal.empty())
+          return no_literals;
+        for (std::string::const_iterator it = literal.begin(); it != literal.end(); ++it)
+        {
+          if (!is_literal_char(*it))
+            return no_literals;
+        }
+        literals.push_back(literal);
+        if (end == std::string::npos)
+          return mode;
+        start = end + 1;
+      }
+    }
+
+    bool matches_literals(const std::string& line) const
+    {
+      if (literal_case_sensitive)
+        return matches_literals_exactly(line);
+      return matches_literals_exactly(ascii_lower(line));
+    }
+
+    bool matches_literals_exactly(const std::string& value) const
+    {
+      for (std::vector< std::string >::const_iterator it = literals.begin(); it != literals.end(); ++it)
+      {
+        if (literal_mode == equals_literal ? value == *it : value.find(*it) != std::string::npos)
+          return true;
+      }
+      return false;
+    }
+
     Regular_Expression(const Regular_Expression&);
     const Regular_Expression& operator=(const Regular_Expression&);
 
     regex_t preg;
     Strategy strategy;
+    Literal_Mode literal_mode = no_literals;
+    bool literal_case_sensitive = true;
+    std::vector< std::string > literals;
 //     mutable bool cache_available;
 //     mutable std::string prev_line;
 //     mutable bool prev_result;
