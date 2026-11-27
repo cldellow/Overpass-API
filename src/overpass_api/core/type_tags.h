@@ -239,6 +239,15 @@ struct Tag_Index_Local
 };
 
 
+// The cell part of a Tag_Index_Local entry's index, read from the raw entry under a block
+// iterator: (it.index().index & 0x7fffff00) without decoding the key and value.
+template< typename Iterator >
+inline uint32 tag_coarse_index(const Iterator& it)
+{
+  return ((*((uint32*)it.index_raw() + 1))<<8) & 0x7fffff00;
+}
+
+
 inline const std::string& void_tag_value()
 {
   static std::string void_value = " ";
