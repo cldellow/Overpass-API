@@ -20,6 +20,7 @@
 #define DE__OSM3S___OVERPASS_API__DATA__ABSTRACT_PROCESSING_H
 
 #include "../core/datatypes.h"
+#include "../core/monobound_search.h"
 #include "../statements/statement.h"
 #include "filenames.h"
 
@@ -131,7 +132,7 @@ inline bool has_a_child_with_id
       it3 != relation.members.end(); ++it3)
   {
     if (it3->type == type &&
-        std::binary_search(ids.begin(), ids.end(), it3->ref))
+        monobound_contains(ids, it3->ref))
       return true;
   }
   return false;
@@ -145,7 +146,7 @@ inline bool has_a_child_with_id_and_role
       it3 != relation.members.end(); ++it3)
   {
     if (it3->type == type && it3->role == role_id &&
-        std::binary_search(ids.begin(), ids.end(), it3->ref))
+        monobound_contains(ids, it3->ref))
       return true;
   }
   return false;
@@ -161,13 +162,13 @@ inline bool has_a_child_with_id
     for (; it3 != pos->end() && *it3 < 0; ++it3)
     {
       if (*it3 + (int)way.nds.size() >= 0 &&
-          std::binary_search(ids.begin(), ids.end(), way.nds[*it3 + way.nds.size()]))
+          monobound_contains(ids, way.nds[*it3 + way.nds.size()]))
         return true;
     }
     for (; it3 != pos->end(); ++it3)
     {
       if (*it3 > 0 && *it3 < (int)way.nds.size()+1 &&
-          std::binary_search(ids.begin(), ids.end(), way.nds[*it3-1]))
+          monobound_contains(ids, way.nds[*it3-1]))
         return true;
     }
   }
@@ -176,7 +177,7 @@ inline bool has_a_child_with_id
     for (std::vector< Node::Id_Type >::const_iterator it3(way.nds.begin());
         it3 != way.nds.end(); ++it3)
     {
-      if (std::binary_search(ids.begin(), ids.end(), *it3))
+      if (monobound_contains(ids, *it3))
         return true;
     }
   }

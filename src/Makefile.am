@@ -224,6 +224,7 @@ nobase_dist_HEADERS = \
   overpass_api/core/four_field_index.h\
   overpass_api/core/geometry.h\
   overpass_api/core/index_computations.h\
+  overpass_api/core/monobound_search.h\
   overpass_api/core/parsed_query.h\
   overpass_api/core/settings.h\
   overpass_api/core/type_area.h\
