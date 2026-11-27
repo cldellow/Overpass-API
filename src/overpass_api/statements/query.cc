@@ -918,6 +918,93 @@ void filter_elems_for_closed_ways(Set& arg)
 }
 
 
+// Ids of current elements in the coarse cells of ranges that carry every positive tag filter
+// (keys, key-values, key-regexes), read from the local tag index alone: the late tag check can
+// then collect just these instead of every element in the ranges. Returns false where it doesn't
+// apply: no positive filter, or ranges spanning too many cells.
+template< typename Index, typename Id_Type >
+bool ids_from_local_tags(
+    const std::vector< std::string >& keys,
+    const std::vector< std::pair< std::string, std::string > >& key_values,
+    const std::vector< std::pair< std::string, Regular_Expression* > >& key_regexes,
+    const Ranges< Index >& ranges, const File_Properties& local_tags_file,
+    Resource_Manager& rman, std::vector< Id_Type >& result)
+{
+  if (keys.empty() && key_values.empty() && key_regexes.empty())
+    return false;
+
+  std::vector< uint32 > cells;
+  for (auto it = ranges.begin(); it != ranges.end(); ++it)
+  {
+    // Uint31_Index orders by the low 31 bits first, so its ranges are spans of those bits; the
+    // local tag index files elements under (index & 0x7fffff00) for both kinds of index.
+    uint32 lower = it.lower_bound().val();
+    uint32 upper = it.upper_bound().val() - 1;
+    if (std::is_same< Index, Uint31_Index >::value)
+    {
+      lower &= 0x7fffffff;
+      upper = it.upper_bound().val() & 0x7fffffff;
+    }
+    else if ((lower ^ upper) & 0x80000000)
+      return false;
+    if (upper < lower)
+      return false;
+    for (uint64 cell = lower & 0x7fffff00; cell <= (upper & 0x7fffff00); cell += 0x100)
+    {
+      cells.push_back(cell);
+      if (cells.size() > 64*1024)
+        return false;
+    }
+  }
+  std::sort(cells.begin(), cells.end());
+  cells.erase(std::unique(cells.begin(), cells.end()), cells.end());
+
+  Block_Backend< Tag_Index_Local, Id_Type > tags_db(rman.get_transaction()->data_index(&local_tags_file));
+  std::vector< std::vector< Id_Type > > per_filter;
+  auto collect = [&](const std::string& key, const std::string* value, Regular_Expression* value_regex)
+  {
+    Ranges< Tag_Index_Local > tag_ranges;
+    for (auto cell = cells.begin(); cell != cells.end(); ++cell)
+    {
+      if (value)
+        tag_ranges.push_back({ *cell, key, *value }, { *cell, key, *value + std::string(1, '\0') });
+      else
+        tag_ranges.push_back({ *cell, key, "" }, { *cell, key + std::string(1, '\0'), "" });
+    }
+    tag_ranges.sort();
+    std::vector< Id_Type > ids;
+    for (auto it = tags_db.range_begin(tag_ranges); !(it == tags_db.range_end()); ++it)
+    {
+      if (it.index().value == void_tag_value())
+        continue;
+      if (value_regex && !value_regex->matches(it.index().value))
+        continue;
+      ids.push_back(it.object());
+    }
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    per_filter.push_back(std::move(ids));
+  };
+  for (auto it = key_values.begin(); it != key_values.end(); ++it)
+    collect(it->first, &it->second, 0);
+  for (auto it = keys.begin(); it != keys.end(); ++it)
+    collect(*it, 0, 0);
+  for (auto it = key_regexes.begin(); it != key_regexes.end(); ++it)
+    collect(it->first, 0, it->second);
+
+  std::sort(per_filter.begin(), per_filter.end(),
+      [](const std::vector< Id_Type >& lhs, const std::vector< Id_Type >& rhs) { return lhs.size() < rhs.size(); });
+  result.swap(per_filter.front());
+  for (auto it = per_filter.begin() + 1; it != per_filter.end() && !result.empty(); ++it)
+  {
+    std::vector< Id_Type > both;
+    std::set_intersection(result.begin(), result.end(), it->begin(), it->end(), std::back_inserter(both));
+    result.swap(both);
+  }
+  return true;
+}
+
+
 void Query_Statement::execute(Resource_Manager& rman)
 {
   Cpu_Timer cpu(rman, 1);
@@ -1093,6 +1180,39 @@ void Query_Statement::execute(Resource_Manager& rman)
 
       if (!relation_range_vec_31.empty())
         intersect_ranges(rel_ranges, relation_range_vec_31).swap(rel_ranges);
+    }
+
+    // Tags checked late over ranges: find the matching ids from the local tag index first, so that
+    // collection skips the other elements without decoding them.
+    if (check_keys_late == prefer_ranges && timestamp == NOW)
+    {
+      if ((type & QUERY_NODE) && node_answer_state < data_collected && node_ids.invert && node_ids.ids.empty()
+          && !node_ranges.is_global()
+          && ids_from_local_tags(keys, key_values, key_regexes, node_ranges,
+              *osm_base_settings().NODE_TAGS_LOCAL, rman, node_ids.ids))
+      {
+        node_ids.invert = false;
+        if (node_ids.ids.empty())
+          node_answer_state = data_collected;
+      }
+      if ((type & QUERY_WAY) && way_answer_state < data_collected && way_ids.invert && way_ids.ids.empty()
+          && !way_ranges.is_global()
+          && ids_from_local_tags(keys, key_values, key_regexes, way_ranges,
+              *osm_base_settings().WAY_TAGS_LOCAL, rman, way_ids.ids))
+      {
+        way_ids.invert = false;
+        if (way_ids.ids.empty())
+          way_answer_state = data_collected;
+      }
+      if ((type & QUERY_RELATION) && relation_answer_state < data_collected && relation_ids.invert
+          && relation_ids.ids.empty() && !rel_ranges.is_global()
+          && ids_from_local_tags(keys, key_values, key_regexes, rel_ranges,
+              *osm_base_settings().RELATION_TAGS_LOCAL, rman, relation_ids.ids))
+      {
+        relation_ids.invert = false;
+        if (relation_ids.ids.empty())
+          relation_answer_state = data_collected;
+      }
     }
 
     set_progress(3);
