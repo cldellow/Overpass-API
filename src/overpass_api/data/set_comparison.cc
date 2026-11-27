@@ -298,7 +298,7 @@ void Set_Comparison::tags_quadtile
     for (typename std::vector< Object >::const_iterator it2(item_it->second.begin());
         it2 != item_it->second.end(); ++it2)
     {
-      if (std::binary_search(id_list.begin(), id_list.end(), it2->id))
+      if (monobound_binary_search(id_list, it2->id))
         print_item(extra_data, item_it->first.val(), *it2, tag_store.get(item_it->first, *it2),
             meta_printer.get(item_it->first, it2->id), extra_data.users);
     }
@@ -325,7 +325,7 @@ void Set_Comparison::tags_quadtile_attic
     for (typename std::vector< Attic< Object > >::const_iterator it2(item_it->second.begin());
         it2 != item_it->second.end(); ++it2)
     {
-      if (std::binary_search(id_list.begin(), id_list.end(), it2->id))
+      if (monobound_binary_search(id_list, it2->id))
         print_item(extra_data, item_it->first.val(), *it2, tag_store.get(item_it->first, *it2),
                  meta_printer.get(item_it->first, it2->id, it2->timestamp), extra_data.users);
     }
