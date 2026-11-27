@@ -24,11 +24,11 @@
 #include <fstream>
 
 
-bool Tag_Filter::matches(const std::vector< std::pair< std::string, std::string > >* tags) const
+bool Tag_Filter::matches(const Tag_List* tags) const
 {
   if (!tags)
     return false;
-  for (std::vector< std::pair< std::string, std::string > >::const_iterator it = tags->begin(); it != tags->end(); ++it)
+  for (Tag_List::const_iterator it = tags->begin(); it != tags->end(); ++it)
   {
     if (it->first == key && condition.matches(it->second))
       return straight;
@@ -37,21 +37,21 @@ bool Tag_Filter::matches(const std::vector< std::pair< std::string, std::string 
 }
 
 
-std::string link_if_any(const std::vector< std::pair< std::string, std::string > >& tags)
+std::string link_if_any(const Tag_List& tags)
 {
   std::string link;
 
-  for (std::vector< std::pair< std::string, std::string > >::const_iterator it = tags.begin(); it != tags.end(); ++it)
+  for (Tag_List::const_iterator it = tags.begin(); it != tags.end(); ++it)
   {
     if (it->second.find("www.") != std::string::npos)
       link = "http://" + it->second;
   }
-  for (std::vector< std::pair< std::string, std::string > >::const_iterator it = tags.begin(); it != tags.end(); ++it)
+  for (Tag_List::const_iterator it = tags.begin(); it != tags.end(); ++it)
   {
     if (it->second.find("http://") != std::string::npos)
       link = it->second;
   }
-  for (std::vector< std::pair< std::string, std::string > >::const_iterator it = tags.begin(); it != tags.end(); ++it)
+  for (Tag_List::const_iterator it = tags.begin(); it != tags.end(); ++it)
   {
     if (it->second.find("https://") != std::string::npos)
       link = it->second;
@@ -62,11 +62,11 @@ std::string link_if_any(const std::vector< std::pair< std::string, std::string >
 
 
 std::string title_if_any(const std::string& link, const std::string& title_key,
-    const std::vector< std::pair< std::string, std::string > >& tags)
+    const Tag_List& tags)
 {
   std::string title;
 
-  for (std::vector< std::pair< std::string, std::string > >::const_iterator it = tags.begin(); it != tags.end(); ++it)
+  for (Tag_List::const_iterator it = tags.begin(); it != tags.end(); ++it)
   {
     if (it->first == title_key)
     {
@@ -105,7 +105,7 @@ template< > std::string elem_type< Relation_Skeleton >() { return "Relation"; }
 
 template< typename TSkel >
 std::string print(const std::string& title_key,
-    const TSkel& skel, const std::vector< std::pair< std::string, std::string > >* tags)
+    const TSkel& skel, const Tag_List* tags)
 {
   std::string link = tags ? link_if_any(*tags) : "";
   std::string result = "\n<p>" + (tags ? title_if_any(link, title_key, *tags) : "");
@@ -124,7 +124,7 @@ std::string print(const std::string& title_key,
 
   if (tags)
   {
-    for (std::vector< std::pair< std::string, std::string > >::const_iterator it = tags->begin();
+    for (Tag_List::const_iterator it = tags->begin();
         it != tags->end(); ++it)
       result += it->first + ": " + it->second + "<br/>\n";
   }
@@ -133,7 +133,7 @@ std::string print(const std::string& title_key,
 
 
 bool Category_Filter::consider(const Node_Skeleton& skel,
-    const std::vector< std::pair< std::string, std::string > >* tags)
+    const Tag_List* tags)
 {
   std::vector< std::vector< Tag_Filter* > >::const_iterator it_conj = filter_disjunction.begin();
   for (; it_conj != filter_disjunction.end(); ++it_conj)
@@ -156,7 +156,7 @@ bool Category_Filter::consider(const Node_Skeleton& skel,
 
 
 bool Category_Filter::consider(const Way_Skeleton& skel,
-    const std::vector< std::pair< std::string, std::string > >* tags)
+    const Tag_List* tags)
 {
   std::vector< std::vector< Tag_Filter* > >::const_iterator it_conj = filter_disjunction.begin();
   for (; it_conj != filter_disjunction.end(); ++it_conj)
@@ -179,7 +179,7 @@ bool Category_Filter::consider(const Way_Skeleton& skel,
 
 
 bool Category_Filter::consider(const Relation_Skeleton& skel,
-    const std::vector< std::pair< std::string, std::string > >* tags)
+    const Tag_List* tags)
 {
   std::vector< std::vector< Tag_Filter* > >::const_iterator it_conj = filter_disjunction.begin();
   for (; it_conj != filter_disjunction.end(); ++it_conj)
@@ -247,14 +247,14 @@ void Output_Popup::write_footer()
 
 void Output_Popup::print_item(const Node_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Node::Id_Type >* meta,
       const std::map< uint32, std::string >* users,
       Output_Mode mode,
       const Feature_Action& action,
       const Node_Skeleton* new_skel,
       const Opaque_Geometry* new_geometry,
-      const std::vector< std::pair< std::string, std::string > >* new_tags,
+      const Tag_List* new_tags,
       const OSM_Element_Metadata_Skeleton< Node::Id_Type >* new_meta)
 {
   for (std::vector< Category_Filter* >::iterator it = categories.begin(); it != categories.end(); ++it)
@@ -267,14 +267,14 @@ void Output_Popup::print_item(const Node_Skeleton& skel,
 
 void Output_Popup::print_item(const Way_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Way::Id_Type >* meta,
       const std::map< uint32, std::string >* users,
       Output_Mode mode,
       const Feature_Action& action,
       const Way_Skeleton* new_skel,
       const Opaque_Geometry* new_geometry,
-      const std::vector< std::pair< std::string, std::string > >* new_tags,
+      const Tag_List* new_tags,
       const OSM_Element_Metadata_Skeleton< Way::Id_Type >* new_meta)
 {
   for (std::vector< Category_Filter* >::iterator it = categories.begin(); it != categories.end(); ++it)
@@ -287,7 +287,7 @@ void Output_Popup::print_item(const Way_Skeleton& skel,
 
 void Output_Popup::print_item(const Relation_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Relation::Id_Type >* meta,
       const std::map< uint32, std::string >* roles,
       const std::map< uint32, std::string >* users,
@@ -295,7 +295,7 @@ void Output_Popup::print_item(const Relation_Skeleton& skel,
       const Feature_Action& action,
       const Relation_Skeleton* new_skel,
       const Opaque_Geometry* new_geometry,
-      const std::vector< std::pair< std::string, std::string > >* new_tags,
+      const Tag_List* new_tags,
       const OSM_Element_Metadata_Skeleton< Relation::Id_Type >* new_meta)
 {
   for (std::vector< Category_Filter* >::iterator it = categories.begin(); it != categories.end(); ++it)
@@ -308,7 +308,7 @@ void Output_Popup::print_item(const Relation_Skeleton& skel,
 
 void Output_Popup::print_item(const Derived_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       Output_Mode mode,
       const Feature_Action& action)
 {

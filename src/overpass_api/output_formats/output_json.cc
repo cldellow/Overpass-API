@@ -91,11 +91,11 @@ void print_meta_json(const OSM_Element_Metadata_Skeleton< Id_Type >& meta,
 }
 
 
-void print_tags(const std::vector< std::pair< std::string, std::string > >* tags)
+void print_tags(const Tag_List* tags)
 {
   if (tags != 0 && !tags->empty())
   {
-    std::vector< std::pair< std::string, std::string > >::const_iterator it = tags->begin();
+    Tag_List::const_iterator it = tags->begin();
     std::cout<<",\n  \"tags\": {"
            "\n    \""<<escape_cstr(it->first)<<"\": \""<<escape_cstr(it->second)<<"\"";
     for (++it; it != tags->end(); ++it)
@@ -107,14 +107,14 @@ void print_tags(const std::vector< std::pair< std::string, std::string > >* tags
 
 void Output_JSON::print_item(const Node_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Node::Id_Type >* meta,
       const std::map< uint32, std::string >* users,
       Output_Mode mode,
       const Feature_Action& action,
       const Node_Skeleton* new_skel,
       const Opaque_Geometry* new_geometry,
-      const std::vector< std::pair< std::string, std::string > >* new_tags,
+      const Tag_List* new_tags,
       const OSM_Element_Metadata_Skeleton< Node::Id_Type >* new_meta)
 {
   handle_first_elem(first_elem);
@@ -153,14 +153,14 @@ void print_bounds(const Opaque_Geometry& geometry, Output_Mode mode)
 
 void Output_JSON::print_item(const Way_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Way::Id_Type >* meta,
       const std::map< uint32, std::string >* users,
       Output_Mode mode,
       const Feature_Action& action,
       const Way_Skeleton* new_skel,
       const Opaque_Geometry* new_geometry,
-      const std::vector< std::pair< std::string, std::string > >* new_tags,
+      const Tag_List* new_tags,
       const OSM_Element_Metadata_Skeleton< Way::Id_Type >* new_meta)
 {
   handle_first_elem(first_elem);
@@ -210,7 +210,7 @@ void Output_JSON::print_item(const Way_Skeleton& skel,
 
 void Output_JSON::print_item(const Relation_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Relation::Id_Type >* meta,
       const std::map< uint32, std::string >* roles,
       const std::map< uint32, std::string >* users,
@@ -218,7 +218,7 @@ void Output_JSON::print_item(const Relation_Skeleton& skel,
       const Feature_Action& action,
       const Relation_Skeleton* new_skel,
       const Opaque_Geometry* new_geometry,
-      const std::vector< std::pair< std::string, std::string > >* new_tags,
+      const Tag_List* new_tags,
       const OSM_Element_Metadata_Skeleton< Relation::Id_Type >* new_meta)
 {
   handle_first_elem(first_elem);
@@ -388,7 +388,7 @@ void print_geometry(const Opaque_Geometry& geometry, Output_Mode mode)
 
 void Output_JSON::print_item(const Derived_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       Output_Mode mode,
       const Feature_Action& action)
 {

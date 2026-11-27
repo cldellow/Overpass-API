@@ -22,6 +22,7 @@
 
 #include "../core/datatypes.h"
 #include "../core/geometry.h"
+#include "../core/tag_list.h"
 
 
 struct Output_Mode
@@ -50,6 +51,14 @@ const std::string& member_type_name(uint32 type);
 
 class Output_Handler
 {
+  static const Tag_List* as_tag_list(const std::vector< std::pair< std::string, std::string > >* tags, Tag_List& list)
+  {
+    if (!tags)
+      return 0;
+    make_tag_list(*tags, list);
+    return &list;
+  }
+
 public:
   enum Feature_Action { keep, show_from, show_to, modify, push_away, pull_in, erase, create };
 
@@ -68,31 +77,31 @@ public:
 
   virtual void print_item(const Node_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Node::Id_Type >* meta,
       const std::map< uint32, std::string >* users,
       Output_Mode mode,
       const Feature_Action& action = keep,
       const Node_Skeleton* new_skel = 0,
       const Opaque_Geometry* new_geometry = 0,
-      const std::vector< std::pair< std::string, std::string > >* new_tags = 0,
+      const Tag_List* new_tags = 0,
       const OSM_Element_Metadata_Skeleton< Node::Id_Type >* new_meta = 0) = 0;
 
   virtual void print_item(const Way_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Way::Id_Type >* meta,
       const std::map< uint32, std::string >* users,
       Output_Mode mode,
       const Feature_Action& action = keep,
       const Way_Skeleton* new_skel = 0,
       const Opaque_Geometry* new_geometry = 0,
-      const std::vector< std::pair< std::string, std::string > >* new_tags = 0,
+      const Tag_List* new_tags = 0,
       const OSM_Element_Metadata_Skeleton< Way::Id_Type >* new_meta = 0) = 0;
 
   virtual void print_item(const Relation_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       const OSM_Element_Metadata_Skeleton< Relation::Id_Type >* meta,
       const std::map< uint32, std::string >* roles,
       const std::map< uint32, std::string >* users,
@@ -100,14 +109,56 @@ public:
       const Feature_Action& action = keep,
       const Relation_Skeleton* new_skel = 0,
       const Opaque_Geometry* new_geometry = 0,
-      const std::vector< std::pair< std::string, std::string > >* new_tags = 0,
+      const Tag_List* new_tags = 0,
       const OSM_Element_Metadata_Skeleton< Relation::Id_Type >* new_meta = 0) = 0;
 
   virtual void print_item(const Derived_Skeleton& skel,
       const Opaque_Geometry& geometry,
-      const std::vector< std::pair< std::string, std::string > >* tags,
+      const Tag_List* tags,
       Output_Mode mode,
       const Feature_Action& action = keep) = 0;
+
+  // For callers that hold their tags as pairs.
+  void print_item(const Node_Skeleton& skel, const Opaque_Geometry& geometry, const std::vector< std::pair< std::string, std::string > >* tags,
+      const OSM_Element_Metadata_Skeleton< Node::Id_Type >* meta, const std::map< uint32, std::string >* users,
+      Output_Mode mode, const Feature_Action& action = keep, const Node_Skeleton* new_skel = 0,
+      const Opaque_Geometry* new_geometry = 0, const std::vector< std::pair< std::string, std::string > >* new_tags = 0,
+      const OSM_Element_Metadata_Skeleton< Node::Id_Type >* new_meta = 0)
+  {
+    Tag_List list, new_list;
+    print_item(skel, geometry, as_tag_list(tags, list), meta, users, mode, action, new_skel, new_geometry,
+        as_tag_list(new_tags, new_list), new_meta);
+  }
+
+  void print_item(const Way_Skeleton& skel, const Opaque_Geometry& geometry, const std::vector< std::pair< std::string, std::string > >* tags,
+      const OSM_Element_Metadata_Skeleton< Way::Id_Type >* meta, const std::map< uint32, std::string >* users,
+      Output_Mode mode, const Feature_Action& action = keep, const Way_Skeleton* new_skel = 0,
+      const Opaque_Geometry* new_geometry = 0, const std::vector< std::pair< std::string, std::string > >* new_tags = 0,
+      const OSM_Element_Metadata_Skeleton< Way::Id_Type >* new_meta = 0)
+  {
+    Tag_List list, new_list;
+    print_item(skel, geometry, as_tag_list(tags, list), meta, users, mode, action, new_skel, new_geometry,
+        as_tag_list(new_tags, new_list), new_meta);
+  }
+
+  void print_item(const Relation_Skeleton& skel, const Opaque_Geometry& geometry, const std::vector< std::pair< std::string, std::string > >* tags,
+      const OSM_Element_Metadata_Skeleton< Relation::Id_Type >* meta, const std::map< uint32, std::string >* roles,
+      const std::map< uint32, std::string >* users,
+      Output_Mode mode, const Feature_Action& action = keep, const Relation_Skeleton* new_skel = 0,
+      const Opaque_Geometry* new_geometry = 0, const std::vector< std::pair< std::string, std::string > >* new_tags = 0,
+      const OSM_Element_Metadata_Skeleton< Relation::Id_Type >* new_meta = 0)
+  {
+    Tag_List list, new_list;
+    print_item(skel, geometry, as_tag_list(tags, list), meta, roles, users, mode, action, new_skel, new_geometry,
+        as_tag_list(new_tags, new_list), new_meta);
+  }
+
+  void print_item(const Derived_Skeleton& skel, const Opaque_Geometry& geometry, const std::vector< std::pair< std::string, std::string > >* tags,
+      Output_Mode mode, const Feature_Action& action = keep)
+  {
+    Tag_List list;
+    print_item(skel, geometry, as_tag_list(tags, list), mode, action);
+  }
 
   virtual std::string dump_config() const { return ""; }
 
