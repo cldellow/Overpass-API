@@ -123,6 +123,10 @@ void collect_attic_tags
     ++attic_tag_it;
   }
 
+  // The entries of tags_by_id this call adds to. Only these can hold empty placeholder tags
+  // afterwards: tags_by_id accumulates over the calls for a chunk, and earlier calls removed theirs.
+  std::vector< std::vector< std::pair< std::string, std::string > >* > touched;
+
   // Actually take for each object and key of the multiple versions only the oldest valid version
   for (typename std::map< Attic< Id_Type >, std::vector< std::pair< std::string, std::string > > >
           ::const_iterator
@@ -135,6 +139,7 @@ void collect_attic_tags
     while (it_id != it_id_end)
     {
       std::vector< std::pair< std::string, std::string > >& obj_vec = tags_by_id[*it_id];
+      touched.push_back(&obj_vec);
       std::vector< std::pair< std::string, std::string > >::const_iterator last_added_it = it->second.end();
       for (std::vector< std::pair< std::string, std::string > >::const_iterator
           it_source = it->second.begin(); it_source != it->second.end(); ++it_source)
@@ -167,17 +172,15 @@ void collect_attic_tags
   }
 
   // Remove empty tags. They are placeholders for tags added later than each timestamp in question.
-  for (typename std::map< Id_Type, std::vector< std::pair< std::string, std::string > > >
-          ::iterator
-      it_obj = tags_by_id.begin(); it_obj != tags_by_id.end(); ++it_obj)
+  for (auto obj_vec : touched)
   {
     for (typename std::vector< std::pair< std::string, std::string > >::size_type
-        i = 0; i < it_obj->second.size(); )
+        i = 0; i < obj_vec->size(); )
     {
-      if (it_obj->second[i].second == void_tag_value())
+      if ((*obj_vec)[i].second == void_tag_value())
       {
-        it_obj->second[i] = it_obj->second.back();
-        it_obj->second.pop_back();
+        (*obj_vec)[i] = obj_vec->back();
+        obj_vec->pop_back();
       }
       else
         ++i;
