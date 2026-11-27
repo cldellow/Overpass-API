@@ -35,13 +35,20 @@
 template < class TIndex, class TObject >
 Ranges< TIndex > ranges(const std::map< TIndex, std::vector< TObject > >& elems)
 {
+  // Indexes whose vector is empty hold no objects and contribute no geometry. Filters
+  // often leave such entries behind, e.g. for attic data at other dates, and for
+  // relations they can be coarse indexes covering large areas, so skip them.
   Ranges< TIndex > result;
-  if (elems.empty())
+  typename std::map< TIndex, std::vector< TObject > >::const_iterator it = elems.begin();
+  while (it != elems.end() && it->second.empty())
+    ++it;
+  if (it == elems.end())
     return result;
-  std::pair< TIndex, TIndex > range = std::make_pair(elems.begin()->first, inc(elems.begin()->first));
-  for (typename std::map< TIndex, std::vector< TObject > >::const_iterator
-      it = elems.begin(); it != elems.end(); ++it)
+  std::pair< TIndex, TIndex > range = std::make_pair(it->first, inc(it->first));
+  for (; it != elems.end(); ++it)
   {
+    if (it->second.empty())
+      continue;
     if (!(range.second < it->first))
       range.second = inc(it->first);
     else
@@ -52,7 +59,7 @@ Ranges< TIndex > ranges(const std::map< TIndex, std::vector< TObject > >& elems)
   }
   result.push_back(range.first, range.second);
   result.sort();
-  
+
   return result;
 }
 
@@ -813,16 +820,15 @@ Ranges< Uint32_Index > Around_Statement::calc_ranges(const Set& input, Resource_
   else if (points.size() > 1)
   {
     std::vector< uint32 > nd_idxs;
-    std::map< Uint31_Index, std::vector< Way_Skeleton > > ways;
-    std::pair< Uint31_Index, std::vector< Way_Skeleton > > way;
 
     for (std::vector< Point_Double >::const_iterator it = points.begin(); it != points.end(); ++it)
         nd_idxs.push_back(::ll_upper_(it->lat, it->lon));
 
+    // Build the polyline's range directly: ranges() skips entries without objects.
     Uint31_Index idx = Way::calc_index(nd_idxs);
-    way = std::make_pair(idx, std::vector< Way_Skeleton >());
-    ways.insert(way);
-    return expand(calc_children(ranges(ways)), radius);
+    Ranges< Uint31_Index > way_ranges;
+    way_ranges.push_back(idx, inc(idx));
+    return expand(calc_children(way_ranges), radius);
   }
   else
     return expand(
