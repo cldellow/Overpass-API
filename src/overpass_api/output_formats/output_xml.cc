@@ -81,7 +81,7 @@ void print_meta_xml(const OSM_Element_Metadata_Skeleton< Id_Type >& meta,
       <<"\" changeset=\""<<meta.changeset<<"\" uid=\""<<meta.user_id<<"\"";
   std::map< uint32, std::string >::const_iterator it = users.find(meta.user_id);
   if (it != users.end())
-    std::cout<<" user=\""<<escape_xml(it->second)<<"\"";
+    std::cout<<" user=\""<<Xml_Escaped(it->second)<<"\"";
 }
 
 
@@ -152,7 +152,7 @@ void print_tags(const std::vector< std::pair< std::string, std::string > >* tags
     }
     for (std::vector< std::pair< std::string, std::string > >::const_iterator it = tags->begin();
 	 it != tags->end(); ++it)
-      std::cout<<"    <tag k=\""<<escape_xml(it->first)<<"\" v=\""<<escape_xml(it->second)<<"\"/>\n";
+      std::cout<<"    <tag k=\""<<Xml_Escaped(it->first)<<"\" v=\""<<Xml_Escaped(it->second)<<"\"/>\n";
   }
 }
 
@@ -322,7 +322,7 @@ void print_members(const Relation_Skeleton& skel, const Opaque_Geometry& geometr
       std::map< uint32, std::string >::const_iterator it = roles.find(skel.members[i].role);
       std::cout<<"    <member type=\""<<member_type_name(skel.members[i].type)
 	  <<"\" ref=\""<<skel.members[i].ref.val()
-	  <<"\" role=\""<<escape_xml(it != roles.end() ? it->second : "???")<<"\"";
+	  <<"\" role=\""<<Xml_Escaped(it != roles.end() ? it->second : "???")<<"\"";
 
       if (skel.members[i].type == Relation_Entry::NODE)
       {
