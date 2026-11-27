@@ -835,10 +835,37 @@ Ranges< Index > intersect_ranges(const Ranges< Index >& range_a, std::vector< In
   for (auto it = range_a.begin(); it != range_a.end(); ++it)
     sum += difference(it.lower_bound(), it.upper_bound());
 
-  if (sum/256 < range_vec.size())
+  if (sum < range_vec.size())
     return range_a;
 
-  std::sort(range_vec.begin(), range_vec.end());
+  // range_a can hold overlapping ranges; merge them, the search below needs increasing upper bounds.
+  std::vector< std::pair< Index, Index > > sorted_ranges;
+  for (auto it = range_a.begin(); it != range_a.end(); ++it)
+    sorted_ranges.push_back(std::make_pair(it.lower_bound(), it.upper_bound()));
+  std::sort(sorted_ranges.begin(), sorted_ranges.end());
+  std::vector< std::pair< Index, Index > > merged;
+  for (auto it = sorted_ranges.begin(); it != sorted_ranges.end(); ++it)
+  {
+    if (!merged.empty() && !(merged.back().second < it->first))
+      merged.back().second = std::max(merged.back().second, it->second);
+    else
+      merged.push_back(*it);
+  }
+
+  std::vector< Index > cells_inside;
+  for (auto it = range_vec.begin(); it != range_vec.end(); ++it)
+  {
+    auto range = std::upper_bound(merged.begin(), merged.end(), *it,
+        [](const Index& cell, const std::pair< Index, Index >& r) { return cell < r.second; });
+    if (range != merged.end() && range->first < Index(it->val() + 0x100))
+      cells_inside.push_back(*it);
+  }
+  std::sort(cells_inside.begin(), cells_inside.end());
+  cells_inside.erase(std::unique(cells_inside.begin(), cells_inside.end()), cells_inside.end());
+  range_vec.swap(cells_inside);
+
+  if (sum/256 < range_vec.size())
+    return range_a;
 
   auto it_a = range_a.begin();
   auto it_vec = range_vec.begin();
