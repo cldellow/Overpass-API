@@ -230,7 +230,9 @@ bool Changed_Constraint::get_relation_ids(Resource_Manager& rman, std::vector< R
 
 void Changed_Constraint::filter(Resource_Manager& rman, Set& into)
 {
-  if (!stmt->trivial())
+  // Each type's changelog is scanned only if the set holds elements of that type: the scan can
+  // only keep elements that are already there.
+  if (!stmt->trivial() && !(into.nodes.empty() && into.attic_nodes.empty()))
   {
     std::vector< Node_Skeleton::Id_Type > ids =
         collect_changed_elements< Uint32_Index, Node_Skeleton >
@@ -241,7 +243,7 @@ void Changed_Constraint::filter(Resource_Manager& rman, Set& into)
     filter_elems(ids, into.attic_nodes);
   }
 
-  if (!stmt->trivial())
+  if (!stmt->trivial() && !(into.ways.empty() && into.attic_ways.empty()))
   {
     std::vector< Way_Skeleton::Id_Type > ids =
         collect_changed_elements< Uint31_Index, Way_Skeleton >
@@ -252,7 +254,7 @@ void Changed_Constraint::filter(Resource_Manager& rman, Set& into)
     filter_elems(ids, into.attic_ways);
   }
 
-  if (!stmt->trivial())
+  if (!stmt->trivial() && !(into.relations.empty() && into.attic_relations.empty()))
   {
     std::vector< Relation_Skeleton::Id_Type > ids =
         collect_changed_elements< Uint31_Index, Relation_Skeleton >
