@@ -24,11 +24,16 @@ jobs:
           cd build
           # With _GLIBCXX_ASSERTIONS, out-of-bounds indexing into strings and
           # vectors aborts instead of reading past the end unnoticed.
-          ../src/configure --prefix="$GITHUB_WORKSPACE" CXXFLAGS="-g -O2 -D_GLIBCXX_ASSERTIONS"
+          ../src/configure --prefix="$GITHUB_WORKSPACE" \
+              CXXFLAGS="-g -O1 -fno-omit-frame-pointer -fsanitize=address -D_GLIBCXX_ASSERTIONS" \
+              LDFLAGS="-fsanitize=address"
           make -j"$(nproc)" install
 
       - name: Run the test suites
+        env:
+          ASAN_OPTIONS: log_path=/tmp/asan/asan:detect_leaks=0:abort_on_error=0
         run: |
+          mkdir -p /tmp/asan
           cd osm-3s_testing
           ../test-bin/run_testsuite.sh 40 2>&1 | tee ../testsuite.log
           echo "Tests reporting success: $(grep -c ' succeeded\.$' ../testsuite.log)"
@@ -44,6 +49,13 @@ jobs:
             exit 1
           fi
 
+      - name: ASan reports
+        if: always()
+        run: |
+          ls /tmp/asan 2>/dev/null | wc -l | sed 's/^/ASan report files: /'
+          cat /tmp/asan/* 2>/dev/null | grep -h "^SUMMARY: AddressSanitizer" | sort | uniq -c | sort -rn | head -50
+          for f in $(ls /tmp/asan 2>/dev/null | head -5); do echo "===== $f"; head -60 "/tmp/asan/$f"; done
+
       - name: Upload the outputs of failed tests
         if: failure()
         uses: actions/upload-artifact@v7
@@ -52,4 +64,5 @@ jobs:
           path: |
             testsuite.log
             osm-3s_testing/run/
+            /tmp/asan/
           if-no-files-found: ignore

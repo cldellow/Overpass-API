@@ -79,6 +79,7 @@ void set_limits(uint32 time, uint64 space)
     result = setrlimit(RLIMIT_CPU, &limit);
   }
 
+#ifndef __SANITIZE_ADDRESS__
   result = getrlimit(RLIMIT_AS, &limit);
   if (result == 0 && space < limit.rlim_cur && space < limit.rlim_max)
   {
@@ -86,6 +87,7 @@ void set_limits(uint32 time, uint64 space)
     limit.rlim_max = space;
     result = setrlimit(RLIMIT_AS, &limit);
   }
+#endif
 }
 
 
