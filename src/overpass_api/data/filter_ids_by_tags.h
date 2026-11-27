@@ -101,8 +101,7 @@ void filter_ids_by_tags
       new_ids.push_back(tag_it.object());
 
     if (!matched_by_both_regexes.empty() &&
-	(monobound_binary_search(old_ids, tag_it.object()) ||
-	 monobound_binary_search(new_ids, tag_it.object())))
+	monobound_binary_search(old_ids.empty() ? new_ids : old_ids, tag_it.object()))
     {
       for (std::vector< uint64 >::const_iterator reg_it = matched_by_both_regexes.begin();
 	  reg_it != matched_by_both_regexes.end(); ++reg_it)
