@@ -524,6 +524,10 @@ bool collect_items_range(Request_Context& context,
   {
     uint32 count = 0;
     bool too_much_data = false;
+    // The size eval_map would report for result, kept up to date as objects are added,
+    // and the entry objects were last added to: objects arrive ordered by index.
+    uint64 result_size = eval_map(result);
+    typename std::map< Index, std::vector< Object > >::iterator last = result.end();
 
     for (auto it = current_db.range_begin(shortened); !(it == current_db.range_end()); ++it)
     {
@@ -535,11 +539,23 @@ bool collect_items_range(Request_Context& context,
       if (++count >= 256*1024)
       {
         count = 0;
-        too_much_data = context.get_health_guard().check(0, eval_map(result));
+        too_much_data = context.get_health_guard().check(0, result_size);
         cur_idx = it.index();
       }
       if (predicate.match(it.handle()))
-        result[it.index()].push_back(it.object());
+      {
+        if (last == result.end() || !(last->first == it.index()))
+        {
+          last = result.lower_bound(it.index());
+          if (last == result.end() || it.index() < last->first)
+          {
+            last = result.insert(last, std::make_pair(it.index(), std::vector< Object >()));
+            result_size += eval_index_size;
+          }
+        }
+        last->second.push_back(it.object());
+        result_size += eval_object_size((const Object*)0);
+      }
     }
 
     return false;
