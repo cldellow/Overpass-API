@@ -64,7 +64,8 @@ void filter_ids_by_tags
 	key_relevant = true;
 	old_ids.clear();
         old_ids.swap(new_ids);
-        sort(old_ids.begin(), old_ids.end());
+        if (!std::is_sorted(old_ids.begin(), old_ids.end()))
+          sort(old_ids.begin(), old_ids.end());
       }
 
       matched_by_key_regexes.clear();
