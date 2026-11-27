@@ -835,19 +835,15 @@ void Area_Query_Statement::collect_ways
 
   std::map< Way::Id_Type, bool > ways_inside;
 
+  // Build each way's geometry once, for both its segments and its coordinates.
   std::map< Uint31_Index, std::vector< Area_Block > > way_segments;
-  for (typename std::map< Uint31_Index, std::vector< Way_Skeleton > >::iterator it = ways.begin(); it != ways.end(); ++it)
-  {
-    for (typename std::vector< Way_Skeleton >::iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
-      add_way_to_area_blocks(way_geometries.get_geometry(*it2), it2->id.val(), way_segments);
-  }
-
   std::map< uint32, std::vector< std::pair< uint32, Way::Id_Type > > > way_coords_to_id;
   for (typename std::map< Uint31_Index, std::vector< Way_Skeleton > >::iterator it = ways.begin(); it != ways.end(); ++it)
   {
     for (typename std::vector< Way_Skeleton >::iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
     {
       std::vector< Quad_Coord > coords = way_geometries.get_geometry(*it2);
+      add_way_to_area_blocks(coords, it2->id.val(), way_segments);
       for (std::vector< Quad_Coord >::const_iterator it3 = coords.begin(); it3 != coords.end(); ++it3)
         way_coords_to_id[it3->ll_upper].push_back(std::make_pair(it3->ll_lower, it2->id));
     }
