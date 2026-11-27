@@ -85,6 +85,10 @@ the Geofabrik Nova Scotia extract, imported with `--meta` (convert PBF to XML wi
 Databases with history, built from a full-history extract, need a `better-imports` build of
 `update_database`; `upstream/master` imports history incorrectly. Query with the build under test.
 
+If you need a PBF, get it from Colin's R2 bucket (`https://public.hikeratlas.com/pbfs/raw/REGION.osm.pbf`,
+e.g. `nova-scotia`, `france`). If you need one that's not there, ask Colin for help. Never try to
+contact Geofabrik, openstreetmap.fr or similar infrastructure.
+
 - **Performance:** run `bench/compare.py`. Don't re-time the baseline; it is cached. Use
   `--no-cache` (alternating runs) when the expected difference is under about 25%: separately
   timed runs can drift by up to about 20%. Under about 10%, use `--paired --reps 25` and judge by
