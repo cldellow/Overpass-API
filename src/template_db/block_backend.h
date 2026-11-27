@@ -518,6 +518,16 @@ struct Block_Backend
   Range_Iterator range_begin(const Ranges< TIndex >& arg)
   { return Range_Iterator(file_blocks, arg.begin(), arg.end(), block_size); }
 
+  // From the block index alone: nothing is read or decompressed.
+  uint64 count_blocks(const Ranges< TIndex >& arg)
+  {
+    uint64 count = 0;
+    auto end = file_blocks.template range_end< typename Ranges< TIndex >::Iterator >();
+    for (auto it = file_blocks.range_begin(arg.begin(), arg.end()); !(it == end); ++it)
+      ++count;
+    return count;
+  }
+
   const Range_Iterator& range_end() const { return *range_end_it; }
 
   template< typename Container >

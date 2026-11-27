@@ -950,11 +950,25 @@ void Query_Statement::execute(Resource_Manager& rman)
     std::vector< Uint31_Index > way_range_vec_31;
     std::vector< Uint31_Index > relation_range_vec_31;
 
+    // Known before the tag lookup, which drops candidates outside them.
+    Ranges< Uint32_Index > node_ranges = Ranges< Uint32_Index >::global();
+    Ranges< Uint31_Index > way_ranges = Ranges< Uint31_Index >::global();
+    Ranges< Uint31_Index > rel_ranges = Ranges< Uint31_Index >::global();
+    for (std::vector< Query_Constraint* >::iterator it = constraints.begin(); it != constraints.end(); ++it)
+    {
+      if (type & QUERY_NODE)
+        node_ranges.intersect((*it)->get_node_ranges(rman)).swap(node_ranges);
+      if (type & QUERY_WAY)
+        way_ranges.intersect((*it)->get_way_ranges(rman)).swap(way_ranges);
+      if (type & QUERY_RELATION)
+        rel_ranges.intersect((*it)->get_relation_ranges(rman)).swap(rel_ranges);
+    }
+
     if (type & QUERY_NODE)
     {
       progress_1< Node_Skeleton, Node::Id_Type, Uint32_Index >(
           keys, key_values, key_regexes, regkey_regexes, key_nvalues, key_nregexes, regkey_nregexes,
-          node_ids, range_vec_32, timestamp, check_keys_late, rman, *this);
+          node_ids, range_vec_32, timestamp, check_keys_late, rman, *this, node_ranges.is_global() ? 0 : &node_ranges);
       if (node_ids.empty())
         node_answer_state = data_collected;
       collect_nodes(node_ids, node_answer_state, into, rman);
@@ -963,7 +977,7 @@ void Query_Statement::execute(Resource_Manager& rman)
     {
       progress_1< Way_Skeleton, Way::Id_Type, Uint31_Index >(
 	  keys, key_values, key_regexes, regkey_regexes, key_nvalues, key_nregexes, regkey_nregexes,
-          way_ids, way_range_vec_31, timestamp, check_keys_late, rman, *this);
+          way_ids, way_range_vec_31, timestamp, check_keys_late, rman, *this, way_ranges.is_global() ? 0 : &way_ranges);
       if (way_ids.empty())
         way_answer_state = data_collected;
       collect_elems(QUERY_WAY, way_ids, way_answer_state, into, rman);
@@ -974,7 +988,7 @@ void Query_Statement::execute(Resource_Manager& rman)
     {
       progress_1< Relation_Skeleton, Relation::Id_Type, Uint31_Index >(
 	  keys, key_values, key_regexes, regkey_regexes, key_nvalues, key_nregexes, regkey_nregexes,
-          relation_ids, relation_range_vec_31, timestamp, check_keys_late, rman, *this);
+          relation_ids, relation_range_vec_31, timestamp, check_keys_late, rman, *this, rel_ranges.is_global() ? 0 : &rel_ranges);
       if (relation_ids.empty())
         relation_answer_state = data_collected;
       collect_elems(QUERY_RELATION, relation_ids, relation_answer_state, into, rman);
@@ -1063,37 +1077,12 @@ void Query_Statement::execute(Resource_Manager& rman)
       }
     }
 
-    Ranges< Uint32_Index > node_ranges = Ranges< Uint32_Index >::global();
-    Ranges< Uint31_Index > way_ranges = Ranges< Uint31_Index >::global();
-    Ranges< Uint31_Index > rel_ranges = Ranges< Uint31_Index >::global();
-
-    if ((type & QUERY_NODE) && node_answer_state < data_collected)
-    {
-      for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
-          it != constraints.end(); ++it)
-        node_ranges.intersect((*it)->get_node_ranges(rman)).swap(node_ranges);
-
-      if (!range_vec_32.empty())
-        intersect_ranges(node_ranges, range_vec_32).swap(node_ranges);
-    }
-    if ((type & QUERY_WAY) && way_answer_state < data_collected)
-    {
-      for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
-          it != constraints.end(); ++it)
-        way_ranges.intersect((*it)->get_way_ranges(rman)).swap(way_ranges);
-
-      if (!way_range_vec_31.empty())
-        intersect_ranges(way_ranges, way_range_vec_31).swap(way_ranges);
-    }
-    if ((type & QUERY_RELATION) && relation_answer_state < data_collected)
-    {
-      for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
-          it != constraints.end(); ++it)
-        rel_ranges.intersect((*it)->get_relation_ranges(rman)).swap(rel_ranges);
-
-      if (!relation_range_vec_31.empty())
-        intersect_ranges(rel_ranges, relation_range_vec_31).swap(rel_ranges);
-    }
+    if ((type & QUERY_NODE) && node_answer_state < data_collected && !range_vec_32.empty())
+      intersect_ranges(node_ranges, range_vec_32).swap(node_ranges);
+    if ((type & QUERY_WAY) && way_answer_state < data_collected && !way_range_vec_31.empty())
+      intersect_ranges(way_ranges, way_range_vec_31).swap(way_ranges);
+    if ((type & QUERY_RELATION) && relation_answer_state < data_collected && !relation_range_vec_31.empty())
+      intersect_ranges(rel_ranges, relation_range_vec_31).swap(rel_ranges);
 
     set_progress(3);
     rman.health_check(*this);
