@@ -30,6 +30,7 @@
 #include "../core/settings.h"
 #include "../statements/statement.h"
 #include "../dispatch/resource_manager.h"
+#include "abstract_processing.h"
 #include "filenames.h"
 #include "filter_by_tags.h"
 #include "regular_expression.h"
@@ -291,9 +292,20 @@ void filter_id_list(
 {
   std::vector< std::pair< Id_Type, Uint31_Index > > old_ids;
   old_ids.swap(new_ids);
+  // Most entries of a later key belong to none of the candidates: reject those with one bit test.
+  std::vector< Id_Type > old_id_list;
+  if (filtered)
+  {
+    old_id_list.reserve(old_ids.size());
+    for (auto it = old_ids.begin(); it != old_ids.end(); ++it)
+      old_id_list.push_back(it->first);
+  }
+  Id_Bit_Filter old_id_filter(old_id_list);
 
   for (Iterator it = begin; !(it == end); ++it)
   {
+    if (filtered && !old_id_filter.maybe_contains(it.object().id.val()))
+      continue;
     if (key_regex.matches(it.index().key) && it.index().value != void_tag_value()
         && val_regex.matches(it.index().value) && (!filtered ||
 	std::binary_search(old_ids.begin(), old_ids.end(), std::make_pair(it.object().id, Uint31_Index(0u)))))
