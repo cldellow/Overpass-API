@@ -457,5 +457,13 @@
   "new": "std::min< uint64 >(std::max< uint32 >(*(uint32*)buffer_ - 8, 8), (uint64)block_size * compression_factor));",
   "note": "the cache keeps the block without its last 8 bytes, so a block's later reads see stale bytes at its end",
   "expect_caught": "maybe"
+ },
+ {
+  "commit": "a2912e3",
+  "subject": "around: test input points through the tile index, not every point's bbox",
+  "file": "src/overpass_api/statements/around.cc",
+  "old": "std::abs(cit->lon - lon) < 0.5e-7",
+  "new": "std::abs(cit->lon - lon) < 1e-7",
+  "note": "half-unit tolerance on latitude only: around radius 0 matches nodes one unit apart in longitude again"
  }
 ]
