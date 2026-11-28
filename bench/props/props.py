@@ -28,6 +28,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -892,6 +893,49 @@ def wr_bn_agrees(args, db, query, cand, runner, strip=False):
     return (rc, out) == tuple(cand)
 
 
+AROUND_RADIUS_0 = re.compile(r'around(?:\.\w+)?:0(?:\.0*)?\s*[,)]')
+
+
+def element_positions(data):
+    """For each (kind, id), every position in storage units it has had: a node's own, a way's
+    nodes', a relation's member nodes' and member ways' nodes'. Works for Data and History."""
+    if hasattr(data, 'versions'):
+        node = {i: {v['pos'] for v in vs if v['visible']}
+                for (k, i), vs in data.versions.items() if k == 'node'}
+        nds = {i: {n for v in vs if v['visible'] for n in v['nds']}
+               for (k, i), vs in data.versions.items() if k == 'way'}
+        mems = {i: {(t, ref) for v in vs if v['visible'] for t, ref, _ in v['members']}
+                for (k, i), vs in data.versions.items() if k == 'relation'}
+    else:
+        node = {i: {p} for i, p in data.nodes.items()}
+        nds = {i: set(ns) for i, ns in data.ways.items()}
+        mems = {i: {(t, ref) for t, ref, _ in ms} for i, ms in data.rels.items()}
+    pos = {('node', i): ps for i, ps in node.items()}
+    for i, ns in nds.items():
+        pos[('way', i)] = {p for n in ns for p in node.get(n, ())}
+    for i, ms in mems.items():
+        pos[('relation', i)] = {p for t, ref in ms if t in ('node', 'way') for p in pos.get((t, ref), ())}
+    return pos
+
+
+def around0_agrees(data, query, cand, base):
+    """Whether the candidate's (exit status, output) differs from the baseline's only by dropping
+    elements next to a node one storage unit (1e-7 degrees) away, in a query with around radius 0.
+    The baseline counts such neighbours as coincident in some cases; PR #262 never does. Accept
+    both until upstream settles it (fork issue #261)."""
+    if not AROUND_RADIUS_0.search(query) or cand[0] != base[0] or cand[0] != 0:
+        return False
+    c, b = parse(cand[1]), parse(base[1])
+    if not c < b:
+        return False
+    pos = element_positions(data)
+    nodes = {p for (k, _), ps in pos.items() if k == 'node' for p in ps}
+    def next_to_neighbour(e):
+        return any((lat + dy, lon + dx) in nodes for lat, lon in pos.get(e, ())
+                   for dy in (-1, 0, 1) for dx in (-1, 0, 1) if dy or dx)
+    return all(next_to_neighbour(e) for e in b - c)
+
+
 def run_checks(args, db, data, checks, seed, prefix=''):
     results = []
     for k, (name, query, must, must_not, exact) in enumerate(checks):
@@ -907,7 +951,8 @@ def run_checks(args, db, data, checks, seed, prefix=''):
         # A difference where the candidate gets an exact answer right and the baseline doesn't
         # is a fix, not a regression.
         fixed = differs and exact and not cand_problems and bool(base_problems)
-        if differs and not fixed and wr_bn_agrees(args, db, query, (rc, out), run_query):
+        if differs and not fixed and (wr_bn_agrees(args, db, query, (rc, out), run_query)
+                                      or around0_agrees(data, query, (rc, out), (brc, base_out))):
             fixed = True
         differs = differs and not fixed
         failed = bool(cand_problems) or differs
@@ -997,6 +1042,10 @@ def run_pairs(args, db_a, db_b, data, pairs, seed, prefix):
             if differs and not fixed and not cand_problems:
                 fixed = (wr_bn_agrees(args, db_a, qa, outs['cand'][0], run_query)
                          and wr_bn_agrees(args, db_b, qb, outs['cand'][1], run_query))
+                fixed = fixed or all(
+                    around0_agrees(data, q, c, b) or c == b
+                    for q, c, b in ((qa, outs['cand'][0], outs['base'][0]),
+                                    (qb, outs['cand'][1], outs['base'][1])))
             differs = differs and not fixed
         where = None
         both = f'{qa}\n--- {relation} ---\n{qb}'
