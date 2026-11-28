@@ -370,7 +370,7 @@ void filter_nodes_expensive(const Around_Statement& around,
     {
       double lat(::lat(it->first.val(), iit->ll_lower));
       double lon(::lon(it->first.val(), iit->ll_lower));
-      if (around.matches_bboxes(lat, lon) && around.is_inside(lat, lon))
+      if (around.is_inside(lat, lon))
 	local_into.push_back(*iit);
     }
     it->second.swap(local_into);
@@ -426,7 +426,7 @@ void filter_relations_expensive(const Around_Statement& around,
 	  double lat(::lat(second_nd->first.val(), second_nd->second->ll_lower));
 	  double lon(::lon(second_nd->first.val(), second_nd->second->ll_lower));
 
-	  if (around.matches_bboxes(lat, lon) && around.is_inside(lat, lon))
+	  if (around.is_inside(lat, lon))
 	  {
 	    local_into.push_back(*iit);
 	    break;
@@ -1030,14 +1030,6 @@ void Around_Statement::calc_lat_lons(const Set& input, Statement& query, Resourc
 }
 
 
-bool Around_Statement::matches_bboxes(double lat, double lon) const
-{
-  Prepared_BBox bbox = ::lat_lon_bbox(lat, lon);
-  return bbox.intersects(node_bboxes) ||
-         bbox.intersects(way_bboxes);
-}
-
-
 bool Around_Statement::matches_bboxes(const Prepared_BBox & bbox) const
 {
   return bbox.intersects(node_bboxes) ||
@@ -1055,13 +1047,16 @@ bool Around_Statement::is_inside(double lat, double lon) const
         cit != mit->second.end(); ++cit)
     {
       if ((radius > 0 && great_circle_dist(cit->lat, cit->lon, lat, lon) <= radius)
-          || (std::abs(cit->lat - lat) < 1e-7 && std::abs(cit->lon - lon) < 1e-7))
+          || (std::abs(cit->lat - lat) < 0.5e-7 && std::abs(cit->lon - lon) < 0.5e-7))
         return true;
     }
   }
 
-  std::vector< double > coord_cartesian = cartesian(lat, lon);
   Prepared_BBox bbox_lat_lon = ::lat_lon_bbox(lat, lon);
+  if (!bbox_lat_lon.intersects(way_bboxes))
+    return false;
+
+  std::vector< double > coord_cartesian = cartesian(lat, lon);
   for (std::vector< std::pair< Prepared_BBox, Prepared_Segment> >::const_iterator
       it = simple_segments.begin(); it != simple_segments.end(); ++it)
   {
