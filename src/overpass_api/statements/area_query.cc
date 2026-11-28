@@ -31,6 +31,7 @@
 #include "../core/index_computations.h"
 #include "../data/collect_members.h"
 #include "../data/tilewise_geometry.h"
+#include <algorithm>
 #include "area_query.h"
 #include "coord_query.h"
 #include "make_area.h"
@@ -189,12 +190,17 @@ std::map< Uint31_Index, std::vector< Way_Skeleton > > ways_contained_in(
   Tilewise_Const_Area_Iterator tai(potential_areas->ways, potential_areas->attic_ways, stmt, rman);
   std::map< Uint31_Index, std::vector< Way_Skeleton > > result;
 
+  if (tai.is_end())
+    return result;
+
   Tilewise_Way_Iterator twi(ways, std::map< Uint31_Index, std::vector< Attic< Way_Skeleton > > >(), stmt, rman);
   while (!twi.is_end())
   {
     while (!tai.is_end() && tai.get_idx() < twi.get_idx())
       tai.next();
-    if (tai.is_end() || twi.get_idx() < tai.get_idx())
+    if (tai.is_end())
+      break;
+    if (twi.get_idx() < tai.get_idx())
     {
       twi.next();
       continue;
@@ -229,12 +235,17 @@ std::map< Uint31_Index, std::vector< Attic< Way_Skeleton > > > ways_contained_in
   Tilewise_Const_Area_Iterator tai(potential_areas->ways, potential_areas->attic_ways, stmt, rman);
   std::map< Uint31_Index, std::vector< Attic< Way_Skeleton > > > result;
 
+  if (tai.is_end())
+    return result;
+
   Tilewise_Way_Iterator twi(std::map< Uint31_Index, std::vector< Way_Skeleton > >(), ways, stmt, rman);
   while (!twi.is_end())
   {
     while (!tai.is_end() && tai.get_idx() < twi.get_idx())
       tai.next();
-    if (tai.is_end() || twi.get_idx() < tai.get_idx())
+    if (tai.is_end())
+      break;
+    if (twi.get_idx() < tai.get_idx())
     {
       twi.next();
       continue;
@@ -592,6 +603,15 @@ void Area_Query_Statement::collect_nodes
 	areas[area_it.object().id].push_back(area_it.object());
       ++area_it;
     }
+    // The same blocks decoded once for this tile, for the point-in-area tests below.
+    std::map< Area_Skeleton::Id_Type, std::vector< Coord_Query_Statement::Decoded_Area_Block > > decoded;
+    for (std::map< Area_Skeleton::Id_Type, std::vector< Area_Block > >::const_iterator it = areas.begin();
+        it != areas.end(); ++it)
+    {
+      std::vector< Coord_Query_Statement::Decoded_Area_Block >& blocks = decoded[it->first];
+      for (std::vector< Area_Block >::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
+        blocks.push_back(Coord_Query_Statement::Decoded_Area_Block(current_idx, *it2));
+    }
 
     while (nodes_it != nodes.end() && nodes_it->first.val() < current_idx)
     {
@@ -613,12 +633,13 @@ void Area_Query_Statement::collect_nodes
 	     it != areas.end(); ++it)
         {
           int inside = 0;
-          for (std::vector< Area_Block >::const_iterator it2 = it->second.begin(); it2 != it->second.end();
-	       ++it2)
+          const std::vector< Coord_Query_Statement::Decoded_Area_Block >& blocks = decoded[it->first];
+          for (std::vector< Coord_Query_Statement::Decoded_Area_Block >::const_iterator it2 = blocks.begin();
+	       it2 != blocks.end(); ++it2)
           {
             ++loop_count;
 
-	    int check(Coord_Query_Statement::check_area_block(current_idx, *it2, ilat, ilon));
+	    int check(Coord_Query_Statement::check_area_block(*it2, ilat, ilon));
 	    if (check == Coord_Query_Statement::HIT && add_border)
 	    {
 	      inside = 1;
@@ -748,18 +769,31 @@ inline int longitude_a_intersects_inner
 }
 
 
-int intersects_inner(const Area_Block& string_a, const Area_Block& string_b)
+void decode_coords(const Area_Block& block, Decoded_Coords& coords)
 {
-  std::vector< std::pair< uint32, uint32 > > coords_a;
-  for (std::vector< uint64 >::const_iterator it = string_a.coors.begin(); it != string_a.coors.end(); ++it)
-    coords_a.push_back(std::make_pair(::ilat(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull)),
-				 ::ilon(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull))));
+  coords.clear();
+  coords.reserve(block.coors.size());
+  for (std::vector< uint64 >::const_iterator it = block.coors.begin(); it != block.coors.end(); ++it)
+    coords.push_back(std::make_pair(::ilat(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull)),
+                                    ::ilon(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull))));
+}
 
-  std::vector< std::pair< uint32, uint32 > > coords_b;
-  for (std::vector< uint64 >::const_iterator it = string_b.coors.begin(); it != string_b.coors.end(); ++it)
-    coords_b.push_back(std::make_pair(::ilat(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull)),
-				 ::ilon(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull))));
 
+Coords_Bounds::Coords_Bounds(const Decoded_Coords& coords)
+    : min_lat(0xffffffffu), max_lat(0), min_lon(0xffffffffu), max_lon(0)
+{
+  for (Decoded_Coords::const_iterator it = coords.begin(); it != coords.end(); ++it)
+  {
+    min_lat = std::min(min_lat, it->first);
+    max_lat = std::max(max_lat, it->first);
+    min_lon = std::min(min_lon, it->second);
+    max_lon = std::max(max_lon, it->second);
+  }
+}
+
+
+int intersects_inner(const Decoded_Coords& coords_a, const Decoded_Coords& coords_b)
+{
   for (std::vector< std::pair< uint32, uint32 > >::size_type i = 0; i < coords_a.size()-1; ++i)
   {
     if (coords_a[i].second < coords_a[i+1].second)
@@ -799,12 +833,9 @@ int intersects_inner(const Area_Block& string_a, const Area_Block& string_b)
 }
 
 
-void has_inner_points(const Area_Block& string_a, const Area_Block& string_b, int& inside)
+void has_inner_points(const Decoded_Coords& coords_a, const Coord_Query_Statement::Decoded_Area_Block& string_b,
+    int& inside)
 {
-  std::vector< std::pair< uint32, uint32 > > coords_a;
-  for (std::vector< uint64 >::const_iterator it = string_a.coors.begin(); it != string_a.coors.end(); ++it)
-    coords_a.push_back(std::make_pair(::ilat(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull)),
-                                 ::ilon(uint32((*it>>32)&0xff), uint32(*it & 0xffffffffull))));
 
   // Check additionally the middle of the segment to also get segments
   // that run through the area
@@ -812,7 +843,7 @@ void has_inner_points(const Area_Block& string_a, const Area_Block& string_b, in
   {
     uint32 ilat = (coords_a[i].first + coords_a[i+1].first)/2;
     uint32 ilon = (coords_a[i].second + coords_a[i+1].second)/2 + 0x80000000u;
-    int check = Coord_Query_Statement::check_area_block(0, string_b, ilat, ilon);
+    int check = Coord_Query_Statement::check_area_block(string_b, ilat, ilon);
     if (check & Coord_Query_Statement::HIT)
       inside = check;
     else if (check)
@@ -835,19 +866,15 @@ void Area_Query_Statement::collect_ways
 
   std::map< Way::Id_Type, bool > ways_inside;
 
+  // Build each way's geometry once, for both its segments and its coordinates.
   std::map< Uint31_Index, std::vector< Area_Block > > way_segments;
-  for (typename std::map< Uint31_Index, std::vector< Way_Skeleton > >::iterator it = ways.begin(); it != ways.end(); ++it)
-  {
-    for (typename std::vector< Way_Skeleton >::iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
-      add_way_to_area_blocks(way_geometries.get_geometry(*it2), it2->id.val(), way_segments);
-  }
-
   std::map< uint32, std::vector< std::pair< uint32, Way::Id_Type > > > way_coords_to_id;
   for (typename std::map< Uint31_Index, std::vector< Way_Skeleton > >::iterator it = ways.begin(); it != ways.end(); ++it)
   {
     for (typename std::vector< Way_Skeleton >::iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
     {
       std::vector< Quad_Coord > coords = way_geometries.get_geometry(*it2);
+      add_way_to_area_blocks(coords, it2->id.val(), way_segments);
       for (std::vector< Quad_Coord >::const_iterator it3 = coords.begin(); it3 != coords.end(); ++it3)
         way_coords_to_id[it3->ll_upper].push_back(std::make_pair(it3->ll_lower, it2->id));
     }
@@ -875,6 +902,15 @@ void Area_Query_Statement::collect_ways
 	areas[area_it.object().id].push_back(area_it.object());
       ++area_it;
     }
+    // The same blocks decoded once for this tile, for the point-in-area tests below.
+    std::map< Area_Skeleton::Id_Type, std::vector< Coord_Query_Statement::Decoded_Area_Block > > decoded;
+    for (std::map< Area_Skeleton::Id_Type, std::vector< Area_Block > >::const_iterator it = areas.begin();
+        it != areas.end(); ++it)
+    {
+      std::vector< Coord_Query_Statement::Decoded_Area_Block >& blocks = decoded[it->first];
+      for (std::vector< Area_Block >::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
+        blocks.push_back(Coord_Query_Statement::Decoded_Area_Block(current_idx, *it2));
+    }
 
     // check nodes
     while (nodes_it != way_coords_to_id.end() && nodes_it->first < current_idx)
@@ -892,12 +928,13 @@ void Area_Query_Statement::collect_ways
 	     it != areas.end(); ++it)
         {
           int inside = 0;
-          for (std::vector< Area_Block >::const_iterator it2 = it->second.begin(); it2 != it->second.end();
-	       ++it2)
+          const std::vector< Coord_Query_Statement::Decoded_Area_Block >& blocks = decoded[it->first];
+          for (std::vector< Coord_Query_Statement::Decoded_Area_Block >::const_iterator it2 = blocks.begin();
+	       it2 != blocks.end(); ++it2)
           {
             ++loop_count;
 
-	    int check(Coord_Query_Statement::check_area_block(current_idx, *it2, ilat, ilon));
+	    int check(Coord_Query_Statement::check_area_block(*it2, ilat, ilon));
 	    if (check == Coord_Query_Statement::HIT)
             {
               inside = Coord_Query_Statement::HIT;
@@ -913,10 +950,31 @@ void Area_Query_Statement::collect_ways
       ++nodes_it;
     }
 
+    // has_inner_points tests segment midpoints against the blocks decoded with ll_index 0.
+    std::map< Area_Skeleton::Id_Type, std::vector< Coord_Query_Statement::Decoded_Area_Block > > decoded_zero;
+    std::map< Area_Skeleton::Id_Type, std::vector< Decoded_Coords > > area_coords;
+    std::map< Area_Skeleton::Id_Type, std::vector< Coords_Bounds > > area_bounds;
+    for (std::map< Area_Skeleton::Id_Type, std::vector< Area_Block > >::const_iterator it = areas.begin();
+        it != areas.end(); ++it)
+    {
+      std::vector< Coord_Query_Statement::Decoded_Area_Block >& blocks = decoded_zero[it->first];
+      std::vector< Decoded_Coords >& coords = area_coords[it->first];
+      for (std::vector< Area_Block >::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
+      {
+        blocks.push_back(Coord_Query_Statement::Decoded_Area_Block(0, *it2));
+        coords.push_back(Decoded_Coords());
+        decode_coords(*it2, coords.back());
+        area_bounds[it->first].push_back(Coords_Bounds(coords.back()));
+      }
+    }
+
     // check segments
+    Decoded_Coords sit_coords;
     for (std::vector< Area_Block >::const_iterator sit = way_segments[Uint31_Index(current_idx)].begin();
 	 sit != way_segments[Uint31_Index(current_idx)].end(); ++sit)
     {
+      decode_coords(*sit, sit_coords);
+      Coords_Bounds sit_bounds(sit_coords);
       std::map< Area::Id_Type, int > area_status;
       for (std::map< Area_Skeleton::Id_Type, std::vector< Area_Block > >::const_iterator it = areas.begin();
 	   it != areas.end(); ++it)
@@ -931,7 +989,8 @@ void Area_Query_Statement::collect_ways
           // The endpoints are properly handled via the point-in-area test
           // Check additionally the middle of the segment to also get segments
           // that run through the area
-          int intersect = intersects_inner(*sit, *it2);
+          int intersect = sit_bounds.overlaps(area_bounds[it->first][it2 - it->second.begin()])
+              ? intersects_inner(sit_coords, area_coords[it->first][it2 - it->second.begin()]) : 0;
 	  if (intersect == Coord_Query_Statement::INTERSECT)
 	  {
 	    ways_inside[Way::Id_Type(sit->id)] = true;
@@ -945,7 +1004,7 @@ void Area_Query_Statement::collect_ways
               area_status[it2->id] = Coord_Query_Statement::HIT;
             break;
           }
-          has_inner_points(*sit, *it2, area_status[it2->id]);
+          has_inner_points(sit_coords, decoded_zero[it->first][it2 - it->second.begin()], area_status[it2->id]);
 	}
       }
       for (std::map< Area::Id_Type, int >::const_iterator it = area_status.begin(); it != area_status.end(); ++it)

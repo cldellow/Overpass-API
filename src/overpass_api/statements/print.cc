@@ -260,7 +260,7 @@ Extra_Data::~Extra_Data()
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Node_Skeleton& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Node_Skeleton::Id_Type >* meta = 0)
 {
   output.print_item(skel, Point_Geometry(::lat(ll_upper, skel.ll_lower), ::lon(ll_upper, skel.ll_lower)),
@@ -269,7 +269,7 @@ void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper,
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Way_Skeleton& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Way_Skeleton::Id_Type >* meta = 0)
 {
   Geometry_From_Quad_Coords broker;
@@ -280,7 +280,7 @@ void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper,
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Attic< Way_Skeleton >& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Way_Skeleton::Id_Type >* meta = 0)
 {
   Geometry_From_Quad_Coords broker;
@@ -291,7 +291,7 @@ void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper,
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Relation_Skeleton& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Relation_Skeleton::Id_Type >* meta = 0)
 {
   Geometry_From_Quad_Coords broker;
@@ -302,7 +302,7 @@ void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper,
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Attic< Relation_Skeleton >& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Relation_Skeleton::Id_Type >* meta = 0)
 {
   Geometry_From_Quad_Coords broker;
@@ -313,7 +313,7 @@ void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper,
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Area_Skeleton& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Area_Skeleton::Id_Type >* meta = 0)
 {
   Derived_Skeleton derived("area", Uint64(skel.id.val()));
@@ -322,7 +322,7 @@ void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper,
 
 
 void print_item(Extra_Data& extra_data, Output_Handler& output, uint32 ll_upper, const Derived_Structure& skel,
-                    const std::vector< std::pair< std::string, std::string > >* tags = 0,
+                    const Tag_List* tags = 0,
                     const OSM_Element_Metadata_Skeleton< Derived_Skeleton::Id_Type >* meta = 0)
 {
   if (skel.get_geometry())
@@ -377,7 +377,7 @@ void tags_quadtile_
     {
       if (++element_count > limit)
         return;
-      print_item(extra_data, output, item_it->first.val(), *it2, tag_store.get(item_it->first, *it2),
+      print_item(extra_data, output, item_it->first.val(), *it2, tag_store.get_refs(item_it->first, *it2),
           meta_printer.get(item_it->first, it2->id));
     }
     ++item_it;
@@ -405,7 +405,7 @@ void tags_quadtile_attic_
     {
       if (++element_count > limit)
         return;
-      print_item(extra_data, output, item_it->first.val(), *it2, tag_store.get(item_it->first, *it2),
+      print_item(extra_data, output, item_it->first.val(), *it2, tag_store.get_refs(item_it->first, *it2),
                  meta_printer.get(item_it->first, it2->id, it2->timestamp));
     }
     ++item_it;
@@ -413,75 +413,107 @@ void tags_quadtile_attic_
 }
 
 
-template< class TComp >
-struct Skeleton_Comparator_By_Id {
-  bool operator() (const std::pair< const TComp*, uint32 >& a,
-		   const std::pair< const TComp*, uint32 >& b)
-  {
-    return (a.first->id < b.first->id);
-  }
-};
-
-
-template< typename Index, typename Object >
-struct Maybe_Attic_Ref
-{
-public:
-  Maybe_Attic_Ref(Index idx_, const Object* obj_, uint64 timestamp_)
-  : idx(idx_), obj(obj_), timestamp(timestamp_) {}
-
-  Index idx;
-  const Object* obj;
-  uint64 timestamp;
-
-  bool operator<(const Maybe_Attic_Ref& rhs) const { return obj->id < rhs.obj->id; }
-};
-
-
+// Number of elements in a set, so that the id-sorted references below can be reserved exactly:
+// grown by doubling, they reach up to about twice their size, plus the old copy while they grow.
 template< class Index, class Object >
-std::vector< std::pair< const Object*, uint32 > > collect_items_by_id(
-    const std::map< Index, std::vector< Object > >& items)
+std::size_t count_items(const std::map< Index, std::vector< Object > >& items)
 {
-  std::vector< std::pair< const Object*, uint32 > > items_by_id;
-
-  for (typename std::map< Index, std::vector< Object > >::const_iterator
-    it(items.begin()); it != items.end(); ++it)
-  {
-    for (typename std::vector< Object >::const_iterator it2(it->second.begin());
-        it2 != it->second.end(); ++it2)
-      items_by_id.push_back(std::make_pair(&(*it2), it->first.val()));
-  }
-  sort(items_by_id.begin(), items_by_id.end(),
-       Skeleton_Comparator_By_Id< Object >());
-
-  return items_by_id;
-}
-
-
-template< class Index, class Object >
-std::vector< Maybe_Attic_Ref< Index, Object > > collect_items_by_id(
-    const std::map< Index, std::vector< Object > >& items,
-    const std::map< Index, std::vector< Attic< Object > > >& attic_items)
-{
-  std::vector< Maybe_Attic_Ref< Index, Object > > items_by_id;
+  std::size_t count = 0;
   for (typename std::map< Index, std::vector< Object > >::const_iterator
       it(items.begin()); it != items.end(); ++it)
-  {
-    for (typename std::vector< Object >::const_iterator it2(it->second.begin());
-        it2 != it->second.end(); ++it2)
-      items_by_id.push_back(Maybe_Attic_Ref< Index, Object >(it->first, &(*it2), NOW));
-  }
-  for (typename std::map< Index, std::vector< Attic< Object > > >::const_iterator
-      it(attic_items.begin()); it != attic_items.end(); ++it)
-  {
-    for (typename std::vector< Attic< Object > >::const_iterator it2(it->second.begin());
-        it2 != it->second.end(); ++it2)
-      items_by_id.push_back(Maybe_Attic_Ref< Index, Object >(it->first, &(*it2), it2->timestamp));
-  }
-  sort(items_by_id.begin(), items_by_id.end());
-
-  return items_by_id;
+    count += it->second.size();
+  return count;
 }
+
+
+// The elements of a set in id order, current elements and then attic elements for equal ids as
+// std::sort leaves them. Each element is referenced in 8 bytes: the number of its index's entry in a
+// table of the set's non-empty vectors, current ones first, and its position in that vector. A
+// pointer and an index took 16 bytes per element, and 24 with the timestamp of an attic element.
+template< class Index, class Object >
+class Items_By_Id
+{
+public:
+  Items_By_Id(const std::map< Index, std::vector< Object > >& items)
+  {
+    refs.reserve(count_items(items));
+    add_entries(items);
+    current_count = entries.size();
+    sort_refs();
+  }
+
+  Items_By_Id(const std::map< Index, std::vector< Object > >& items,
+      const std::map< Index, std::vector< Attic< Object > > >& attic_items)
+  {
+    refs.reserve(count_items(items) + count_items(attic_items));
+    add_entries(items);
+    current_count = entries.size();
+    add_entries(attic_items);
+    sort_refs();
+  }
+
+  std::size_t size() const { return refs.size(); }
+  const Object& obj(std::size_t i) const { return get(refs[i]); }
+  Index idx(std::size_t i) const { return entries[refs[i].entry].idx; }
+  // NOW for a current element.
+  uint64 timestamp(std::size_t i) const
+  {
+    return refs[i].entry < current_count ? NOW
+        : static_cast< const Attic< Object >& >(get(refs[i])).timestamp;
+  }
+
+private:
+  struct Ref
+  {
+    Ref(uint32 entry_, uint32 pos_) : entry(entry_), pos(pos_) {}
+    uint32 entry;
+    uint32 pos;
+  };
+
+  // The address of the Object part of the vector's first element, and the size of its elements:
+  // that of Object for current elements, of Attic< Object > for attic elements. Looking up both
+  // kinds the same way keeps the sort's comparisons free of branches.
+  struct Entry
+  {
+    Entry(const char* first_, uint32 size_, Index idx_) : first(first_), size(size_), idx(idx_) {}
+    const char* first;
+    uint32 size;
+    Index idx;
+  };
+
+  std::vector< Entry > entries;
+  std::size_t current_count;
+  std::vector< Ref > refs;
+
+  const Object& get(const Ref& ref) const
+  {
+    const Entry& entry = entries[ref.entry];
+    return *reinterpret_cast< const Object* >(entry.first + std::size_t(ref.pos) * entry.size);
+  }
+
+  // Appends the references in the order of the set, as before, so that equal ids keep their order.
+  template< class Elem >
+  void add_entries(const std::map< Index, std::vector< Elem > >& items)
+  {
+    for (typename std::map< Index, std::vector< Elem > >::const_iterator
+        it(items.begin()); it != items.end(); ++it)
+    {
+      if (it->second.empty())
+        continue;
+      uint32 entry = entries.size();
+      const Object& first = it->second.front();
+      entries.push_back(Entry(reinterpret_cast< const char* >(&first), sizeof(Elem), it->first));
+      for (uint32 pos = 0; pos < it->second.size(); ++pos)
+        refs.push_back(Ref(entry, pos));
+    }
+  }
+
+  void sort_refs()
+  {
+    std::sort(refs.begin(), refs.end(),
+        [this](const Ref& a, const Ref& b) { return get(a).id < get(b).id; });
+  }
+};
 
 
 template< class Index, class Object >
@@ -489,14 +521,14 @@ void by_id
   (const std::map< Index, std::vector< Object > >& items, Output_Handler& output,
    Transaction& transaction, Extra_Data& extra_data, uint32 limit, uint32& element_count)
 {
-  std::vector< std::pair< const Object*, uint32 > > items_by_id = collect_items_by_id(items);
+  Items_By_Id< Index, Object > items_by_id(items);
 
   // iterate over the result
   for (uint32 i(0); i < items_by_id.size(); ++i)
   {
     if (++element_count > limit)
       return;
-    print_item(extra_data, output, items_by_id[i].second, *(items_by_id[i].first));
+    print_item(extra_data, output, items_by_id.idx(i).val(), items_by_id.obj(i));
   }
 }
 
@@ -508,18 +540,18 @@ void by_id
    Output_Handler& output,
    Transaction& transaction, Extra_Data& extra_data, uint32 limit, uint32& element_count)
 {
-  std::vector< Maybe_Attic_Ref< Index, Object > > items_by_id = collect_items_by_id(items, attic_items);
+  Items_By_Id< Index, Object > items_by_id(items, attic_items);
 
   // iterate over the result
   for (uint32 i(0); i < items_by_id.size(); ++i)
   {
     if (++element_count > limit)
       return;
-    if (items_by_id[i].timestamp == NOW)
-      print_item(extra_data, output, items_by_id[i].idx.val(), *items_by_id[i].obj);
+    if (items_by_id.timestamp(i) == NOW)
+      print_item(extra_data, output, items_by_id.idx(i).val(), items_by_id.obj(i));
     else
-      print_item(extra_data, output, items_by_id[i].idx.val(),
-		      Attic< Object >(*items_by_id[i].obj, items_by_id[i].timestamp));
+      print_item(extra_data, output, items_by_id.idx(i).val(),
+		      Attic< Object >(items_by_id.obj(i), items_by_id.timestamp(i)));
   }
 }
 
@@ -597,7 +629,7 @@ void tags_by_id
    Resource_Manager& rman, Meta_Collector< Index, typename Object::Id_Type >* meta_printer,
    Tag_Store< Index, Object >& tag_store, uint32 limit, uint32& element_count)
 {
-  std::vector< std::pair< const Object*, uint32 > > items_by_id = collect_items_by_id(items);
+  Items_By_Id< Index, Object > items_by_id(items);
 
   // iterate over the result
   for (typename Object::Id_Type id_pos; id_pos < items_by_id.size(); id_pos += FLUSH_SIZE)
@@ -605,13 +637,13 @@ void tags_by_id
     // Disable health_check: This ensures that a result will be always printed completely
     //rman.health_check(*this);
 
-    typename Object::Id_Type lower_id_bound(items_by_id[id_pos.val()].first->id);
+    typename Object::Id_Type lower_id_bound(items_by_id.obj(id_pos.val()).id);
     typename Object::Id_Type upper_id_bound;
     if (id_pos + FLUSH_SIZE < items_by_id.size())
-      upper_id_bound = items_by_id[(id_pos + FLUSH_SIZE).val()].first->id;
+      upper_id_bound = items_by_id.obj((id_pos + FLUSH_SIZE).val()).id;
     else
     {
-      upper_id_bound = items_by_id[items_by_id.size()-1].first->id;
+      upper_id_bound = items_by_id.obj(items_by_id.size()-1).id;
       ++upper_id_bound;
     }
 
@@ -633,10 +665,10 @@ void tags_by_id
 	return;
       typename std::set< OSM_Element_Metadata_Skeleton< typename Object::Id_Type > >::const_iterator meta_it
           = metadata.lower_bound(OSM_Element_Metadata_Skeleton< typename Object::Id_Type >
-              (items_by_id[i.val()].first->id));
-      print_item(extra_data, output, items_by_id[i.val()].second, *(items_by_id[i.val()].first),
-		 tag_store.get(Index(items_by_id[i.val()].second), *items_by_id[i.val()].first),
-		 (meta_it != metadata.end() && meta_it->ref == items_by_id[i.val()].first->id) ?
+              (items_by_id.obj(i.val()).id));
+      print_item(extra_data, output, items_by_id.idx(i.val()).val(), items_by_id.obj(i.val()),
+		 tag_store.get_refs(items_by_id.idx(i.val()), items_by_id.obj(i.val())),
+		 (meta_it != metadata.end() && meta_it->ref == items_by_id.obj(i.val()).id) ?
 		     &*meta_it : 0);
     }
   }
@@ -651,7 +683,7 @@ void tags_by_id_attic
    Extra_Data& extra_data, uint32 FLUSH_SIZE, Output_Handler& output,
    Resource_Manager& rman, Transaction& transaction, uint32 limit, uint32& element_count)
 {
-  std::vector< Maybe_Attic_Ref< Index, Object > > items_by_id = collect_items_by_id(current_items, attic_items);
+  Items_By_Id< Index, Object > items_by_id(current_items, attic_items);
 
   Tag_Store< Index, Object > current_tag_store(transaction);
   Tag_Store< Index, Object > attic_tag_store(transaction);
@@ -666,13 +698,13 @@ void tags_by_id_attic
     // Disable health_check: This ensures that a result will be always printed completely
     //rman.health_check(*this);
 
-    typename Object::Id_Type lower_id_bound(items_by_id[id_pos.val()].obj->id);
+    typename Object::Id_Type lower_id_bound(items_by_id.obj(id_pos.val()).id);
     typename Object::Id_Type upper_id_bound;
     if (id_pos + FLUSH_SIZE < items_by_id.size())
-      upper_id_bound = items_by_id[(id_pos + FLUSH_SIZE).val()].obj->id;
+      upper_id_bound = items_by_id.obj((id_pos + FLUSH_SIZE).val()).id;
     else
     {
-      upper_id_bound = items_by_id[items_by_id.size()-1].obj->id;
+      upper_id_bound = items_by_id.obj(items_by_id.size()-1).id;
       ++upper_id_bound;
     }
 
@@ -695,24 +727,24 @@ void tags_by_id_attic
     {
       if (++element_count > limit)
 	return;
-      if (items_by_id[i.val()].timestamp == NOW)
+      if (items_by_id.timestamp(i.val()) == NOW)
       {
         typename std::set< OSM_Element_Metadata_Skeleton< typename Object::Id_Type > >::const_iterator meta_it
             = only_current_metadata.lower_bound(OSM_Element_Metadata_Skeleton< typename Object::Id_Type >
-                (items_by_id[i.val()].obj->id));
-        print_item(extra_data, output, items_by_id[i.val()].idx.val(), *items_by_id[i.val()].obj,
-		 current_tag_store.get(items_by_id[i.val()].idx, *items_by_id[i.val()].obj),
-		 (meta_it != only_current_metadata.end() && meta_it->ref == items_by_id[i.val()].obj->id) ?
+                (items_by_id.obj(i.val()).id));
+        print_item(extra_data, output, items_by_id.idx(i.val()).val(), items_by_id.obj(i.val()),
+		 current_tag_store.get_refs(items_by_id.idx(i.val()), items_by_id.obj(i.val())),
+		 (meta_it != only_current_metadata.end() && meta_it->ref == items_by_id.obj(i.val()).id) ?
 		     &*meta_it : 0);
       }
       else
       {
         typename std::set< OSM_Element_Metadata_Skeleton< typename Object::Id_Type > >::const_iterator meta_it
             = find_matching_metadata(attic_metadata,
-                  items_by_id[i.val()].obj->id, items_by_id[i.val()].timestamp);
-        print_item(extra_data, output, items_by_id[i.val()].idx.val(),
-		   Attic< Object >(*items_by_id[i.val()].obj, items_by_id[i.val()].timestamp),
-		 attic_tag_store.get(items_by_id[i.val()].idx, *items_by_id[i.val()].obj),
+                  items_by_id.obj(i.val()).id, items_by_id.timestamp(i.val()));
+        print_item(extra_data, output, items_by_id.idx(i.val()).val(),
+		   Attic< Object >(items_by_id.obj(i.val()), items_by_id.timestamp(i.val())),
+		 attic_tag_store.get_refs(items_by_id.idx(i.val()), items_by_id.obj(i.val())),
                  meta_it != attic_metadata.end() ? &*meta_it : 0);
       }
     }

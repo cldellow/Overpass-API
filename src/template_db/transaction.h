@@ -19,6 +19,7 @@
 #ifndef DE__OSM3S___TEMPLATE_DB__TRANSACTION_H
 #define DE__OSM3S___TEMPLATE_DB__TRANSACTION_H
 
+#include "block_cache.h"
 #include "random_file.h"
 
 #include <signal.h>
@@ -34,6 +35,7 @@ class Transaction
     virtual File_Blocks_Index_Base* data_index(const File_Properties*) = 0;
     virtual Random_File_Index* random_index(const File_Properties*) = 0;
     virtual std::string get_db_dir() const = 0;
+    virtual Block_Cache* block_cache() { return 0; }
 };
 
 
@@ -49,6 +51,7 @@ class Nonsynced_Transaction : public Transaction
 
     void flush();
     std::string get_db_dir() const { return db_dir; }
+    Block_Cache* block_cache() { return &block_cache_; }
 
   private:
     std::map< const File_Properties*, File_Blocks_Index_Base* >
@@ -58,6 +61,7 @@ class Nonsynced_Transaction : public Transaction
     Access_Mode access_mode;
     bool use_shadow;
     std::string file_name_extension, db_dir;
+    Block_Cache block_cache_;
 };
 
 
@@ -89,6 +93,13 @@ inline void Nonsynced_Transaction::flush()
       it = random_files.begin(); it != random_files.end(); ++it)
     delete it->second;
   random_files.clear();
+  block_cache_.clear();
+}
+
+
+inline bool ends_with(const std::string& s, const std::string& suffix)
+{
+  return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
 
@@ -102,7 +113,13 @@ inline File_Blocks_Index_Base* Nonsynced_Transaction::data_index
 
   File_Blocks_Index_Base* data_index = fp->new_data_index(access_mode, use_shadow, db_dir, file_name_extension);
   if (data_index != 0)
+  {
+    // Statements of a union read the same skeleton and local tag blocks, but look up different
+    // tags in the global tag index, so its blocks are rarely read again: don't cache them.
+    if (access_mode == Access_Mode::readonly && !ends_with(fp->get_file_name_trunk(), "_tags_global"))
+      data_index->block_cache = &block_cache_;
     data_files[fp] = data_index;
+  }
   return data_index;
 }
 

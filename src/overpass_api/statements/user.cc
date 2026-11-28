@@ -48,10 +48,25 @@ class User_Constraint : public Query_Constraint
     bool get_relation_ids(Resource_Manager& rman, std::vector< Relation_Skeleton::Id_Type >& ids) override;
 
     void filter(const Statement& query, Resource_Manager& rman, Set& into) override;
+    bool filter_reads_only_metadata() const override { return true; }
     virtual ~User_Constraint() {}
 
   private:
     User_Statement* user;
+
+    // The ids of the objects the users touched depend only on the users, so they are
+    // the same for the whole query. They are kept after first use and shared by
+    // get_*_ids and filter, which otherwise each read all of the users' metadata.
+    bool node_ids_known = false;
+    bool way_ids_known = false;
+    bool relation_ids_known = false;
+    std::vector< Node_Skeleton::Id_Type > touched_node_ids;
+    std::vector< Way_Skeleton::Id_Type > touched_way_ids;
+    std::vector< Relation_Skeleton::Id_Type > touched_relation_ids;
+
+    const std::vector< Node_Skeleton::Id_Type >& touched_nodes(Resource_Manager& rman);
+    const std::vector< Way_Skeleton::Id_Type >& touched_ways(Resource_Manager& rman);
+    const std::vector< Relation_Skeleton::Id_Type >& touched_relations(Resource_Manager& rman);
 };
 
 
@@ -186,31 +201,6 @@ void calc_ranges_31
 }
 
 
-void calc_ranges_both
-  (Ranges< Uint32_Index >& node_req, Ranges< Uint31_Index >& other_req,
-   const std::set< Uint32_Index >& user_ids, Transaction& transaction)
-{
-
-  Block_Backend< Uint32_Index, Uint31_Index, std::set< Uint32_Index >::const_iterator > user_db
-      (transaction.data_index(meta_settings().USER_INDICES));
-  for (auto user_it = user_db.discrete_begin(user_ids.begin(), user_ids.end());
-      !(user_it == user_db.discrete_end()); ++user_it)
-  {
-    if ((user_it.object().val() & 0x80000000) == 0)
-    {
-      node_req.push_back(Uint32_Index(user_it.object().val()), Uint32_Index(user_it.object().val() + 0x100));
-      other_req.push_back(Uint31_Index(user_it.object().val()), Uint31_Index(user_it.object().val() + 0x100));
-    }
-    else if ((user_it.object().val() & 0xff) == 0)
-      other_req.push_back(Uint31_Index(user_it.object().val()), Uint31_Index(user_it.object().val() + 0x100));
-    else
-      other_req.push_back(Uint31_Index(user_it.object().val()), Uint31_Index(user_it.object().val() + 1));
-  }
-  node_req.sort();
-  other_req.sort();
-}
-
-
 void User_Constraint::filter(const Statement& query, Resource_Manager& rman, Set& into)
 {
   std::set< Uint32_Index > user_ids = user->get_ids(*rman.get_transaction());
@@ -235,24 +225,17 @@ void User_Constraint::filter(const Statement& query, Resource_Manager& rman, Set
   }
   else
   {
-    Ranges< Uint32_Index > node_ranges;
-    Ranges< Uint31_Index > other_ranges;
-    calc_ranges_both(node_ranges, other_ranges, user->get_ids(*rman.get_transaction()), *rman.get_transaction());
-
     if (!into.nodes.empty() || !into.attic_nodes.empty())
       Timeless< Uint32_Index, Node_Skeleton >{ into.nodes, into.attic_nodes }.filter_by_id(
-          touched_ids_by_users< Uint32_Index, Node_Skeleton >(
-              rman, node_ranges, user->get_ids(*rman.get_transaction())))
+          touched_nodes(rman))
           .swap(into.nodes, into.attic_nodes);
     if (!into.ways.empty() || !into.attic_ways.empty())
       Timeless< Uint31_Index, Way_Skeleton >{ into.ways, into.attic_ways }.filter_by_id(
-          touched_ids_by_users< Uint31_Index, Way_Skeleton >(
-              rman, other_ranges, user->get_ids(*rman.get_transaction())))
+          touched_ways(rman))
           .swap(into.ways, into.attic_ways);
     if (!into.relations.empty() || !into.attic_relations.empty())
       Timeless< Uint31_Index, Relation_Skeleton >{ into.relations, into.attic_relations }.filter_by_id(
-          touched_ids_by_users< Uint31_Index, Relation_Skeleton >(
-              rman, other_ranges, user->get_ids(*rman.get_transaction())))
+          touched_relations(rman))
           .swap(into.relations, into.attic_relations);
   }
 
@@ -434,15 +417,53 @@ bool User_Constraint::get_ranges(Resource_Manager& rman, Ranges< Uint31_Index >&
 }
 
 
+const std::vector< Node_Skeleton::Id_Type >& User_Constraint::touched_nodes(Resource_Manager& rman)
+{
+  if (!node_ids_known)
+  {
+    Ranges< Uint32_Index > node_ranges;
+    calc_ranges_32(node_ranges, user->get_ids(*rman.get_transaction()), *rman.get_transaction());
+    touched_node_ids = touched_ids_by_users< Uint32_Index, Node_Skeleton >(
+        rman, node_ranges, user->get_ids(*rman.get_transaction()));
+    node_ids_known = true;
+  }
+  return touched_node_ids;
+}
+
+
+const std::vector< Way_Skeleton::Id_Type >& User_Constraint::touched_ways(Resource_Manager& rman)
+{
+  if (!way_ids_known)
+  {
+    Ranges< Uint31_Index > other_ranges;
+    calc_ranges_31(other_ranges, user->get_ids(*rman.get_transaction()), *rman.get_transaction());
+    touched_way_ids = touched_ids_by_users< Uint31_Index, Way_Skeleton >(
+        rman, other_ranges, user->get_ids(*rman.get_transaction()));
+    way_ids_known = true;
+  }
+  return touched_way_ids;
+}
+
+
+const std::vector< Relation_Skeleton::Id_Type >& User_Constraint::touched_relations(Resource_Manager& rman)
+{
+  if (!relation_ids_known)
+  {
+    Ranges< Uint31_Index > other_ranges;
+    calc_ranges_31(other_ranges, user->get_ids(*rman.get_transaction()), *rman.get_transaction());
+    touched_relation_ids = touched_ids_by_users< Uint31_Index, Relation_Skeleton >(
+        rman, other_ranges, user->get_ids(*rman.get_transaction()));
+    relation_ids_known = true;
+  }
+  return touched_relation_ids;
+}
+
+
 bool User_Constraint::get_node_ids(Resource_Manager& rman, std::vector< Node_Skeleton::Id_Type >& ids)
 {
   if (user->get_criterion() == User_Statement::touched)
   {
-    Ranges< Uint32_Index > node_ranges;
-    calc_ranges_32(node_ranges, user->get_ids(*rman.get_transaction()), *rman.get_transaction());
-
-    touched_ids_by_users< Uint32_Index, Node_Skeleton >(
-        rman, node_ranges, user->get_ids(*rman.get_transaction())).swap(ids);
+    ids = touched_nodes(rman);
     return true;
   }
   return false;
@@ -453,11 +474,7 @@ bool User_Constraint::get_way_ids(Resource_Manager& rman, std::vector< Way_Skele
 {
   if (user->get_criterion() == User_Statement::touched)
   {
-    Ranges< Uint31_Index > other_ranges;
-    calc_ranges_31(other_ranges, user->get_ids(*rman.get_transaction()), *rman.get_transaction());
-
-    touched_ids_by_users< Uint31_Index, Way_Skeleton >(
-        rman, other_ranges, user->get_ids(*rman.get_transaction())).swap(ids);
+    ids = touched_ways(rman);
     return true;
   }
   return false;
@@ -468,11 +485,7 @@ bool User_Constraint::get_relation_ids(Resource_Manager& rman, std::vector< Rela
 {
   if (user->get_criterion() == User_Statement::touched)
   {
-    Ranges< Uint31_Index > other_ranges;
-    calc_ranges_31(other_ranges, user->get_ids(*rman.get_transaction()), *rman.get_transaction());
-
-    touched_ids_by_users< Uint31_Index, Relation_Skeleton >(
-        rman, other_ranges, user->get_ids(*rman.get_transaction())).swap(ids);
+    ids = touched_relations(rman);
     return true;
   }
   return false;

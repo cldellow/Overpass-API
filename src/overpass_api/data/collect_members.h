@@ -25,6 +25,7 @@
 #include "collect_items.h"
 #include "filenames.h"
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <vector>
@@ -123,7 +124,26 @@ bool add_way_to_area_blocks(const std::vector< Quad_Coord >& coords,
                             uint32 id, std::map< Uint31_Index, std::vector< Area_Block > >& areas);
 
 
-std::vector< Quad_Coord > make_geometry(const Way_Skeleton& way, const std::vector< Node >& nodes);
+// nodes must be sorted by id. Node_Type is Node or Node_Position.
+template< typename Node_Type >
+std::vector< Quad_Coord > make_geometry(const Way_Skeleton& way, const std::vector< Node_Type >& nodes)
+{
+  std::vector< Quad_Coord > result;
+
+  for (std::vector< Node::Id_Type >::const_iterator it3(way.nds.begin());
+      it3 != way.nds.end(); ++it3)
+  {
+    const Node_Type* node = binary_search_for_id(nodes, *it3);
+    if (node == 0)
+    {
+      result.clear();
+      return result;
+    }
+    result.push_back(Quad_Coord(node->index, node->ll_lower_));
+  }
+
+  return result;
+}
 
 
 void filter_ways_by_ranges(std::map< Uint31_Index, std::vector< Way_Skeleton > >& ways,
@@ -176,7 +196,7 @@ public:
       const Ranges< Index >& ranges_,
       const Statement& query_, Resource_Manager& rman_)
       : ids(&ids_), invert_ids(invert_ids_), ranges(ranges_), query(&query_), rman(&rman_),
-      min_idx(ranges_.empty() ? Index() : ranges_.begin().lower_bound()) {}
+      min_idx(ranges_.empty() ? Index() : ranges_.begin().lower_bound()), id_pred(ids_) {}
   
   bool get_chunk(
       std::map< Index, std::vector< Object > >& elements,
@@ -189,6 +209,8 @@ private:
   const Statement* query;
   Resource_Manager* rman;
   Index min_idx;
+  // Built once and reused for every chunk.
+  Id_Predicate< Object > id_pred;
 };
 
 
@@ -221,11 +243,44 @@ bool Collect_Items< Index, Object >::get_chunk(
           elements, attic_elements, Trivial_Predicate< Object >(), ranges, min_idx, *query, *rman);
     else 
       return get_elements_by_id_from_db_generic(
-          elements, attic_elements, Not_Predicate< Object, Id_Predicate< Object > >(Id_Predicate< Object >(*ids)),
+          elements, attic_elements, Not_Predicate< Object, Id_Predicate< Object > >(id_pred),
           ranges, min_idx, *query, *rman);
   }
   return get_elements_by_id_from_db_generic(
-      elements, attic_elements, Id_Predicate< Object >(*ids), ranges, min_idx, *query, *rman);
+      elements, attic_elements, id_pred, ranges, min_idx, *query, *rman);
+}
+
+
+// Sorts entries by id and keeps only the last entry of each id, in the order they were added,
+// like repeated assignments to a std::map.
+template< typename Id_Type, typename Value >
+void sort_keeping_last_per_id(std::vector< std::pair< Id_Type, Value > >& entries)
+{
+  std::stable_sort(entries.begin(), entries.end(),
+      [](const std::pair< Id_Type, Value >& a, const std::pair< Id_Type, Value >& b)
+      { return a.first < b.first; });
+  typename std::vector< std::pair< Id_Type, Value > >::iterator kept = entries.begin();
+  for (typename std::vector< std::pair< Id_Type, Value > >::iterator it = entries.begin();
+      it != entries.end(); ++it)
+  {
+    if (it + 1 != entries.end() && (it + 1)->first == it->first)
+      continue;
+    *kept++ = *it;
+  }
+  entries.erase(kept, entries.end());
+}
+
+
+// Returns the value stored for id in entries sorted by sort_keeping_last_per_id, or 0.
+template< typename Id_Type, typename Value >
+Value* find_timestamps(std::vector< std::pair< Id_Type, Value > >& entries, const Id_Type& id)
+{
+  typename std::vector< std::pair< Id_Type, Value > >::iterator it = std::lower_bound(
+      entries.begin(), entries.end(), id,
+      [](const std::pair< Id_Type, Value >& a, const Id_Type& b) { return a.first < b; });
+  if (it != entries.end() && it->first == id)
+    return &it->second;
+  return 0;
 }
 
 
@@ -294,105 +349,123 @@ void filter_attic_elements
     // Confirm elements that are backed by meta data
     // Update element's expiration timestamp if a meta exists that is older than the current
     // expiration date and younger than timestamp
-    std::map< Index, std::map< typename Skeleton::Id_Type, std::pair< uint64, uint64 > > >
-        timestamp_by_id_by_idx;
-    for (typename std::map< Index, std::vector< Skeleton > >::const_iterator it = current.begin();
-         it != current.end(); ++it)
-    {
-      std::map< typename Skeleton::Id_Type, std::pair< uint64, uint64 > >& entry
-          = timestamp_by_id_by_idx[it->first];
-      for (typename std::vector< Skeleton >::const_iterator it2 = it->second.begin();
-           it2 != it->second.end(); ++it2)
-        entry[it2->id] = std::make_pair(0, NOW);
-    }
-    for (typename std::map< Index, std::vector< Attic< Skeleton > > >::const_iterator it = attic.begin();
-         it != attic.end(); ++it)
-    {
-      std::map< typename Skeleton::Id_Type, std::pair< uint64, uint64 > >& entry
-          = timestamp_by_id_by_idx[it->first];
-      for (typename std::vector< Attic< Skeleton > >::const_iterator it2 = it->second.begin();
-           it2 != it->second.end(); ++it2)
-        entry[it2->id] = std::make_pair(0, it2->timestamp);
-    }
+    // The meta files are read in index order, so this works one index at a time: only one
+    // index's timestamps are held at once. Per index, the entries are sorted by id with one
+    // entry per id.
+    typedef std::pair< typename Skeleton::Id_Type, std::pair< uint64, uint64 > > Timestamps_Entry;
 
     Block_Backend< Index, OSM_Element_Metadata_Skeleton< typename Skeleton::Id_Type >,
             typename std::vector< Index >::const_iterator >
         attic_meta_db(rman.get_transaction()->data_index
           (attic_meta_file_properties< Skeleton >()));
-    for (auto it = attic_meta_db.discrete_begin(idx_set.begin(), idx_set.end());
-        !(it == attic_meta_db.discrete_end()); ++it)
-    {
-      auto tit = timestamp_by_id_by_idx[it.index()].find(it.object().ref);
-      if (tit != timestamp_by_id_by_idx[it.index()].end())
-      {
-        if (timestamp < it.object().timestamp)
-          tit->second.second = std::min(tit->second.second, it.object().timestamp);
-        else
-          tit->second.first = std::max(tit->second.first, it.object().timestamp);
-      }
-    }
+    auto attic_meta_it = attic_meta_db.discrete_begin(idx_set.begin(), idx_set.end());
 
-    // Same thing with current meta data
     Block_Backend< Index, OSM_Element_Metadata_Skeleton< typename Skeleton::Id_Type >,
             typename std::vector< Index >::const_iterator >
         meta_db(rman.get_transaction()->data_index
           (current_meta_file_properties< Skeleton >()));
+    auto meta_it = meta_db.discrete_begin(idx_set.begin(), idx_set.end());
 
-    for (auto it = meta_db.discrete_begin(idx_set.begin(), idx_set.end());
-        !(it == meta_db.discrete_end()); ++it)
+    std::vector< Timestamps_Entry > entry;
+    for (typename std::vector< Index >::const_iterator idx = idx_set.begin(); idx != idx_set.end(); ++idx)
     {
-      auto tit = timestamp_by_id_by_idx[it.index()].find(it.object().ref);
-      if (tit != timestamp_by_id_by_idx[it.index()].end())
+      typename std::map< Index, std::vector< Skeleton > >::iterator cit = current.find(*idx);
+      typename std::map< Index, std::vector< Attic< Skeleton > > >::iterator ait = attic.find(*idx);
+
+      entry.clear();
+      if (cit != current.end())
       {
-        if (timestamp < it.object().timestamp)
-          tit->second.second = std::min(tit->second.second, it.object().timestamp);
-        else
-          tit->second.first = std::max(tit->second.first, it.object().timestamp);
+        for (typename std::vector< Skeleton >::const_iterator it2 = cit->second.begin();
+             it2 != cit->second.end(); ++it2)
+          entry.push_back(Timestamps_Entry(it2->id, std::make_pair(0, NOW)));
       }
-    }
-
-    // Filter current: only keep elements that have already existed at timestamp
-    for (typename std::map< Index, std::vector< Skeleton > >::iterator it = current.begin();
-         it != current.end(); ++it)
-    {
-      std::vector< Skeleton > result;
-      std::map< typename Skeleton::Id_Type, std::pair< uint64, uint64 > >& entry
-          = timestamp_by_id_by_idx[it->first];
-
-      for (typename std::vector< Skeleton >::const_iterator it2 = it->second.begin();
-           it2 != it->second.end(); ++it2)
+      if (ait != attic.end())
       {
-        if (entry[it2->id].first > 0)
+        for (typename std::vector< Attic< Skeleton > >::const_iterator it2 = ait->second.begin();
+             it2 != ait->second.end(); ++it2)
+          entry.push_back(Timestamps_Entry(it2->id, std::make_pair(0, it2->timestamp)));
+      }
+      sort_keeping_last_per_id(entry);
+
+      while (!(attic_meta_it == attic_meta_db.discrete_end()) && attic_meta_it.index() < *idx)
+        ++attic_meta_it;
+      for (; !(attic_meta_it == attic_meta_db.discrete_end()) && attic_meta_it.index() == *idx;
+          ++attic_meta_it)
+      {
+        std::pair< uint64, uint64 >* tit = find_timestamps(entry, attic_meta_it.object().ref);
+        if (tit)
         {
-          if (entry[it2->id].second == NOW)
-            result.push_back(*it2);
+          if (timestamp < attic_meta_it.object().timestamp)
+            tit->second = std::min(tit->second, attic_meta_it.object().timestamp);
           else
-            attic[it->first].push_back(Attic< Skeleton >(*it2, entry[it2->id].second));
+            tit->first = std::max(tit->first, attic_meta_it.object().timestamp);
         }
       }
 
-      result.swap(it->second);
-    }
-
-    // Filter attic: only keep elements that have already existed at timestamp
-    for (typename std::map< Index, std::vector< Attic< Skeleton > > >::iterator it = attic.begin();
-         it != attic.end(); ++it)
-    {
-      std::vector< Attic< Skeleton > > result;
-      std::map< typename Skeleton::Id_Type, std::pair< uint64, uint64 > >& entry
-          = timestamp_by_id_by_idx[it->first];
-
-      for (typename std::vector< Attic< Skeleton > >::const_iterator it2 = it->second.begin();
-           it2 != it->second.end(); ++it2)
+      // Same thing with current meta data
+      while (!(meta_it == meta_db.discrete_end()) && meta_it.index() < *idx)
+        ++meta_it;
+      for (; !(meta_it == meta_db.discrete_end()) && meta_it.index() == *idx; ++meta_it)
       {
-        if (entry[it2->id].first > 0)
+        std::pair< uint64, uint64 >* tit = find_timestamps(entry, meta_it.object().ref);
+        if (tit)
         {
-          result.push_back(*it2);
-          result.back().timestamp = entry[it2->id].second;
+          if (timestamp < meta_it.object().timestamp)
+            tit->second = std::min(tit->second, meta_it.object().timestamp);
+          else
+            tit->first = std::max(tit->first, meta_it.object().timestamp);
         }
       }
 
-      result.swap(it->second);
+      // Filter current: only keep elements that have already existed at timestamp
+      if (cit != current.end())
+      {
+        // Compact in place, keeping the order, and drop the slack left by growing the vector.
+        typename std::vector< Skeleton >::iterator out = cit->second.begin();
+        for (typename std::vector< Skeleton >::iterator it2 = cit->second.begin();
+             it2 != cit->second.end(); ++it2)
+        {
+          const std::pair< uint64, uint64 >* timestamps = find_timestamps(entry, it2->id);
+          if (timestamps && timestamps->first > 0)
+          {
+            if (timestamps->second == NOW)
+            {
+              if (out != it2)
+                *out = std::move(*it2);
+              ++out;
+            }
+            else
+            {
+              if (ait == attic.end())
+                ait = attic.insert(std::make_pair(*idx, std::vector< Attic< Skeleton > >())).first;
+              ait->second.push_back(Attic< Skeleton >(*it2, timestamps->second));
+            }
+          }
+        }
+        cit->second.erase(out, cit->second.end());
+        cit->second.shrink_to_fit();
+      }
+
+      // Filter attic: only keep elements that have already existed at timestamp
+      if (ait != attic.end())
+      {
+        // Compact in place, as above.
+        typename std::vector< Attic< Skeleton > >::iterator out = ait->second.begin();
+        for (typename std::vector< Attic< Skeleton > >::iterator it2 = ait->second.begin();
+             it2 != ait->second.end(); ++it2)
+        {
+          const std::pair< uint64, uint64 >* timestamps = find_timestamps(entry, it2->id);
+          if (timestamps && timestamps->first > 0)
+          {
+            if (out != it2)
+              *out = std::move(*it2);
+            out->timestamp = timestamps->second;
+            ++out;
+          }
+        }
+        ait->second.erase(out, ait->second.end());
+        ait->second.shrink_to_fit();
+      }
     }
   }
 }
@@ -506,6 +579,67 @@ inline std::vector< Way::Id_Type > relation_way_member_ids
 }
 
 
+// For each id, the end of validity of the version valid at a past date: NOW for the current
+// version, else the earliest attic timestamp after that date, else 0 (no valid version).
+// This is what a std::map< Id_Type, uint64 > filled by the same rules held, in a sorted vector
+// of 16-byte entries instead of a tree node of about 48 bytes per id.
+template< typename Id_Type >
+class Valid_Until_By_Id
+{
+public:
+  Valid_Until_By_Id(uint64 timestamp_) : timestamp(timestamp_), valid_count(0) {}
+
+  void add_current(const Id_Type& id) { entries.push_back(std::make_pair(id, NOW)); }
+
+  // Versions that ended at or before the date can't be the valid one, so they aren't stored:
+  // an id without entries reads as 0, like an id whose entries are all 0.
+  void add_attic(const Id_Type& id, uint64 attic_timestamp)
+  {
+    if (attic_timestamp > timestamp)
+      entries.push_back(std::make_pair(id, attic_timestamp));
+  }
+
+  // Call once after adding all entries: keeps per id the smallest nonzero value, else 0.
+  void finish()
+  {
+    std::sort(entries.begin(), entries.end());
+    typename std::vector< std::pair< Id_Type, uint64 > >::iterator kept = entries.begin();
+    typename std::vector< std::pair< Id_Type, uint64 > >::iterator it = entries.begin();
+    while (it != entries.end())
+    {
+      typename std::vector< std::pair< Id_Type, uint64 > >::iterator run_end = it;
+      uint64 valid_until = 0;
+      while (run_end != entries.end() && run_end->first == it->first)
+      {
+        if (valid_until == 0)
+          valid_until = run_end->second;
+        ++run_end;
+      }
+      if (valid_until != 0)
+        ++valid_count;
+      *kept++ = std::make_pair(it->first, valid_until);
+      it = run_end;
+    }
+    entries.erase(kept, entries.end());
+  }
+
+  uint64 get(const Id_Type& id) const
+  {
+    typename std::vector< std::pair< Id_Type, uint64 > >::const_iterator it = std::lower_bound(
+        entries.begin(), entries.end(), std::make_pair(id, uint64(0)));
+    return (it != entries.end() && it->first == id) ? it->second : 0;
+  }
+
+  // The number of ids that have a valid version, i.e. the number of skeletons kept.
+  std::size_t count_valid() const { return valid_count; }
+
+private:
+  uint64 timestamp;
+  std::size_t valid_count;
+  std::vector< std::pair< Id_Type, uint64 > > entries;
+};
+
+
 template< typename Index, typename Skeleton >
 void keep_matching_skeletons
     (std::map< Index, std::vector< Skeleton > >& current,
@@ -518,30 +652,27 @@ void keep_matching_skeletons
     return;
   }
   
-  std::map< typename Skeleton::Id_Type, uint64 > timestamp_by_id;
+  Valid_Until_By_Id< typename Skeleton::Id_Type > timestamp_by_id(timestamp);
 
   for (auto it = current.begin(); it != current.end(); ++it)
   {
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
-      timestamp_by_id[it2->id] = NOW;
+      timestamp_by_id.add_current(it2->id);
   }
 
   for (auto it = attic.begin(); it != attic.end(); ++it)
   {
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
-    {
-      uint64& stored_timestamp = timestamp_by_id[it2->id];
-      if (it2->timestamp > timestamp && (stored_timestamp == 0 || stored_timestamp > it2->timestamp))
-        stored_timestamp = it2->timestamp;
-    }
+      timestamp_by_id.add_attic(it2->id, it2->timestamp);
   }
+  timestamp_by_id.finish();
 
   for (auto it = current.begin(); it != current.end(); ++it)
   {
     std::vector< Skeleton > local_into;
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
     {
-      if (timestamp_by_id[it2->id] == NOW)
+      if (timestamp_by_id.get(it2->id) == NOW)
         local_into.push_back(*it2);
     }
     local_into.swap(it->second);
@@ -552,7 +683,7 @@ void keep_matching_skeletons
     std::vector< Attic< Skeleton > > local_into;
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
     {
-      if (timestamp_by_id[it2->id] == it2->timestamp)
+      if (timestamp_by_id.get(it2->id) == it2->timestamp)
         local_into.push_back(*it2);
     }
     local_into.swap(it->second);
@@ -567,32 +698,29 @@ void keep_matching_skeletons
      const std::map< Index, std::vector< Attic< Skeleton > > >& attic,
      uint64 timestamp)
 {
-  std::map< typename Skeleton::Id_Type, uint64 > timestamp_by_id;
+  Valid_Until_By_Id< typename Skeleton::Id_Type > timestamp_by_id(timestamp);
 
   result.clear();
 
   for (auto it = current.begin(); it != current.end(); ++it)
   {
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
-      timestamp_by_id[it2->id] = NOW;
+      timestamp_by_id.add_current(it2->id);
   }
 
   for (auto it = attic.begin(); it != attic.end(); ++it)
   {
     for (typename std::vector< Attic< Skeleton > >::const_iterator it2 = it->second.begin();
          it2 != it->second.end(); ++it2)
-    {
-      uint64& stored_timestamp = timestamp_by_id[it2->id];
-      if (it2->timestamp > timestamp && (stored_timestamp == 0 || stored_timestamp > it2->timestamp))
-        stored_timestamp = it2->timestamp;
-    }
+      timestamp_by_id.add_attic(it2->id, it2->timestamp);
   }
+  timestamp_by_id.finish();
 
   for (auto it = current.begin(); it != current.end(); ++it)
   {
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
     {
-      if (timestamp_by_id[it2->id] == NOW)
+      if (timestamp_by_id.get(it2->id) == NOW)
         result[it->first].push_back(Attic< Skeleton >(*it2, NOW));
     }
   }
@@ -601,15 +729,39 @@ void keep_matching_skeletons
   {
     for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
     {
-      if (timestamp_by_id[it2->id] == it2->timestamp)
+      if (timestamp_by_id.get(it2->id) == it2->timestamp)
         result[it->first].push_back(Attic< Skeleton >(*it2, it2->timestamp));
     }
   }
 }
 
 
+// Appends the nodes of skels to result as Node_Positions and empties skels as it goes,
+// so the two copies don't coexist in full. result is not sorted.
+template< typename Skeleton >
+void move_to_node_positions(
+    std::map< Uint32_Index, std::vector< Skeleton > >& skels, std::vector< Node_Position >& result)
+{
+  std::size_t count = 0;
+  for (typename std::map< Uint32_Index, std::vector< Skeleton > >::const_iterator it = skels.begin();
+      it != skels.end(); ++it)
+    count += it->second.size();
+  result.reserve(result.size() + count);
+
+  for (typename std::map< Uint32_Index, std::vector< Skeleton > >::iterator it = skels.begin();
+      it != skels.end(); ++it)
+  {
+    for (typename std::vector< Skeleton >::const_iterator iit = it->second.begin();
+        iit != it->second.end(); ++iit)
+      result.push_back(Node_Position(iit->id, it->first.val(), iit->ll_lower));
+    std::vector< Skeleton >().swap(it->second);
+  }
+  skels.clear();
+}
+
+
 void keep_matching_skeletons
-    (std::vector< Node >& result,
+    (std::vector< Node_Position >& result,
      const std::map< Uint32_Index, std::vector< Node_Skeleton > >& current,
      const std::map< Uint32_Index, std::vector< Attic< Node_Skeleton > > >& attic,
      uint64 timestamp);
@@ -742,6 +894,18 @@ Ranges< Uint31_Index > relation_way_member_indices
 
 
 Ranges< Uint32_Index > calc_node_children_ranges(const std::vector< uint32 >& way_rel_idxs);
+
+
+/* The node members of the relations and the nodes of the ways, read in a single pass
+   over the node blocks. Equivalent to the union of relation_node_members(relations) and
+   way_members(ways) with global ranges, but blocks holding both kinds of node are read
+   and decompressed once instead of twice. */
+Timeless< Uint32_Index, Node_Skeleton > relation_and_way_node_members(
+    Request_Context& context,
+    const std::map< Uint31_Index, std::vector< Relation_Skeleton > >& relations,
+    const std::map< Uint31_Index, std::vector< Attic< Relation_Skeleton > > >& attic_relations,
+    const std::map< Uint31_Index, std::vector< Way_Skeleton > >& ways,
+    const std::map< Uint31_Index, std::vector< Attic< Way_Skeleton > > >& attic_ways);
 
 
 Ranges< Uint32_Index > relation_node_member_indices(

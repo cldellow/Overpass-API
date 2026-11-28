@@ -35,6 +35,28 @@ inline uint64 timestamp_of(const Way_Skeleton& skel) { return NOW; }
 inline uint64 timestamp_of(const Relation_Skeleton& skel) { return NOW; }
 
 
+
+// Appends to std::map< Index, std::vector< Object > > entries, remembering the last slot:
+// block iterators deliver runs of objects with the same index.
+template< typename Index, typename Object >
+struct Indexed_Appender
+{
+  Indexed_Appender(std::map< Index, std::vector< Object > >& target_)
+      : target(&target_), last(target_.end()) {}
+
+  void push_back(const Index& idx, const Object& obj)
+  {
+    if (last == target->end() || !(last->first == idx))
+      last = target->insert(target->end(), std::make_pair(idx, std::vector< Object >()));
+    last->second.push_back(obj);
+  }
+
+private:
+  std::map< Index, std::vector< Object > >* target;
+  typename std::map< Index, std::vector< Object > >::iterator last;
+};
+
+
 template < class Index, class Object, class Iterator, class Predicate >
 void reconstruct_items(
     Iterator& it, const Iterator& end, Index index,
@@ -58,6 +80,12 @@ void reconstruct_items(
 
 
 class Statement;
+
+
+// A chunk of collected elements also ends once its accounted size (as eval_map counts it) reaches
+// this, so a query whose filters drop most candidates doesn't hold all of them at once when its
+// [maxsize:] budget is large. 16 MiB accounted is 2M nodes or 128k ways.
+const uint64 MAX_CHUNK_ACCOUNTED_SIZE = 16ull*1024*1024;
 
 
 class Health_Guard
@@ -248,6 +276,15 @@ void check_for_duplicated_objects(
 }
 
 
+// The size eval_map counts for the entry of m at idx, or 0 if m has none.
+template< typename Index, typename Object >
+uint64 eval_entry(const std::map< Index, std::vector< Object > >& m, const Index& idx)
+{
+  auto it = m.find(idx);
+  return it == m.end() ? 0 : eval_index_size + it->second.size()*eval_object_size((const Object*)0);
+}
+
+
 template < class Index, class Object, class Current_Iterator, class Attic_Iterator, class Predicate >
 bool collect_items_by_timestamp(Health_Guard&& health_guard,
                    Current_Iterator current_begin, Current_Iterator current_end,
@@ -257,6 +294,10 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
                    std::map< Index, std::vector< Attic< Object > > >& attic_result)
 {
   uint32 count = 0;
+  // The sizes eval_map would report for result and attic_result, kept up to date per index
+  // instead of recounted: recounting walks the whole maps.
+  uint64 result_size = eval_map(result);
+  uint64 attic_size = eval_map(attic_result);
   while (!(current_begin == current_end) || !(attic_begin == attic_end))
   {
     std::vector< std::pair< typename Object::Id_Type, uint64 > > timestamp_by_id;
@@ -265,8 +306,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
     if (++count >= 128*1024)
     {
       count = 0;
-      health_guard.check(0, eval_map(result));
-      health_guard.check(0, eval_map(attic_result));
+      uint64 chunk_size = result_size + attic_size;
+      too_much_data = health_guard.check(0, chunk_size) || chunk_size >= MAX_CHUNK_ACCOUNTED_SIZE;
     }
     Index index =
         (attic_begin == attic_end ||
@@ -278,6 +319,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
       return true;
     }
 
+    uint64 result_before = eval_entry(result, index);
+    uint64 attic_before = eval_entry(attic_result, index);
     reconstruct_items(
         current_begin, current_end, index, predicate, result[index], timestamp_by_id, timestamp, count);
     reconstruct_items(
@@ -287,6 +330,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
 
     filter_items_by_timestamp(timestamp_by_id, result[index]);
     filter_items_by_timestamp(timestamp_by_id, attic_result[index]);
+    result_size += eval_entry(result, index) - result_before;
+    attic_size += eval_entry(attic_result, index) - attic_before;
 
     //check_for_duplicated_objects< Object >(timestamp_by_id, rman);
   }
@@ -303,6 +348,10 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
                    std::map< Index, std::vector< Attic< Relation_Skeleton > > >& attic_result)
 {
   uint32 count = 0;
+  // The sizes eval_map would report for result and attic_result, kept up to date per index
+  // instead of recounted: recounting walks the whole maps.
+  uint64 result_size = eval_map(result);
+  uint64 attic_size = eval_map(attic_result);
   while (!(current_begin == current_end) || !(attic_begin == attic_end))
   {
     std::vector< std::pair< Relation_Skeleton::Id_Type, uint64 > > timestamp_by_id;
@@ -311,8 +360,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
     if (++count >= 128*1024)
     {
       count = 0;
-      health_guard.check(0, eval_map(result));
-      health_guard.check(0, eval_map(attic_result));
+      uint64 chunk_size = result_size + attic_size;
+      too_much_data = health_guard.check(0, chunk_size) || chunk_size >= MAX_CHUNK_ACCOUNTED_SIZE;
     }
     Index index =
         (attic_begin == attic_end ||
@@ -324,6 +373,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
       return true;
     }
 
+    uint64 result_before = eval_entry(result, index);
+    uint64 attic_before = eval_entry(attic_result, index);
     reconstruct_items(health_guard, current_begin, current_end, attic_begin, attic_end, index,
                       predicate, result[index], attic_result[index], timestamp_by_id, timestamp);
 
@@ -331,6 +382,11 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
 
     filter_items_by_timestamp(timestamp_by_id, result[index]);
     filter_items_by_timestamp(timestamp_by_id, attic_result[index]);
+    result_size += eval_entry(result, index) - result_before;
+    attic_size += eval_entry(attic_result, index) - attic_before;
+    // Count elements, not only indexes, so the size check above runs every 128K or so elements:
+    // a whole extract can have fewer way or relation indexes than that.
+    count += result[index].size() + attic_result[index].size();
 
     //check_for_duplicated_objects< Relation_Skeleton >(timestamp_by_id, rman);
   }
@@ -388,6 +444,10 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
                    std::map< Index, std::vector< Attic< Way_Skeleton > > >& attic_result)
 {
   uint32 count = 0;
+  // The sizes eval_map would report for result and attic_result, kept up to date per index
+  // instead of recounted: recounting walks the whole maps.
+  uint64 result_size = eval_map(result);
+  uint64 attic_size = eval_map(attic_result);
   while (!(current_begin == current_end) || !(attic_begin == attic_end))
   {
     std::vector< std::pair< Way_Skeleton::Id_Type, uint64 > > timestamp_by_id;
@@ -396,8 +456,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
     if (++count >= 128*1024)
     {
       count = 0;
-      health_guard.check(0, eval_map(result));
-      health_guard.check(0, eval_map(attic_result));
+      uint64 chunk_size = result_size + attic_size;
+      too_much_data = health_guard.check(0, chunk_size) || chunk_size >= MAX_CHUNK_ACCOUNTED_SIZE;
     }
     Index index =
         (attic_begin == attic_end ||
@@ -409,6 +469,8 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
       return true;
     }
 
+    uint64 result_before = eval_entry(result, index);
+    uint64 attic_before = eval_entry(attic_result, index);
     reconstruct_items(health_guard, current_begin, current_end, attic_begin, attic_end, index,
                       predicate, result[index], attic_result[index], timestamp_by_id, timestamp);
 
@@ -416,6 +478,11 @@ bool collect_items_by_timestamp(Health_Guard&& health_guard,
 
     filter_items_by_timestamp(timestamp_by_id, result[index]);
     filter_items_by_timestamp(timestamp_by_id, attic_result[index]);
+    result_size += eval_entry(result, index) - result_before;
+    attic_size += eval_entry(attic_result, index) - attic_before;
+    // Count elements, not only indexes, so the size check above runs every 128K or so elements:
+    // a whole extract can have fewer way or relation indexes than that.
+    count += result[index].size() + attic_result[index].size();
 
     //check_for_duplicated_objects< Way_Skeleton >(timestamp_by_id, rman);
   }
@@ -431,10 +498,11 @@ void collect_items_discrete(Transaction& transaction,
 {
   Block_Backend< Index, Object, typename Container::const_iterator > db
       (transaction.data_index(&file_properties));
+  Indexed_Appender< Index, Object > append(result);
   for (auto it = db.discrete_begin(req.begin(), req.end()); !(it == db.discrete_end()); ++it)
   {
     if (predicate.match(it.handle()))
-      result[it.index()].push_back(it.object());
+      append.push_back(it.index(), it.object());
   }
 }
 
@@ -450,10 +518,11 @@ void collect_items_discrete(Request_Context& context,
       context.data_index(current_skeleton_file_properties< Object >()));
   if (timestamp == NOW)
   {
+    Indexed_Appender< Index, Object > append(result);
     for (auto it = current_db.discrete_begin(req.begin(), req.end()); !(it == current_db.discrete_end()); ++it)
     {
       if (predicate.match(it.handle()))
-        result[it.index()].push_back(it.object());
+        append.push_back(it.index(), it.object());
     }
   }
   else
@@ -491,10 +560,11 @@ Timeless< Index, Object > collect_items_range(Request_Context& context,
       (context.data_index(current_skeleton_file_properties< Object >()));
   if (context.get_desired_timestamp() == NOW)
   {
+    Indexed_Appender< Index, Object > append(result.current);
     for (auto it = current_db.range_begin(ranges); !(it == current_db.range_end()); ++it)
     {
       if (predicate.match(it.handle()))
-        result.current[it.index()].push_back(it.object());
+        append.push_back(it.index(), it.object());
     }
   }
   else
@@ -524,6 +594,10 @@ bool collect_items_range(Request_Context& context,
   {
     uint32 count = 0;
     bool too_much_data = false;
+    // The size eval_map would report for result, kept up to date as objects are added,
+    // and the entry objects were last added to: objects arrive ordered by index.
+    uint64 result_size = eval_map(result);
+    typename std::map< Index, std::vector< Object > >::iterator last = result.end();
 
     for (auto it = current_db.range_begin(shortened); !(it == current_db.range_end()); ++it)
     {
@@ -535,11 +609,24 @@ bool collect_items_range(Request_Context& context,
       if (++count >= 256*1024)
       {
         count = 0;
-        too_much_data = context.get_health_guard().check(0, eval_map(result));
+        too_much_data = context.get_health_guard().check(0, result_size)
+            || result_size >= MAX_CHUNK_ACCOUNTED_SIZE;
         cur_idx = it.index();
       }
       if (predicate.match(it.handle()))
-        result[it.index()].push_back(it.object());
+      {
+        if (last == result.end() || !(last->first == it.index()))
+        {
+          last = result.lower_bound(it.index());
+          if (last == result.end() || it.index() < last->first)
+          {
+            last = result.insert(last, std::make_pair(it.index(), std::vector< Object >()));
+            result_size += eval_index_size;
+          }
+        }
+        last->second.push_back(it.object());
+        result_size += eval_object_size((const Object*)0);
+      }
     }
 
     return false;
@@ -565,6 +652,7 @@ void collect_items_flat(Request_Context& context,
 {
   uint32 count = 0;
   Block_Backend< Index, Object > db(context.data_index(&file_properties));
+  Indexed_Appender< Index, Object > append(result);
   for (typename Block_Backend< Index, Object >::Flat_Iterator
       it(db.flat_begin()); !(it == db.flat_end()); ++it)
   {
@@ -574,7 +662,7 @@ void collect_items_flat(Request_Context& context,
       context.get_health_guard().check(0, eval_map(result));
     }
     if (predicate.match(it.handle()))
-      result[it.index()].push_back(it.object());
+      append.push_back(it.index(), it.object());
   }
 }
 
@@ -591,6 +679,7 @@ void collect_items_flat(
   if (context.get_desired_timestamp() == NOW)
   {
     uint32 count = 0;
+    Indexed_Appender< Index, Object > append(result);
     for (auto it = current_db.flat_begin(); !(it == current_db.flat_end()); ++it)
     {
       if (++count >= 256*1024)
@@ -599,7 +688,7 @@ void collect_items_flat(
         context.get_health_guard().check(0, eval_map(result));
       }
       if (predicate.match(it.handle()))
-        result[it.index()].push_back(it.object());
+        append.push_back(it.index(), it.object());
     }
   }
   else

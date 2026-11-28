@@ -97,6 +97,18 @@ Query_Statement::~Query_Statement()
 }
 
 
+std::string Query_Statement::block_signature() const
+{
+  std::string result = to_string(type);
+  for (std::vector< Statement* >::const_iterator it = substatements.begin(); it != substatements.end(); ++it)
+  {
+    if (*it && !dynamic_cast< Has_Kv_Statement* >(*it))
+      result += (*it)->dump_ql_in_query("");
+  }
+  return result;
+}
+
+
 void Query_Statement::add_statement(Statement* statement, std::string text)
 {
   assure_no_text(text, this->get_name());
@@ -209,7 +221,7 @@ void filter_ids_by_ntags
       key_it = keys.begin();
 
   while ((!(tag_it == items_db.range_end())) &&
-      (((tag_it.index().index) & 0x7fffff00) == coarse_index))
+      ((tag_coarse_index(tag_it)) == coarse_index))
   {
     if (tag_it.index().key != last_key)
     {
@@ -260,7 +272,7 @@ void filter_ids_by_ntags
     ++tag_it;
   }
   while ((!(tag_it == items_db.range_end())) &&
-      (((tag_it.index().index) & 0x7fffff00) == coarse_index))
+      ((tag_coarse_index(tag_it)) == coarse_index))
     ++tag_it;
 
   sort(removed_ids.begin(), removed_ids.end());
@@ -291,18 +303,18 @@ void filter_ids_by_ntags
       timestamps[*it];
 
     while ((!(tag_it == items_db.range_end())) &&
-        ((tag_it.index().index) & 0x7fffff00) == coarse_index &&
+        (tag_coarse_index(tag_it)) == coarse_index &&
         tag_it.index().key < key_it->first)
       ++tag_it;
     while ((!(attic_tag_it == attic_items_db.range_end())) &&
-        ((attic_tag_it.index().index) & 0x7fffff00) == coarse_index &&
+        (tag_coarse_index(attic_tag_it)) == coarse_index &&
         attic_tag_it.index().key < key_it->first)
       ++attic_tag_it;
 
     bool valid = false;
     std::string last_value = void_tag_value() + " ";
     while ((!(tag_it == items_db.range_end())) &&
-        ((tag_it.index().index) & 0x7fffff00) == coarse_index &&
+        (tag_coarse_index(tag_it)) == coarse_index &&
         tag_it.index().key == key_it->first)
     {
       if (monobound_binary_search(new_ids, tag_it.object()))
@@ -330,7 +342,7 @@ void filter_ids_by_ntags
 
     last_value = void_tag_value() + " ";
     while ((!(attic_tag_it == attic_items_db.range_end())) &&
-        ((attic_tag_it.index().index) & 0x7fffff00) == coarse_index &&
+        (tag_coarse_index(attic_tag_it)) == coarse_index &&
         attic_tag_it.index().key == key_it->first)
     {
       if (monobound_binary_search(new_ids, Id_Type(attic_tag_it.object())))
@@ -373,10 +385,10 @@ void filter_ids_by_ntags
     }
   }
   while ((!(tag_it == items_db.range_end())) &&
-      ((tag_it.index().index) & 0x7fffff00) == coarse_index)
+      (tag_coarse_index(tag_it)) == coarse_index)
     ++tag_it;
   while ((!(attic_tag_it == attic_items_db.range_end())) &&
-      ((attic_tag_it.index().index) & 0x7fffff00) == coarse_index)
+      (tag_coarse_index(attic_tag_it)) == coarse_index)
     ++attic_tag_it;
 }
 
@@ -451,6 +463,23 @@ void filter_by_ids(
 
 
 template< class TIndex, class TObject >
+void fill_cell_ids(std::vector< typename TObject::Id_Type >& ids,
+    typename std::map< TIndex, std::vector< TObject > >::const_iterator& item_it,
+    const std::map< TIndex, std::vector< TObject > >& items, uint32 coarse_index)
+{
+  while (item_it != items.end() && (item_it->first.val() & 0x7fffff00) == coarse_index)
+  {
+    for (typename std::vector< TObject >::const_iterator eit = item_it->second.begin();
+        eit != item_it->second.end(); ++eit)
+      ids.push_back(eit->id);
+    ++item_it;
+  }
+  std::sort(ids.begin(), ids.end());
+  ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+}
+
+
+template< class TIndex, class TObject >
 void Query_Statement::filter_by_tags
     (std::map< TIndex, std::vector< TObject > >& items,
      std::map< TIndex, std::vector< Attic< TObject > > >* attic_items,
@@ -461,14 +490,23 @@ void Query_Statement::filter_by_tags
       && key_nregexes.empty() && key_nvalues.empty())
     return;
 
-  // generate set of relevant coarse indices
+  // One entry per coarse index, but its ids are filled in only when that cell is filtered, so the
+  // candidates' ids are never all held at once.
   std::map< uint32, std::vector< typename TObject::Id_Type > > ids_by_coarse;
-  generate_ids_by_coarse(ids_by_coarse, items);
+  for (typename std::map< TIndex, std::vector< TObject > >::const_iterator it = items.begin(); it != items.end(); ++it)
+    ids_by_coarse.insert(ids_by_coarse.end(), std::make_pair(it->first.val() & 0x7fffff00,
+        std::vector< typename TObject::Id_Type >()));
   if (timestamp != NOW)
-    generate_ids_by_coarse(ids_by_coarse, *attic_items);
-
-  // formulate range query
-  Ranges< Tag_Index_Local > ranges = formulate_range_query(ids_by_coarse);
+  {
+    for (typename std::map< TIndex, std::vector< Attic< TObject > > >::const_iterator it = attic_items->begin();
+        it != attic_items->end(); ++it)
+      ids_by_coarse.insert(std::make_pair(it->first.val() & 0x7fffff00,
+          std::vector< typename TObject::Id_Type >()));
+  }
+  typename std::map< TIndex, std::vector< TObject > >::const_iterator cell_item_it = items.begin();
+  typename std::map< TIndex, std::vector< Attic< TObject > > >::const_iterator cell_attic_it;
+  if (attic_items)
+    cell_attic_it = attic_items->begin();
 
   // prepare straight keys
   std::map< std::string, std::pair< std::string, std::vector< Regular_Expression* > > > key_union;
@@ -481,6 +519,10 @@ void Query_Statement::filter_by_tags
   for (std::vector< std::pair< std::string, Regular_Expression* > >::const_iterator
       it = key_regexes.begin(); it != key_regexes.end(); ++it)
     key_union[it->first].second.push_back(it->second);
+
+  // formulate range query: read only the entries of these keys, unless a key regex must see every key
+  Ranges< Tag_Index_Local > ranges = regkey_regexes.empty()
+      ? formulate_range_query(ids_by_coarse, key_union) : formulate_range_query(ids_by_coarse);
 
   // iterate over the result
   std::map< TIndex, std::vector< TObject > > result;
@@ -501,6 +543,7 @@ void Query_Statement::filter_by_tags
         coarse_count = 0;
         rman.health_check(*this);
       }
+      fill_cell_ids(it->second, cell_item_it, items, it->first);
       filter_ids_by_tags(key_union, regkey_regexes, items_db, tag_it, it->first, it->second);
     }
   }
@@ -518,6 +561,8 @@ void Query_Statement::filter_by_tags
         coarse_count = 0;
         rman.health_check(*this);
       }
+      fill_cell_ids(it->second, cell_item_it, items, it->first);
+      fill_cell_ids(it->second, cell_attic_it, *attic_items, it->first);
       filter_ids_by_tags(key_union, regkey_regexes, timestamp, items_db, tag_it, attic_items_db, attic_tag_it,
                          it->first, it->second);
     }
@@ -542,7 +587,8 @@ void Query_Statement::filter_by_tags
   result.clear();
   attic_result.clear();
   coarse_count = 0;
-  auto ntag_it = items_db.range_begin(ranges);
+  Ranges< Tag_Index_Local > nranges = formulate_range_query(ids_by_coarse, nkey_union);
+  auto ntag_it = items_db.range_begin(nranges);
 
   if (timestamp == NOW)
   {
@@ -561,7 +607,7 @@ void Query_Statement::filter_by_tags
   {
     Block_Backend< Tag_Index_Local, Attic< typename TObject::Id_Type > > attic_items_db
         (transaction.data_index(attic_file_prop));
-    auto attic_ntag_it = attic_items_db.range_begin(ranges);
+    auto attic_ntag_it = attic_items_db.range_begin(nranges);
 
     for (typename std::map< uint32, std::vector< typename TObject::Id_Type > >::iterator
         it = ids_by_coarse.begin(); it != ids_by_coarse.end(); ++it)
@@ -826,6 +872,42 @@ void Query_Statement::collect_elems(Answer_State& answer_state, Set& into, Resou
 }
 
 
+// The id map holds a fixed number of ids per block and decompresses one block at a time, so
+// looking ids up costs about one block per distinct block they fall in.
+template< typename Index, typename Skeleton >
+bool exact_indices_pay_off(const std::vector< typename Skeleton::Id_Type >& ids,
+    const Ranges< Index >& coarse_ranges, Resource_Manager& rman)
+{
+  if (ids.empty() || coarse_ranges.is_global())
+    return false;
+  Random_File_Index* map = rman.get_transaction()->random_index(current_skeleton_file_properties< Skeleton >());
+  uint64 ids_per_block = map->get_block_size() * map->get_compression_factor() / Index::max_size_of();
+  uint64 map_blocks = 0;
+  uint64 last_block = ~uint64(0);
+  for (auto it = ids.begin(); it != ids.end(); ++it)
+  {
+    uint64 block = it->val() / ids_per_block;
+    if (block != last_block)
+      ++map_blocks;
+    last_block = block;
+  }
+  Block_Backend< Index, Skeleton > skeletons_db
+      (rman.get_transaction()->data_index(current_skeleton_file_properties< Skeleton >()));
+  return 2*map_blocks < skeletons_db.count_blocks(coarse_ranges);
+}
+
+
+template< typename Index >
+Ranges< Index > exact_ranges(const std::vector< Index >& idxs)
+{
+  Ranges< Index > result;
+  for (auto it = idxs.begin(); it != idxs.end(); ++it)
+    result.push_back(*it, inc(*it));
+  result.sort();
+  return result;
+}
+
+
 template< typename Index >
 Ranges< Index > intersect_ranges(const Ranges< Index >& range_a, std::vector< Index >& range_vec)
 {
@@ -835,10 +917,43 @@ Ranges< Index > intersect_ranges(const Ranges< Index >& range_a, std::vector< In
   for (auto it = range_a.begin(); it != range_a.end(); ++it)
     sum += difference(it.lower_bound(), it.upper_bound());
 
-  if (sum/256 < range_vec.size())
+  // range_vec holds the coarse index (256 tiles) of every candidate in the database, many sharing
+  // a cell. Count only the distinct cells that overlap range_a: comparing all candidates with
+  // range_a's cells skipped the intersection for any tag with more matches anywhere than range_a
+  // has cells, however few of them lie in range_a.
+  // With more candidates than range_a has tiles, nearly every cell holds one anyway, and
+  // filtering them would cost more than it saves.
+  if (sum < range_vec.size())
     return range_a;
 
-  std::sort(range_vec.begin(), range_vec.end());
+  // range_a can hold overlapping ranges (Ranges::union_ doesn't merge them), so merge them
+  // here: the search below needs upper bounds that increase.
+  std::vector< std::pair< Index, Index > > raw;
+  for (auto it = range_a.begin(); it != range_a.end(); ++it)
+    raw.push_back(std::make_pair(it.lower_bound(), it.upper_bound()));
+  std::sort(raw.begin(), raw.end());
+  std::vector< std::pair< Index, Index > > bounds;
+  for (auto it = raw.begin(); it != raw.end(); ++it)
+  {
+    if (!bounds.empty() && !(bounds.back().second < it->first))
+      bounds.back().second = std::max(bounds.back().second, it->second);
+    else
+      bounds.push_back(*it);
+  }
+  std::vector< Index > inside;
+  for (auto it = range_vec.begin(); it != range_vec.end(); ++it)
+  {
+    auto b = std::upper_bound(bounds.begin(), bounds.end(), *it,
+        [](const Index& x, const std::pair< Index, Index >& r) { return x < r.second; });
+    if (b != bounds.end() && b->first < Index(it->val() + 0x100))
+      inside.push_back(*it);
+  }
+  std::sort(inside.begin(), inside.end());
+  inside.erase(std::unique(inside.begin(), inside.end()), inside.end());
+  range_vec.swap(inside);
+
+  if (sum/256 < range_vec.size())
+    return range_a;
 
   auto it_a = range_a.begin();
   auto it_vec = range_vec.begin();
@@ -905,9 +1020,27 @@ void Query_Statement::apply_all_filters(
   set_progress(8);
   rman.health_check(*this);
 
+  // All filters only remove elements, so their order does not change the result.
+  // Metadata-only filters go first, so that geometry is built for fewer elements, and (if:)
+  // filters that need geometry go last, after the other filters have built theirs.
   for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
       it != constraints.end(); ++it)
-    (*it)->filter(*this, rman, into);
+  {
+    if ((*it)->filter_reads_only_metadata())
+      (*it)->filter(*this, rman, into);
+  }
+  for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
+      it != constraints.end(); ++it)
+  {
+    if (!(*it)->filter_reads_only_metadata() && !(*it)->filter_needs_geometry())
+      (*it)->filter(*this, rman, into);
+  }
+  for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
+      it != constraints.end(); ++it)
+  {
+    if (!(*it)->filter_reads_only_metadata() && (*it)->filter_needs_geometry())
+      (*it)->filter(*this, rman, into);
+  }
 }
 
 
@@ -915,6 +1048,125 @@ void filter_elems_for_closed_ways(Set& arg)
 {
   filter_elems_for_closed_ways(arg.ways);
   filter_elems_for_closed_ways(arg.attic_ways);
+}
+
+
+// Restricts ids to the ids every constraint allows. Constraints whose id lists are expensive to
+// build are asked last and get the explicit ids the others allow, if any, so they can leave out
+// the rest.
+template< typename Id >
+void restrict_to_constraint_ids(
+    const std::vector< Query_Constraint* >& constraints, Resource_Manager& rman,
+    bool (Query_Constraint::*get_ids)(Resource_Manager&, std::vector< Id >&),
+    bool (Query_Constraint::*get_ids_within)(Resource_Manager&, const std::vector< Id >&, std::vector< Id >&),
+    Id_Constraint< Id >& ids, Answer_State& answer_state)
+{
+  for (int pass = 0; pass < 2; ++pass)
+  {
+    for (std::vector< Query_Constraint* >::const_iterator it = constraints.begin();
+        it != constraints.end() && answer_state < data_collected; ++it)
+    {
+      if ((*it)->narrows_by_known_ids() != (pass == 1))
+        continue;
+      std::vector< Id > constraint_ids;
+      bool restricts = (pass == 1 && !ids.invert)
+          ? ((*it)->*get_ids_within)(rman, ids.ids, constraint_ids)
+          : ((*it)->*get_ids)(rman, constraint_ids);
+      if (restricts)
+      {
+        ids.restrict_to(constraint_ids);
+        if (ids.empty())
+          answer_state = data_collected;
+      }
+    }
+  }
+}
+
+
+// Ids of current elements in the coarse cells of ranges that carry every positive tag filter
+// (keys, key-values, key-regexes), read from the local tag index alone: the late tag check can
+// then collect just these instead of every element in the ranges. Returns false where it doesn't
+// apply: no positive filter, or ranges spanning too many cells.
+template< typename Index, typename Id_Type >
+bool ids_from_local_tags(
+    const std::vector< std::string >& keys,
+    const std::vector< std::pair< std::string, std::string > >& key_values,
+    const std::vector< std::pair< std::string, Regular_Expression* > >& key_regexes,
+    const Ranges< Index >& ranges, const File_Properties& local_tags_file,
+    Resource_Manager& rman, std::vector< Id_Type >& result)
+{
+  if (keys.empty() && key_values.empty() && key_regexes.empty())
+    return false;
+
+  std::vector< uint32 > cells;
+  for (auto it = ranges.begin(); it != ranges.end(); ++it)
+  {
+    // Uint31_Index orders by the low 31 bits first, so its ranges are spans of those bits; the
+    // local tag index files elements under (index & 0x7fffff00) for both kinds of index.
+    uint32 lower = it.lower_bound().val();
+    uint32 upper = it.upper_bound().val() - 1;
+    if (std::is_same< Index, Uint31_Index >::value)
+    {
+      lower &= 0x7fffffff;
+      upper = it.upper_bound().val() & 0x7fffffff;
+    }
+    else if ((lower ^ upper) & 0x80000000)
+      return false;
+    if (upper < lower)
+      return false;
+    for (uint64 cell = lower & 0x7fffff00; cell <= (upper & 0x7fffff00); cell += 0x100)
+    {
+      cells.push_back(cell);
+      if (cells.size() > 64*1024)
+        return false;
+    }
+  }
+  std::sort(cells.begin(), cells.end());
+  cells.erase(std::unique(cells.begin(), cells.end()), cells.end());
+
+  Block_Backend< Tag_Index_Local, Id_Type > tags_db(rman.get_transaction()->data_index(&local_tags_file));
+  std::vector< std::vector< Id_Type > > per_filter;
+  auto collect = [&](const std::string& key, const std::string* value, Regular_Expression* value_regex)
+  {
+    Ranges< Tag_Index_Local > tag_ranges;
+    for (auto cell = cells.begin(); cell != cells.end(); ++cell)
+    {
+      if (value)
+        tag_ranges.push_back({ *cell, key, *value }, { *cell, key, *value + std::string(1, '\0') });
+      else
+        tag_ranges.push_back({ *cell, key, "" }, { *cell, key + std::string(1, '\0'), "" });
+    }
+    tag_ranges.sort();
+    std::vector< Id_Type > ids;
+    for (auto it = tags_db.range_begin(tag_ranges); !(it == tags_db.range_end()); ++it)
+    {
+      if (it.index().value == void_tag_value())
+        continue;
+      if (value_regex && !value_regex->matches(it.index().value))
+        continue;
+      ids.push_back(it.object());
+    }
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    per_filter.push_back(std::move(ids));
+  };
+  for (auto it = key_values.begin(); it != key_values.end(); ++it)
+    collect(it->first, &it->second, 0);
+  for (auto it = keys.begin(); it != keys.end(); ++it)
+    collect(*it, 0, 0);
+  for (auto it = key_regexes.begin(); it != key_regexes.end(); ++it)
+    collect(it->first, 0, it->second);
+
+  std::sort(per_filter.begin(), per_filter.end(),
+      [](const std::vector< Id_Type >& lhs, const std::vector< Id_Type >& rhs) { return lhs.size() < rhs.size(); });
+  result.swap(per_filter.front());
+  for (auto it = per_filter.begin() + 1; it != per_filter.end() && !result.empty(); ++it)
+  {
+    std::vector< Id_Type > both;
+    std::set_intersection(result.begin(), result.end(), it->begin(), it->end(), std::back_inserter(both));
+    result.swap(both);
+  }
+  return true;
 }
 
 
@@ -950,11 +1202,25 @@ void Query_Statement::execute(Resource_Manager& rman)
     std::vector< Uint31_Index > way_range_vec_31;
     std::vector< Uint31_Index > relation_range_vec_31;
 
+    // Known before the tag lookup, which drops candidates outside them.
+    Ranges< Uint32_Index > node_ranges = Ranges< Uint32_Index >::global();
+    Ranges< Uint31_Index > way_ranges = Ranges< Uint31_Index >::global();
+    Ranges< Uint31_Index > rel_ranges = Ranges< Uint31_Index >::global();
+    for (std::vector< Query_Constraint* >::iterator it = constraints.begin(); it != constraints.end(); ++it)
+    {
+      if (type & QUERY_NODE)
+        node_ranges.intersect((*it)->get_node_ranges(rman)).swap(node_ranges);
+      if (type & QUERY_WAY)
+        way_ranges.intersect((*it)->get_way_ranges(rman)).swap(way_ranges);
+      if (type & QUERY_RELATION)
+        rel_ranges.intersect((*it)->get_relation_ranges(rman)).swap(rel_ranges);
+    }
+
     if (type & QUERY_NODE)
     {
       progress_1< Node_Skeleton, Node::Id_Type, Uint32_Index >(
           keys, key_values, key_regexes, regkey_regexes, key_nvalues, key_nregexes, regkey_nregexes,
-          node_ids, range_vec_32, timestamp, check_keys_late, rman, *this);
+          node_ids, range_vec_32, timestamp, check_keys_late, rman, *this, node_ranges.is_global() ? 0 : &node_ranges);
       if (node_ids.empty())
         node_answer_state = data_collected;
       collect_nodes(node_ids, node_answer_state, into, rman);
@@ -963,7 +1229,7 @@ void Query_Statement::execute(Resource_Manager& rman)
     {
       progress_1< Way_Skeleton, Way::Id_Type, Uint31_Index >(
 	  keys, key_values, key_regexes, regkey_regexes, key_nvalues, key_nregexes, regkey_nregexes,
-          way_ids, way_range_vec_31, timestamp, check_keys_late, rman, *this);
+          way_ids, way_range_vec_31, timestamp, check_keys_late, rman, *this, way_ranges.is_global() ? 0 : &way_ranges);
       if (way_ids.empty())
         way_answer_state = data_collected;
       collect_elems(QUERY_WAY, way_ids, way_answer_state, into, rman);
@@ -974,7 +1240,7 @@ void Query_Statement::execute(Resource_Manager& rman)
     {
       progress_1< Relation_Skeleton, Relation::Id_Type, Uint31_Index >(
 	  keys, key_values, key_regexes, regkey_regexes, key_nvalues, key_nregexes, regkey_nregexes,
-          relation_ids, relation_range_vec_31, timestamp, check_keys_late, rman, *this);
+          relation_ids, relation_range_vec_31, timestamp, check_keys_late, rman, *this, rel_ranges.is_global() ? 0 : &rel_ranges);
       if (relation_ids.empty())
         relation_answer_state = data_collected;
       collect_elems(QUERY_RELATION, relation_ids, relation_answer_state, into, rman);
@@ -1007,47 +1273,17 @@ void Query_Statement::execute(Resource_Manager& rman)
     rman.health_check(*this);
 
     if ((type & QUERY_NODE) && check_keys_late == prefer_ranges)
-    {
-      for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
-          it != constraints.end() && node_answer_state < data_collected; ++it)
-      {
-        std::vector< Node::Id_Type > constraint_node_ids;
-        if ((*it)->get_node_ids(rman, constraint_node_ids))
-        {
-          node_ids.restrict_to(constraint_node_ids);
-          if (node_ids.empty())
-            node_answer_state = data_collected;
-        }
-      }
-    }
+      restrict_to_constraint_ids< Node::Id_Type >(constraints, rman,
+          &Query_Constraint::get_node_ids, &Query_Constraint::get_node_ids_within,
+          node_ids, node_answer_state);
     if ((type & QUERY_WAY) && check_keys_late == prefer_ranges)
-    {
-      for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
-          it != constraints.end() && way_answer_state < data_collected; ++it)
-      {
-        std::vector< Way::Id_Type > constraint_way_ids;
-        if ((*it)->get_way_ids(rman, constraint_way_ids))
-        {
-          way_ids.restrict_to(constraint_way_ids);
-          if (way_ids.empty())
-            way_answer_state = data_collected;
-        }
-      }
-    }
+      restrict_to_constraint_ids< Way::Id_Type >(constraints, rman,
+          &Query_Constraint::get_way_ids, &Query_Constraint::get_way_ids_within,
+          way_ids, way_answer_state);
     if ((type & QUERY_RELATION) && check_keys_late == prefer_ranges)
-    {
-      for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
-          it != constraints.end() && relation_answer_state < data_collected; ++it)
-      {
-        std::vector< Relation::Id_Type > constraint_relation_ids;
-        if ((*it)->get_relation_ids(rman, constraint_relation_ids))
-        {
-          relation_ids.restrict_to(constraint_relation_ids);
-          if (relation_ids.empty())
-            relation_answer_state = data_collected;
-        }
-      }
-    }
+      restrict_to_constraint_ids< Relation::Id_Type >(constraints, rman,
+          &Query_Constraint::get_relation_ids, &Query_Constraint::get_relation_ids_within,
+          relation_ids, relation_answer_state);
     if ((type & QUERY_AREA) && check_keys_late == prefer_ranges)
     {
       for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
@@ -1063,36 +1299,58 @@ void Query_Statement::execute(Resource_Manager& rman)
       }
     }
 
-    Ranges< Uint32_Index > node_ranges = Ranges< Uint32_Index >::global();
-    Ranges< Uint31_Index > way_ranges = Ranges< Uint31_Index >::global();
-    Ranges< Uint31_Index > rel_ranges = Ranges< Uint31_Index >::global();
-
-    if ((type & QUERY_NODE) && node_answer_state < data_collected)
+    // The global tag index gives only each candidate's coarse cell. Their exact indices from the
+    // id map narrow the blocks to read further, when the map blocks read are fewer than those saved.
+    if ((type & QUERY_NODE) && node_answer_state < data_collected && !range_vec_32.empty())
     {
-      for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
-          it != constraints.end(); ++it)
-        node_ranges.intersect((*it)->get_node_ranges(rman)).swap(node_ranges);
-
-      if (!range_vec_32.empty())
-        intersect_ranges(node_ranges, range_vec_32).swap(node_ranges);
+      intersect_ranges(node_ranges, range_vec_32).swap(node_ranges);
+      if (timestamp == NOW && !node_ids.invert && exact_indices_pay_off< Uint32_Index, Node_Skeleton >(node_ids.ids, node_ranges, rman))
+        node_ranges.intersect(exact_ranges(get_indexes_< Uint32_Index, Node_Skeleton >(node_ids.ids, rman))).swap(node_ranges);
     }
-    if ((type & QUERY_WAY) && way_answer_state < data_collected)
+    if ((type & QUERY_WAY) && way_answer_state < data_collected && !way_range_vec_31.empty())
     {
-      for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
-          it != constraints.end(); ++it)
-        way_ranges.intersect((*it)->get_way_ranges(rman)).swap(way_ranges);
-
-      if (!way_range_vec_31.empty())
-        intersect_ranges(way_ranges, way_range_vec_31).swap(way_ranges);
+      intersect_ranges(way_ranges, way_range_vec_31).swap(way_ranges);
+      if (timestamp == NOW && !way_ids.invert && exact_indices_pay_off< Uint31_Index, Way_Skeleton >(way_ids.ids, way_ranges, rman))
+        way_ranges.intersect(exact_ranges(get_indexes_< Uint31_Index, Way_Skeleton >(way_ids.ids, rman))).swap(way_ranges);
     }
-    if ((type & QUERY_RELATION) && relation_answer_state < data_collected)
+    if ((type & QUERY_RELATION) && relation_answer_state < data_collected && !relation_range_vec_31.empty())
     {
-      for (std::vector< Query_Constraint* >::iterator it = constraints.begin();
-          it != constraints.end(); ++it)
-        rel_ranges.intersect((*it)->get_relation_ranges(rman)).swap(rel_ranges);
+      intersect_ranges(rel_ranges, relation_range_vec_31).swap(rel_ranges);
+      if (timestamp == NOW && !relation_ids.invert && exact_indices_pay_off< Uint31_Index, Relation_Skeleton >(relation_ids.ids, rel_ranges, rman))
+        rel_ranges.intersect(exact_ranges(get_indexes_< Uint31_Index, Relation_Skeleton >(relation_ids.ids, rman))).swap(rel_ranges);
+    }
 
-      if (!relation_range_vec_31.empty())
-        intersect_ranges(rel_ranges, relation_range_vec_31).swap(rel_ranges);
+    // Tags checked late over ranges: find the matching ids from the local tag index first, so that
+    // collection skips the other elements without decoding them.
+    if (check_keys_late == prefer_ranges && timestamp == NOW)
+    {
+      if ((type & QUERY_NODE) && node_answer_state < data_collected && node_ids.invert && node_ids.ids.empty()
+          && !node_ranges.is_global()
+          && ids_from_local_tags(keys, key_values, key_regexes, node_ranges,
+              *osm_base_settings().NODE_TAGS_LOCAL, rman, node_ids.ids))
+      {
+        node_ids.invert = false;
+        if (node_ids.ids.empty())
+          node_answer_state = data_collected;
+      }
+      if ((type & QUERY_WAY) && way_answer_state < data_collected && way_ids.invert && way_ids.ids.empty()
+          && !way_ranges.is_global()
+          && ids_from_local_tags(keys, key_values, key_regexes, way_ranges,
+              *osm_base_settings().WAY_TAGS_LOCAL, rman, way_ids.ids))
+      {
+        way_ids.invert = false;
+        if (way_ids.ids.empty())
+          way_answer_state = data_collected;
+      }
+      if ((type & QUERY_RELATION) && relation_answer_state < data_collected && relation_ids.invert
+          && relation_ids.ids.empty() && !rel_ranges.is_global()
+          && ids_from_local_tags(keys, key_values, key_regexes, rel_ranges,
+              *osm_base_settings().RELATION_TAGS_LOCAL, rman, relation_ids.ids))
+      {
+        relation_ids.invert = false;
+        if (relation_ids.ids.empty())
+          relation_answer_state = data_collected;
+      }
     }
 
     set_progress(3);

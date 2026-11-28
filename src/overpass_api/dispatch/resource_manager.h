@@ -159,6 +159,8 @@ public:
 
   bool health_check(const Statement& stmt, uint32 extra_time = 0, uint64 extra_space = 0);
 
+  uint64 get_max_allowed_space() const { return max_allowed_space; }
+
   void set_limits(uint32 max_allowed_time_, uint64 max_allowed_space_)
   {
     max_allowed_time = max_allowed_time_;
@@ -206,6 +208,18 @@ private:
   std::vector< uint64 > cpu_runtime;
 };
 
+
+// eval_map charges eval_index_size bytes per index plus eval_object_size per object.
+// Keeping these in one place lets loops that only add objects keep the same total
+// up to date instead of walking the whole map.
+const uint64 eval_index_size = 64;
+inline uint64 eval_object_size(const Node_Skeleton*) { return 8; }
+inline uint64 eval_object_size(const Way_Skeleton*) { return 128; }
+inline uint64 eval_object_size(const Relation_Skeleton*) { return 192; }
+inline uint64 eval_object_size(const Attic< Node_Skeleton >*) { return 16; }
+inline uint64 eval_object_size(const Attic< Way_Skeleton >*) { return 136; }
+inline uint64 eval_object_size(const Attic< Relation_Skeleton >*) { return 200; }
+inline uint64 eval_object_size(const Area_Skeleton*) { return 128; }
 
 uint64 eval_map(const std::map< Uint32_Index, std::vector< Node_Skeleton > >& nodes);
 uint64 eval_map(const std::map< Uint31_Index, std::vector< Way_Skeleton > >& ways);

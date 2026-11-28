@@ -217,8 +217,8 @@ public:
     std::vector< Id_Type > result;
     for (typename std::vector< Id_Type >::const_iterator it = new_ids.begin(); it != new_ids.end(); ++it)
     {
-      std::pair< uint64, uint64 >& timestamp_ref = timestamps[*it];
-      if (0 < timestamp_ref.first && timestamp_ref.first <= timestamp_ref.second)
+      typename std::map< Id_Type, std::pair< uint64, uint64 > >::const_iterator found = timestamps.find(*it);
+      if (found != timestamps.end() && 0 < found->second.first && found->second.first <= found->second.second)
         result.push_back(*it);
     }
     std::sort(result.begin(), result.end());
@@ -365,10 +365,10 @@ void filter_ids_by_tags
   while (true)
   {
     bool current_finished =
-        (tag_it == items_db.range_end() || ((tag_it.index().index) & 0x7fffff00) != coarse_index);
+        (tag_it == items_db.range_end() || (tag_coarse_index(tag_it)) != coarse_index);
     bool attic_finished =
         (attic_tag_it == attic_items_db.range_end()
-        || ((attic_tag_it.index().index) & 0x7fffff00) != coarse_index);
+        || (tag_coarse_index(attic_tag_it)) != coarse_index);
 
     if (!attic_finished && (current_finished || attic_tag_it.index().key < tag_it.index().key))
     {

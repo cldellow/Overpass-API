@@ -361,6 +361,11 @@ void Polygon_Query_Statement::collect_nodes(std::map< Uint32_Index, std::vector<
       areas.push_back(block);
       ++area_it;
     }
+    // The same segments decoded once for this tile, for the node tests below.
+    std::vector< Coord_Query_Statement::Decoded_Area_Block > areas_in_tile;
+    areas_in_tile.reserve(areas.size());
+    for (std::vector< Area_Block >::const_iterator ait = areas.begin(); ait != areas.end(); ++ait)
+      areas_in_tile.push_back(Coord_Query_Statement::Decoded_Area_Block(current_idx, *ait));
 
     while (nodes_it != nodes.end() && nodes_it->first.val() < current_idx)
     {
@@ -383,7 +388,7 @@ void Polygon_Query_Statement::collect_nodes(std::map< Uint32_Index, std::vector<
         for (std::vector< Area_Block >::const_iterator it = areas.begin();
 	     it != areas.end(); ++it)
         {
-	  int check(Coord_Query_Statement::check_area_block(current_idx, *it, ilat, ilon));
+	  int check(Coord_Query_Statement::check_area_block(areas_in_tile[it - areas.begin()], ilat, ilon));
 	  if (check == Coord_Query_Statement::HIT && add_border)
 	  {
 	    inside = 1;
@@ -413,7 +418,9 @@ void Polygon_Query_Statement::collect_ways
        const Way_Geometry_Store& way_geometries,
        bool add_border, const Statement& query, Resource_Manager& rman)
 {
+  // Build each way's geometry once, for both its coordinates and its segments.
   std::map< uint32, std::vector< std::pair< uint32, Way::Id_Type > > > way_coords_to_id;
+  std::map< Uint31_Index, std::vector< Area_Block > > way_segments;
   for (typename std::map< Uint31_Index, std::vector< Way_Skeleton > >::iterator it = ways.begin(); it != ways.end(); ++it)
   {
     for (typename std::vector< Way_Skeleton >::iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
@@ -421,19 +428,13 @@ void Polygon_Query_Statement::collect_ways
       std::vector< Quad_Coord > coords = way_geometries.get_geometry(*it2);
       for (std::vector< Quad_Coord >::const_iterator it3 = coords.begin(); it3 != coords.end(); ++it3)
         way_coords_to_id[it3->ll_upper].push_back(std::make_pair(it3->ll_lower, it2->id));
+      add_way_to_area_blocks(coords, it2->id.val(), way_segments);
     }
   }
 
   std::map< uint32, std::vector< std::pair< uint32, Way::Id_Type > > >::const_iterator nodes_it = way_coords_to_id.begin();
 
   std::vector< Aligned_Segment >::const_iterator area_it = segments.begin();
-
-  std::map< Uint31_Index, std::vector< Area_Block > > way_segments;
-  for (typename std::map< Uint31_Index, std::vector< Way_Skeleton > >::iterator it = ways.begin(); it != ways.end(); ++it)
-  {
-    for (typename std::vector< Way_Skeleton >::iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
-      add_way_to_area_blocks(way_geometries.get_geometry(*it2), it2->id.val(), way_segments);
-  }
 
   std::map< Way::Id_Type, bool > ways_inside;
 
@@ -451,6 +452,23 @@ void Polygon_Query_Statement::collect_ways
       block.coors.push_back(area_it->ll_lower_b);
       areas.push_back(block);
       ++area_it;
+    }
+    // The same segments decoded once for this tile, for the node tests below.
+    std::vector< Coord_Query_Statement::Decoded_Area_Block > areas_in_tile;
+    areas_in_tile.reserve(areas.size());
+    for (std::vector< Area_Block >::const_iterator ait = areas.begin(); ait != areas.end(); ++ait)
+      areas_in_tile.push_back(Coord_Query_Statement::Decoded_Area_Block(current_idx, *ait));
+    // The same segments decoded once for this tile, for the segment tests below.
+    std::vector< Decoded_Coords > area_coords(areas.size());
+    std::vector< Coords_Bounds > area_bounds;
+    area_bounds.reserve(areas.size());
+    std::vector< Coord_Query_Statement::Decoded_Area_Block > areas_decoded;
+    areas_decoded.reserve(areas.size());
+    for (std::vector< Area_Block >::size_type i = 0; i < areas.size(); ++i)
+    {
+      decode_coords(areas[i], area_coords[i]);
+      area_bounds.push_back(Coords_Bounds(area_coords[i]));
+      areas_decoded.push_back(Coord_Query_Statement::Decoded_Area_Block(0, areas[i]));
     }
 
     // check nodes
@@ -470,7 +488,7 @@ void Polygon_Query_Statement::collect_ways
         for (std::vector< Area_Block >::const_iterator it2 = areas.begin(); it2 != areas.end();
              ++it2)
         {
-          int check(Coord_Query_Statement::check_area_block(current_idx, *it2, ilat, ilon));
+          int check(Coord_Query_Statement::check_area_block(areas_in_tile[it2 - areas.begin()], ilat, ilon));
           if (check == Coord_Query_Statement::HIT)
           {
             inside = Coord_Query_Statement::HIT;
@@ -486,9 +504,12 @@ void Polygon_Query_Statement::collect_ways
     }
 
     // check segments
+    Decoded_Coords sit_coords;
     for (std::vector< Area_Block >::const_iterator sit = way_segments[Uint31_Index(current_idx)].begin();
          sit != way_segments[Uint31_Index(current_idx)].end(); ++sit)
     {
+      decode_coords(*sit, sit_coords);
+      Coords_Bounds sit_bounds(sit_coords);
       int inside = 0;
       for (std::vector< Area_Block >::const_iterator it = areas.begin();
            it != areas.end(); ++it)
@@ -498,7 +519,8 @@ void Polygon_Query_Statement::collect_ways
         // The endpoints are properly handled via the point-in-area test
         // Check additionally the middle of the segment to also get segments
         // that run through the area
-        int intersect = intersects_inner(*sit, *it);
+        int intersect = sit_bounds.overlaps(area_bounds[it - areas.begin()])
+            ? intersects_inner(sit_coords, area_coords[it - areas.begin()]) : 0;
         if (intersect == Coord_Query_Statement::INTERSECT)
         {
           ways_inside[Way::Id_Type(sit->id)] = true;
@@ -512,7 +534,7 @@ void Polygon_Query_Statement::collect_ways
             inside = 0;
           break;
         }
-        has_inner_points(*sit, *it, inside);
+        has_inner_points(sit_coords, areas_decoded[it - areas.begin()], inside);
       }
       if ((inside && (!(inside & Coord_Query_Statement::HIT))) ||
           (inside && add_border))

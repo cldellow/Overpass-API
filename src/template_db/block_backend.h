@@ -25,6 +25,7 @@
 
 #include <cstring>
 #include <map>
+#include <new>
 #include <set>
 
 
@@ -35,18 +36,17 @@ struct Idx_Handle
       : obj(0), ptr_to_raw(0) {}
   ~Idx_Handle()
   {
-    delete obj;
+    clear();
   }
   void set_ptr(uint8* ptr)
   {
-    delete obj;
-    obj = 0;
+    clear();
     ptr_to_raw = ptr;
   }
   const Object& object() const
   {
     if (!obj)
-      obj = new Object(ptr_to_raw);
+      obj = new (storage) Object(ptr_to_raw);
     return *obj;
   }
   uint8* get_ptr_to_raw() const
@@ -54,14 +54,18 @@ struct Idx_Handle
     return ptr_to_raw;
   }
 
-  Idx_Handle(const Idx_Handle& rhs)
-      : obj(0), ptr_to_raw(rhs.ptr_to_raw) {}
-  Idx_Handle& operator=(const Idx_Handle& rhs)
-  {
-    set_ptr(rhs.ptr_to_raw);
-  }
+  Idx_Handle(const Idx_Handle& rhs) = delete;
+  Idx_Handle& operator=(const Idx_Handle& rhs) = delete;
 
 private:
+  void clear()
+  {
+    if (obj)
+      obj->~Object();
+    obj = 0;
+  }
+
+  alignas(Object) mutable unsigned char storage[sizeof(Object)];
   mutable Object* obj;
   uint8* ptr_to_raw;
 };
@@ -93,6 +97,10 @@ struct Block_Backend_Basic_Iterator
   const Index& index()
   {
     return idx_cache.object();
+  }
+  uint8* index_raw() const
+  {
+    return idx_cache.get_ptr_to_raw();
   }
   const Object& object()
   {
@@ -331,10 +339,9 @@ struct Discrete_Idx_Assessor
 
   bool is_relevant(uint8* ptr)
   {
-    Index idx((void*)ptr);
-    while (index_it != index_end && *index_it < idx)
+    while (index_it != index_end && index_it->less((void*)ptr))
       ++index_it;
-    return index_it != index_end && *index_it == idx;
+    return index_it != index_end && index_it->leq((void*)ptr);
   }
 
 private:
@@ -406,10 +413,10 @@ struct Range_Idx_Assessor
 
   bool is_relevant(uint8* ptr)
   {
-    Index idx((void*)ptr);
-    while (index_it != index_end && !(idx < index_it.upper_bound()))
+    // bound.leq(ptr) is !(idx < bound) for the index stored at ptr.
+    while (index_it != index_end && index_it.upper_bound().leq((void*)ptr))
       ++index_it;
-    return index_it != index_end && !(idx < index_it.lower_bound()) && idx < index_it.upper_bound();
+    return index_it != index_end && index_it.lower_bound().leq((void*)ptr);
   }
 
 private:
@@ -517,6 +524,16 @@ struct Block_Backend
 
   Range_Iterator range_begin(const Ranges< TIndex >& arg)
   { return Range_Iterator(file_blocks, arg.begin(), arg.end(), block_size); }
+
+  // From the block index alone: nothing is read or decompressed.
+  uint64 count_blocks(const Ranges< TIndex >& arg)
+  {
+    uint64 count = 0;
+    auto end = file_blocks.template range_end< typename Ranges< TIndex >::Iterator >();
+    for (auto it = file_blocks.range_begin(arg.begin(), arg.end()); !(it == end); ++it)
+      ++count;
+    return count;
+  }
 
   const Range_Iterator& range_end() const { return *range_end_it; }
 

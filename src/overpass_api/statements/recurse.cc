@@ -374,6 +374,11 @@ Timeless< Uint31_Index, Relation_Skeleton > collect_relations
     current_ids.swap(children_ids);
   }
 
+  // Without input relations no relation can have one as a member: skip the scan of all relations
+  // (and at a past date, the reconstruction of all their old versions).
+  if (current_ids.empty())
+    return result;
+
   Request_Context context(&stmt, rman);
   if (!invert_ids)
     collect_items_flat(context,
@@ -421,6 +426,10 @@ Timeless< Uint31_Index, Relation_Skeleton > collect_relations
                   std::back_inserter(children_ids));
     current_ids.swap(children_ids);
   }
+
+  // Without input relations no relation can have one as a member.
+  if (current_ids.empty())
+    return result;
 
   if (!invert_ids)
     collect_items_flat(context,
@@ -591,7 +600,7 @@ Ranges< Uint31_Index > Recurse_Constraint::get_way_ranges(Resource_Manager& rman
   if (stmt->get_type() == RECURSE_RELATION_WAY || stmt->get_type() == RECURSE_RELATION_NWR
       || stmt->get_type() == RECURSE_RELATION_NW || stmt->get_type() == RECURSE_RELATION_WR)
     return relation_way_member_indices(input->relations, input->attic_relations);
-  else if (stmt->get_type() == RECURSE_NODE_WAY)
+  else if (stmt->get_type() == RECURSE_NODE_WAY || stmt->get_type() == RECURSE_NODE_WR)
     return extract_parent_indices(input->nodes, input->attic_nodes);
 
   return Ranges< Uint31_Index >::global();
@@ -604,7 +613,7 @@ Ranges< Uint31_Index > Recurse_Constraint::get_relation_ranges(Resource_Manager&
   if (!input)
     return Ranges< Uint31_Index >();
 
-  if (stmt->get_type() == RECURSE_NODE_RELATION)
+  if (stmt->get_type() == RECURSE_NODE_RELATION || stmt->get_type() == RECURSE_NODE_WR)
     return extract_parent_indices(input->nodes, input->attic_nodes);
   else if (stmt->get_type() == RECURSE_WAY_RELATION)
     return extract_parent_indices(input->ways, input->attic_ways);
@@ -697,7 +706,8 @@ bool Recurse_Constraint::get_data
       relation_relation_members(
           context, input->relations, input->attic_relations, ranges, ids, invert_ids, &role_id)
           .swap(into.relations, into.attic_relations);
-    else if (stmt->get_type() == RECURSE_NODE_RELATION)
+    else if (stmt->get_type() == RECURSE_NODE_RELATION
+        || (stmt->get_type() == RECURSE_NODE_WR && type == QUERY_RELATION))
       collect_relations(
           query, rman, input->nodes, input->attic_nodes, Relation_Entry::NODE, ids, invert_ids, role_id)
           .swap(into.relations, into.attic_relations);
@@ -753,10 +763,12 @@ bool Recurse_Constraint::get_data
       rel_rels.swap(into.relations, into.attic_relations);
     }
   }
-  else if (stmt->get_type() == RECURSE_NODE_WAY)
+  else if (stmt->get_type() == RECURSE_NODE_WAY
+        || (stmt->get_type() == RECURSE_NODE_WR && type == QUERY_WAY))
     collect_ways(context, input->nodes, input->attic_nodes, stmt->get_pos(), ids, invert_ids)
         .swap(into.ways, into.attic_ways);
-  else if (stmt->get_type() == RECURSE_NODE_RELATION)
+  else if (stmt->get_type() == RECURSE_NODE_RELATION
+        || (stmt->get_type() == RECURSE_NODE_WR && type == QUERY_RELATION))
     collect_relations(query, rman, input->nodes, input->attic_nodes, Relation_Entry::NODE, ids, invert_ids)
         .swap(into.relations, into.attic_relations);
   else if (stmt->get_type() == RECURSE_WAY_RELATION)
@@ -923,8 +935,8 @@ void Recurse_Constraint::filter(Resource_Manager& rman, Set& into)
         .filter_items(Id_Predicate< Way_Skeleton >(
             relation_way_member_ids(input->relations, input->attic_relations)))
         .swap(into.ways, into.attic_ways);
-  else if (stmt->get_type() == RECURSE_NODE_WAY || stmt->get_type() == RECURSE_UP
-      || stmt->get_type() == RECURSE_UP_REL)
+  else if (stmt->get_type() == RECURSE_NODE_WAY || stmt->get_type() == RECURSE_NODE_WR
+      || stmt->get_type() == RECURSE_UP || stmt->get_type() == RECURSE_UP_REL)
     Timeless< Uint31_Index, Way_Skeleton >{}.swap(into.ways, into.attic_ways)
         .filter_items(Get_Parent_Ways_Predicate(extract_ids(input->nodes, input->attic_nodes), stmt->get_pos()))
         .swap(into.ways, into.attic_ways);
@@ -937,7 +949,7 @@ void Recurse_Constraint::filter(Resource_Manager& rman, Set& into)
         .filter_items(Id_Predicate< Relation_Skeleton >(
             relation_relation_member_ids(input->relations, input->attic_relations)))
         .swap(into.relations, into.attic_relations);
-  else if (stmt->get_type() == RECURSE_NODE_RELATION)
+  else if (stmt->get_type() == RECURSE_NODE_RELATION || stmt->get_type() == RECURSE_NODE_WR)
     Timeless< Uint31_Index, Relation_Skeleton >{}.swap(into.relations, into.attic_relations)
         .filter_items(Get_Parent_Rels_Predicate(
             extract_ids(input->nodes, input->attic_nodes), Relation_Entry::NODE))
@@ -1404,15 +1416,10 @@ void Recurse_Statement::execute(Resource_Manager& rman)
       source_ways.set_union(result_ways.swap(into.ways, into.attic_ways).sort());
       result_ways.swap(into.ways, into.attic_ways);
     }
-    Timeless< Uint32_Index, Node_Skeleton > rel_nodes = relation_node_members(
-        context, into.relations, into.attic_relations, Ranges< Uint32_Index >::global(), {}, true);
+    // The relations' node members and the ways' nodes, in one pass over the node blocks.
+    Timeless< Uint32_Index, Node_Skeleton > rel_nodes = relation_and_way_node_members(
+        context, into.relations, into.attic_relations, source_ways.current, source_ways.attic);
     rel_nodes.sort();
-    {
-      Timeless< Uint32_Index, Node_Skeleton > more_nodes
-          = way_members(context, source_ways.current, source_ways.attic, 0,
-                        Ranges< Uint32_Index >::global(), {}, true);
-      rel_nodes.set_union(more_nodes.sort());
-    }
     keep_matching_skeletons(rel_nodes.current, rel_nodes.attic, rman.get_desired_timestamp());
     rel_nodes.swap(into.nodes, into.attic_nodes);
   }

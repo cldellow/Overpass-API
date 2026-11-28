@@ -674,6 +674,26 @@ Timeless< Uint32_Index, Node_Skeleton > paired_items_range(
 }
 
 
+Timeless< Uint32_Index, Node_Skeleton > relation_and_way_node_members(
+    Request_Context& context,
+    const std::map< Uint31_Index, std::vector< Relation_Skeleton > >& relations,
+    const std::map< Uint31_Index, std::vector< Attic< Relation_Skeleton > > >& attic_relations,
+    const std::map< Uint31_Index, std::vector< Way_Skeleton > >& ways,
+    const std::map< Uint31_Index, std::vector< Attic< Way_Skeleton > > >& attic_ways)
+{
+  // Both id lists are sorted and free of duplicates.
+  std::vector< Node::Id_Type > rel_ids = relation_node_member_ids(relations, attic_relations);
+  std::vector< Node::Id_Type > way_ids = way_nd_ids(ways, attic_ways, 0);
+  context.get_health_guard().check();
+  std::vector< Node::Id_Type > ids;
+  ids.reserve(rel_ids.size() + way_ids.size());
+  std::set_union(rel_ids.begin(), rel_ids.end(), way_ids.begin(), way_ids.end(), std::back_inserter(ids));
+
+  return paired_items_range(context, ids,
+      relation_node_member_indices(relations, attic_relations).union_(way_nd_indices(ways, attic_ways)));
+}
+
+
 Timeless< Uint32_Index, Node_Skeleton > relation_node_members
     (Request_Context& context,
      const std::map< Uint31_Index, std::vector< Relation_Skeleton > >& relations,
@@ -837,26 +857,6 @@ bool add_way_to_area_blocks(const std::vector< Quad_Coord >& coords,
 }
 
 
-std::vector< Quad_Coord > make_geometry(const Way_Skeleton& way, const std::vector< Node >& nodes)
-{
-  std::vector< Quad_Coord > result;
-
-  for (std::vector< Node::Id_Type >::const_iterator it3(way.nds.begin());
-      it3 != way.nds.end(); ++it3)
-  {
-    const Node* node = binary_search_for_id(nodes, *it3);
-    if (node == 0)
-    {
-      result.clear();
-      return result;
-    }
-    result.push_back(Quad_Coord(node->index, node->ll_lower_));
-  }
-
-  return result;
-}
-
-
 std::vector< Uint31_Index > segment_idxs(const std::vector< Quad_Coord >& geometry)
 {
   std::vector< uint32 > nd_idxs;
@@ -942,12 +942,12 @@ void filter_ways_by_ranges(std::map< Uint31_Index, std::vector< Attic< Way_Skele
 
 
 void keep_matching_skeletons
-    (std::vector< Node >& result,
+    (std::vector< Node_Position >& result,
      const std::map< Uint32_Index, std::vector< Node_Skeleton > >& current,
      const std::map< Uint32_Index, std::vector< Attic< Node_Skeleton > > >& attic,
      uint64 timestamp)
 {
-  std::map< Node_Skeleton::Id_Type, uint64 > timestamp_by_id;
+  Valid_Until_By_Id< Node_Skeleton::Id_Type > timestamp_by_id(timestamp);
 
   result.clear();
 
@@ -955,7 +955,7 @@ void keep_matching_skeletons
        it != current.end(); ++it)
   {
     for (std::vector< Node_Skeleton >::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
-      timestamp_by_id[it2->id] = NOW;
+      timestamp_by_id.add_current(it2->id);
   }
 
   for (std::map< Uint32_Index, std::vector< Attic< Node_Skeleton > > >::const_iterator it = attic.begin();
@@ -963,20 +963,18 @@ void keep_matching_skeletons
   {
     for (std::vector< Attic<Node_Skeleton > >::const_iterator it2 = it->second.begin();
          it2 != it->second.end(); ++it2)
-    {
-      uint64& stored_timestamp = timestamp_by_id[it2->id];
-      if (it2->timestamp > timestamp && (stored_timestamp == 0 || stored_timestamp > it2->timestamp))
-        stored_timestamp = it2->timestamp;
-    }
+      timestamp_by_id.add_attic(it2->id, it2->timestamp);
   }
+  timestamp_by_id.finish();
+  result.reserve(timestamp_by_id.count_valid());
 
   for (std::map< Uint32_Index, std::vector< Node_Skeleton > >::const_iterator it = current.begin();
        it != current.end(); ++it)
   {
     for (std::vector< Node_Skeleton >::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2)
     {
-      if (timestamp_by_id[it2->id] == NOW)
-        result.push_back(Node(it2->id, it->first.val(), it2->ll_lower));
+      if (timestamp_by_id.get(it2->id) == NOW)
+        result.push_back(Node_Position(it2->id, it->first.val(), it2->ll_lower));
     }
   }
 
@@ -986,8 +984,8 @@ void keep_matching_skeletons
     for (std::vector< Attic<Node_Skeleton > >::const_iterator it2 = it->second.begin();
          it2 != it->second.end(); ++it2)
     {
-      if (timestamp_by_id[it2->id] == it2->timestamp)
-        result.push_back(Node(it2->id, it->first.val(), it2->ll_lower));
+      if (timestamp_by_id.get(it2->id) == it2->timestamp)
+        result.push_back(Node_Position(it2->id, it->first.val(), it2->ll_lower));
     }
   }
 
@@ -1065,8 +1063,30 @@ void add_nw_member_objects(Request_Context& context, const Set& input_set, Set& 
 {
   Ranges< Uint32_Index > ranges_32(ranges_32_ ? *ranges_32_ : Ranges< Uint32_Index >::global());
   Ranges< Uint31_Index > ranges_31(ranges_31_ ? *ranges_31_ : Ranges< Uint31_Index >::global());
-  Timeless< Uint32_Index, Node_Skeleton > rel_nodes
-      = relation_node_members(context, input_set.relations, input_set.attic_relations, ranges_32, {}, true);
+
+  if (context.get_desired_timestamp() == NOW && !ranges_32_)
+  {
+    // Collect the relations' node members and the ways' nodes in one pass over the node blocks.
+    relation_way_members(context, input_set.relations, {}, ranges_31, {}, true)
+        .swap(into.ways, into.attic_ways);
+    std::map< Uint31_Index, std::vector< Way_Skeleton > > source_ways = input_set.ways;
+    sort_second(source_ways);
+    sort_second(into.ways);
+    indexed_set_union(source_ways, into.ways);
+    Timeless< Uint32_Index, Node_Skeleton > nodes = relation_and_way_node_members(
+        context, input_set.relations, input_set.attic_relations, source_ways, {});
+    nodes.current.swap(into.nodes);
+    sort_second(into.nodes);
+    return;
+  }
+
+  // For a date without a range restriction, the relations' node members are collected below,
+  // in the same pass over the node blocks as the ways' nodes.
+  bool one_pass = !ranges_32_;
+  Timeless< Uint32_Index, Node_Skeleton > rel_nodes;
+  if (!one_pass)
+    rel_nodes = relation_node_members(
+        context, input_set.relations, input_set.attic_relations, ranges_32, {}, true);
 
   if (context.get_desired_timestamp() == NOW)
   {
@@ -1099,8 +1119,10 @@ void add_nw_member_objects(Request_Context& context, const Set& input_set, Set& 
     indexed_set_union(all_ways.current, source_ways);
     indexed_set_union(all_ways.attic, source_attic_ways);
 
-    Timeless< Uint32_Index, Node_Skeleton > more_nodes
-        = way_members(context, all_ways.current, all_ways.attic, 0, Ranges< Uint32_Index >::global(), {}, true);
+    Timeless< Uint32_Index, Node_Skeleton > more_nodes = one_pass
+        ? relation_and_way_node_members(
+            context, input_set.relations, input_set.attic_relations, all_ways.current, all_ways.attic)
+        : way_members(context, all_ways.current, all_ways.attic, 0, Ranges< Uint32_Index >::global(), {}, true);
     more_nodes.sort();
     sort_second(into.nodes);
     sort_second(into.attic_nodes);
